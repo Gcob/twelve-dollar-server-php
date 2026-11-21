@@ -80,10 +80,13 @@ lab_build_php_flags() {
 # same way for lab/macro.sh and lab/conformance.sh (1 CPU, 2 GiB, the server CPU, host network, lab/ at /lab, the seed
 # read-only at /lab/data). Needs LAB (the lab/ folder) and LAB_PHP_FLAGS (lab_build_php_flags); LAB_ENV, an array of K=V,
 # is passed with -e after PORT. Never mount lab/data writable here: a server must copy feed.db, not open it (WAL files).
+# LAB_SERVER_NOFILE, when set, replaces the container's `nofile` limit (a test hook for lab/conns.sh: the later --ulimit of the
+# same name wins).
 lab_start_server() {
-  local name="$1" variant="$2" port="$3" server_in="$4" env_args=() kv
+  local name="$1" variant="$2" port="$3" server_in="$4" env_args=() nofile_args=() kv
   for kv in "${LAB_ENV[@]+"${LAB_ENV[@]}"}"; do env_args+=(-e "$kv"); done
-  docker run -d --name "$name" "${LAB_RESOURCE_FLAGS[@]}" --network host --cpuset-cpus "$LAB_CPUSET_SERVER" \
+  [ -z "${LAB_SERVER_NOFILE:-}" ] || nofile_args=(--ulimit "nofile=$LAB_SERVER_NOFILE:$LAB_SERVER_NOFILE")
+  docker run -d --name "$name" "${LAB_RESOURCE_FLAGS[@]}" "${nofile_args[@]+"${nofile_args[@]}"}" --network host --cpuset-cpus "$LAB_CPUSET_SERVER" \
     -v "$LAB:/lab:ro" -v "$LAB/data:/lab/data:ro" -e "PORT=$port" "${env_args[@]+"${env_args[@]}"}" \
     "$LAB_IMAGE:$variant" php "${LAB_PHP_FLAGS[@]}" "$server_in" >/dev/null
 }

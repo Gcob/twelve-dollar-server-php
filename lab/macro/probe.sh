@@ -7,6 +7,8 @@
 #   probe.sh memory <server container id>                    memory.* of the server's cgroup and VmHWM of its processes
 #   probe.sh memory-now <server container id>               Pss (kB, summed over the server's processes) and memory.current now
 #   probe.sh connections <port>                              established connections whose local port is <port> (server side)
+#   probe.sh memory-events <server container id>             memory.events of the server's cgroup (oom_kill, max, ...)
+#   probe.sh fresh-request <port> <path>                     one request from 127.0.0.1 with a 1 s limit: `fresh http_code <n>`, `fresh ms <n>`
 #   probe.sh port-open <port>                                exit 0 if something accepts connections on 127.0.0.1:<port>
 #   probe.sh http-answers <port> <path>                      exit 0 if 127.0.0.1:<port><path> answers any HTTP status
 set -euo pipefail
@@ -56,6 +58,16 @@ case "${1:-}" in
     n="$(awk -v p=":$hex" '$4 == "01" && substr($2, index($2, ":")) == p' /proc/net/tcp /proc/net/tcp6 2>/dev/null | wc -l)"
     echo "connections established $(( n ))"
     ;;
+  memory-events)
+    sed 's/^/memory_events /' "$(cgroup_dir "$2")/memory.events"
+    ;;
+  fresh-request)
+    # Why a new curl each time: a new connection, so a server at its limit shows as a request that does not answer.
+    out="$(curl -s -o /dev/null --max-time 1 -w '%{http_code} %{time_total}' "http://127.0.0.1:$2$3" || true)"
+    read -r code seconds <<<"${out:-000 0}"
+    echo "fresh http_code $code"
+    echo "fresh ms $(awk -v s="${seconds:-0}" 'BEGIN { printf "%.1f", s * 1000 }')"
+    ;;
   port-open)
     (exec 3<>"/dev/tcp/127.0.0.1/$2") 2>/dev/null
     ;;
@@ -64,7 +76,7 @@ case "${1:-}" in
     [ -n "$code" ] && [ "$code" != 000 ]
     ;;
   *)
-    echo "usage: probe.sh cpu|memory|memory-now|connections|port-open|http-answers ..." >&2
+    echo "usage: probe.sh cpu|memory|memory-now|connections|memory-events|fresh-request|port-open|http-answers ..." >&2
     exit 2
     ;;
 esac

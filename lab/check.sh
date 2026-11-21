@@ -195,6 +195,49 @@ check_macro_bake_swoole_posts_is_valid() {
   [ -n "$holds" ] || { echo "the JSON does not hold the run's options and numbers: $detail"; return 1; }
 }
 
+# The connection test against the bake-off server, a short run: every step up to --max is held (a step above it is not run),
+# the JSON holds the max, both memory slopes and the server's socket line, and no container is left behind.
+check_conns_holds_steps() {
+  local out json rc=0 left
+  json="$(mktemp -d)/conns.json"
+  out="$(bash "$LAB/conns.sh" --image 8.5 --server "$LAB/servers/bake-swoole.php" --steps 200,500,900 --max 500 --out "$json" 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "lab/conns.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
+  jq -e '.results.max_connections == 500 and .results.ceiling == null and (.steps | map(.target) == [200, 500])
+         and .results.memory_per_connection.pss_kib_per_connection > 0
+         and .results.memory_per_connection.cgroup_current_kib_per_connection > 0
+         and .server.socket == {backlog: 4096, open_tcp_nodelay: 1} and .results.baseline.pss_kb > 0
+         and (.steps | all(.probe.tcp_established == .held and .probe.fresh_http_code == 200))' "$json" >/dev/null \
+    || { echo "the JSON does not hold a run that held 200 and 500 connections: $(jq -c '{results, steps: [.steps[] | {target, held, probe}]}' "$json")"; return 1; }
+  grep -q '^  max connections (held, answered) *500 ' <<<"$out" || { echo "the table does not report 500 connections: ${out//$'\n'/ | }"; return 1; }
+  left="$(docker ps -a --format '{{.Names}}' | grep '^lab-conns-' || true)"
+  [ -z "$left" ] || { echo "containers left behind: ${left//$'\n'/ }"; return 1; }
+}
+
+# A server limited to 256 file descriptors cannot hold 300 connections: the run finds the ceiling under 256, names why, exits 0.
+check_conns_finds_ceiling() {
+  local out json rc=0
+  json="$(mktemp -d)/conns.json"
+  out="$(bash "$LAB/conns.sh" --image 8.5 --server "$LAB/servers/bake-swoole.php" --server-nofile 256 --steps 100,300 --out "$json" 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "lab/conns.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
+  jq -e '.results.max_connections == 100 and .results.ceiling.step == 300 and .results.ceiling.held_at_stop < 256
+         and (.results.ceiling.reason | length > 0) and .server.nofile == 256' "$json" >/dev/null \
+    || { echo "the JSON does not hold a ceiling under 256 with a reason: $(jq -c '.results' "$json")"; return 1; }
+  grep -q '^  stopped because ' <<<"$out" || { echo "the table does not say why it stopped: ${out//$'\n'/ | }"; return 1; }
+}
+
+# Two runs one after the other: the second must not fail on a source address the first one still holds in TIME_WAIT.
+check_conns_back_to_back() {
+  local out json1 json2 rc=0
+  json1="$(mktemp -d)/conns.json"
+  json2="$(mktemp -d)/conns.json"
+  out="$(bash "$LAB/conns.sh" --image 8.5 --server "$LAB/servers/bake-swoole.php" --steps 100 --out "$json1" 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "first run: lab/conns.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
+  out="$(bash "$LAB/conns.sh" --image 8.5 --server "$LAB/servers/bake-swoole.php" --steps 100 --out "$json2" 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "second run: lab/conns.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
+  [ "$(jq -r '.client.source_addresses[0]' "$json1")" != "$(jq -r '.client.source_addresses[0]' "$json2")" ] \
+    || { echo "both runs started from the same source address: $(jq -c '.client.source_addresses' "$json1")"; return 1; }
+}
+
 # The bash scripts of the lab, one repo-relative path per line: every `*.sh` and every file whose first line is a bash or sh
 # shebang, except the fixtures (they hold deliberate warnings) and the seed data.
 lab_bash_scripts() {
@@ -254,6 +297,9 @@ CHECKS=(
   check_conformance_bake_swoole
   check_conformance_fails_on_wrong_server
   check_macro_bake_swoole_posts_is_valid
+  check_conns_holds_steps
+  check_conns_finds_ceiling
+  check_conns_back_to_back
   check_shellcheck
   check_shellcheck_catches_warning
 )

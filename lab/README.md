@@ -370,6 +370,75 @@ full summaries of the measured run and the warm-up. Numbers from another machine
   `vus.max`, `dropped_iterations.count`, which k6 leaves out when it is 0): re-check them when the pin moves.
 - Do not start an image build or another benchmark during a measured run: they share the VM's CPUs and its memory bus.
 
+## Connection test
+
+`lab/conns.sh` measures how many idle keep-alive connections one server process holds, and what each one costs in memory:
+
+```bash
+bash lab/conns.sh --image 8.5 --server lab/servers/bake-swoole.php [--ext <name>]... [--env K=V]... [--label <text>] \
+  [--steps 1000,5000,...] [--max <n>] [--server-nofile <n>] [--port 18100] [--out <path>]
+```
+
+The default steps are 1000, 5000, 10000, 20000, 30000, 40000, 50000, 60000, 65000 and 66000; `--max` drops the steps above
+it. The server starts like `macro.sh` and `conformance.sh` start theirs (`lab_start_server`: 1 CPU, 2 GiB, `nofile` 65535). Two
+more containers join it: the probe of `macro.sh` (`lab/macro/probe.sh`, from outside the server's cgroup) and a client
+(`lab/conns/client.php` in a php-lab container on the load CPUs, `nofile` 200000, no CPU or memory limit).
+
+- **The client opens connections one at a time.** For each one it connects (blocking), writes `GET /noop HTTP/1.1` with a `Host`
+  header, reads the whole answer (status 200, body `{"status":"ok"}`) and keeps the socket open. One at a time means the
+  accept queue never fills, so a connection that gets no answer is the server's limit and not a burst the kernel dropped. The
+  client stays alive between steps, and `lab/conns.sh` drives it through a FIFO (`step <total>`, `quit`) and reads its answers
+  as JSON lines from a file.
+- **Source addresses rotate over 127.x.** One client address has only as many ephemeral ports as `ip_local_port_range` gives
+  (10,536 on the lab's VM at the time of writing, 28,232 with Linux's default of 32768-60999; the client reads the file and
+  keeps 500 ports in reserve), so the client binds each connection to `127.0.0.N:0` (`socket.bindto`) and moves to another
+  address before the ports run out. The next address is one that is the local address of no socket at all: a run right after
+  another one skips the addresses whose `TIME_WAIT` sockets (the client closes first, so they sit on its side, for 60 s) are
+  still there, and never fails on `bind`. `127.0.0.1` stays for the probe's fresh request. No `sysctl` is changed: the Docker
+  VM is shared. If every address from 127.0.0.2 to 127.0.0.254 is taken, the client waits up to 70 s, then fails.
+- **What is read at each step,** after the client opened its connections and swept them (non-blocking reads: an EOF or a reset
+  means the server closed one), and 1 s later: the summed `Pss` of the server's processes, the cgroup's `memory.current` and
+  `memory.events` (`oom_kill`), the established connections to the server port in `/proc/net/tcp`, and a fresh request from
+  `127.0.0.1`, which must answer within 1 s. The `/proc/net/tcp` count is a cross-check of the client's count, not what max
+  connections is made of.
+- **The baseline** is read before the first step, after one `GET /noop` on one connection (then closed), so the first-request
+  allocations are in it.
+- **Max connections** is what the client got an answer on and still holds at the last fully held step. The table also gives the
+  exact count held when the run stopped (the failing step's, after the sweep).
+- **The ceiling** is the first step where one of these happens, and the output names it: `connect timeout` or `request timeout`
+  (2 s), `connection reset`, `connection closed by the server (EOF)` (on the connection being opened) or `held connection closed
+  by the server (EOF)` (found by the sweep), `connection refused`, `bad answer`, `fresh request failed`, `server OOM-killed`,
+  `server died (exit code N)`. Linux does not refuse a SYN because of a full accept queue or a server out of fds: it completes
+  the handshake, then the request times out or resets. A server out of fds (`--server-nofile 256`) shows as `request timeout`.
+  Reaching `--max` (or the last step) is the other way a run ends: `no ceiling: ...`. Both are results, exit 0.
+- **A client-side error is a harness failure** (exit 1), never a ceiling: a `bind` that fails, `EMFILE` in the client, no free
+  port, no free source address, a client that exits or prints something that is not an event.
+- **Memory per connection** is the least-squares slope of the summed `Pss` against the connections held, and the same for
+  `memory.current`, over the held steps (KiB per connection; `n/a` below two held steps). It is a slope over the steps, not a
+  per-connection constant: in one run on a busy VM (not a result) Swoole went from about 69 KiB per connection between 1,000
+  and 10,000 connections to about 5 KiB between 20,000 and 65,000, so the slope depends on the steps it covers. Read the table
+  too.
+- **`--server-nofile N`** sets the server container's `nofile` (a test hook, recorded in the JSON as `server.nofile`).
+  `lab/conns.sh` reads the limit back from `/proc/<pid>/limits`.
+- **Output:** a table (one row per step: target, held, Pss, `memory.current`, `/proc/net/tcp` count, fresh request in ms, `ok`
+  or the reason), then max connections, why it stopped, both slopes, the baseline, the server's socket line, the number of other
+  containers (with the same warning as `macro.sh`) and the versions. The JSON (`lab/results/conns-<server>[-<label>]-<image>-
+  <UTC date and time>.json`) holds every reading (`steps[]` with the client's event and the probe's reading), the exact command,
+  `results.ceiling` and `results.memory_per_connection`. The three containers (`lab-conns-server`, `-client`, `-probe`) are
+  removed at the end whatever happens, and the run refuses to start when one of them exists.
+
+### Traps of the connection test
+
+- **The ephemeral port range of the VM is not Linux's default** (55000-65535 here): never hard-code 28,232.
+- **`json_encode` returns `false` for a byte that is not UTF-8**, which printed a blank line as an event: the client's `emit`
+  substitutes invalid bytes. A PHP fatal error goes to stderr (`display_errors=stderr`), not into the events file.
+- **A `stream_socket_client` that fails on `EMFILE` gives errno 0 and an empty message.** That is why a connect error with no
+  known errno is a harness failure with the client's `nofile` in the message.
+- **PHP's read buffer would hold 8 KiB per connection in the client** (500 MiB for 65,000 sockets): `stream_set_read_buffer($fp,
+  0)`.
+- **Swoole at its fd limit accepts nothing more but still completes the handshake,** so the client's connect succeeds and the
+  request times out: 65,522 connections answered with `nofile` 65535 (the server keeps about 13 fds for itself).
+
 ## Checks
 
 ```bash
