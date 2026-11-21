@@ -1,6 +1,6 @@
 # Developer: phase 2, lab setup
 
-**State:** scope 5 done, commit `13291fd`, fixed by `d2ff24e` (VUs and connections); scope 4 done, commit `8151a5e`, fixed by `cad0e84` (K processes per case); scope 3 `c584d41`; scope 2 `aef8c0b`; scope 1 `7643677`. Scope 1: "Done when" passes (seed OK, both files exist, `git status --porcelain` lists neither).
+**State:** scope 6 done (commit in the Passation du scope 6); scope 5 done, commit `13291fd`, fixed by `d2ff24e` (VUs and connections), review fixes `cc2ca4f` and `f5a122c`; scope 4 done, commit `8151a5e`, fixed by `cad0e84` (K processes per case); scope 3 `c584d41`; scope 2 `aef8c0b`; scope 1 `7643677`. Scope 1: "Done when" passes (seed OK, both files exist, `git status --porcelain` lists neither).
 
 ## Verified
 
@@ -74,6 +74,29 @@
 - **Host drift worth knowing for scope 6:** the 6 runs of the Done-when command, back to back, gave **29.7, 30.3, 30.7, 31.7, 35.1, 39.9 us/req** (a 35 % climb over about 6 minutes, no code change). Earlier sessions: 37.6 to 43.5 on 8.4/8.3-apt. So a single run is not a number; the spread across runs on this Mac is about 30 %, and it can drift in one direction.
 - Invalid message now says how long a stall the VUs absorb and the run's max latency. `lab/check.sh`: 15 `ok`.
 - **Commit:** `d2ff24e`. Not changed: the validity rule (any dropped iteration is INVALID).
+
+## Verified (scope 6)
+
+- **Done when:** `lab/results/2026-11-21-noop-swoole/README.md` holds the prediction (written and saved at 16:07:29 UTC, before the first run at 16:07:38), the median and spread per rate, 3 interleaved repeats each, and the 9 raw JSON (+ the 9 printed `.txt`) next to it. **Proof:** the folder; run order in the README's second table.
+- **All 9 runs valid on the first series** (rc 0, 0 dropped, 0 % errors), so no rerun and no harness change. 8.3-apt, 30 s after 10 s warm-up, order 1k 3k 6k x 3. Medians us/req: **50.20 (48.16..56.83) at 1k, 30.16 (29.90..30.44) at 3k, 21.66 (21.42..22.42) at 6k.** VmHWM 27.5 / 28.7 / 30.1 MiB, memory.peak 13.3 / 15.3 / 17.8 MiB at 100 / 300 / 600 connections.
+- **Prediction:** 8 to 20 us at 3k did NOT hold (30.16, 51 % above the top; 3 runs within 2 %). Trend (1k above 6k) held, 2.3x. RSS under 50 MB held.
+- No drift this time: 3k 29.90, 30.16, 30.44 over 6 min; 6k 21.66, 21.42, 22.42. One tail outlier: run 3 at 6k, max 82.9 ms, p99 3.9 ms, still valid.
+- `bash lab/check.sh`: 15 `ok` after the series (run once, last).
+- No `/Users` path in the folder (grep, README, JSON, txt, script).
+
+## Passation du scope 6
+
+- **Created:** `lab/results/2026-11-21-noop-swoole/` : `README.md` (Prediction, What was measured, Results, Environment, Did the prediction hold?, Surprising), `summarize.sh` (regenerates the two tables from the JSON with jq: `bash lab/results/2026-11-21-noop-swoole/summarize.sh`), `run-<rep>-<rate>rps.json` and `.txt` (9 each). Nothing changed in `lab/macro.sh` or the server: no harness bug found.
+- **Decisions en route:** the series loop was a scratchpad script (not committed; the README lists the commands). I renamed the printed tables from hidden `.log-*` files to `run-*.txt`. The JSON `date` is the end of the run: the README column is labelled "Written (UTC)". `summarize.sh` is an addition to the brief (it makes the tables checkable).
+- **Traps:** the host was not quiet: 49 containers of other projects running on the VM (not paused), load average 8.2 before and 5.0 after, Virtualization.framework at about 125 % of a CPU before the first run. The numbers were tight anyway; the README says so. A phase 3 comparison should reuse the same rates (1k, 3k, 6k) and the same interleaving. k6 uses 89 % of one CPU at 6k (8 CPUs available): at 12k and above, check that k6 is still not the limit.
+- **Hypotheses labelled as such in the README, not checked:** the rate-independent part (about 34 ms of CPU/s from a line through 1k and 6k) comes from per-wake-up work.
+- **Commit:** `c3a487b`.
+
+## Passation du scope 5, reprise review (`cc2ca4f`, `f5a122c`)
+
+- **`cc2ca4f` (R1, R2):** `LAB_SERVER_PHP_FLAGS` now ends with `-d opcache.file_update_protection=0 -d zend.assertions=-1`; `micro_ini_flags()` pins `zend.assertions=-1` and `INI_REPORTED` reads it back (`runs[].ini["zend.assertions"]` is `-1` on 8.3-apt and 8.4, checked with a quick run). `lab/macro.sh` now records `server.ini` in the JSON: the ini values PHP reads back with the server's flags in the probe container (`opcache.enable_cli`, `opcache.jit`, `opcache.jit_buffer_size`, `opcache.file_update_protection`, `zend.assertions`, `memory_limit`) plus `jit_on`. It does not prove the server file itself was cached (that would need the server to report it); the flag removes the cause. README says both flags and why. **Effect on earlier numbers:** the first number (scope 6) and the 2,000 req/s trial runs ran without these two flags; the server file was always older than 2 s then, and the noop server has no `assert()`, so no effect expected, not re-measured.
+- **`f5a122c` (R4, R7), docs only:** confound sentence in the results README (no number changed; cites the 50/200/500 connection test as pointing the other way, taken at one rate); root README links `lab/README.md`; `lab/README.md` has a "Prerequisites (on the Mac)" section (Docker Desktop, Node 18+ (24 here, upstream says `>= 18`), sqlite3, jq, the clone, curl/git/shasum) and the seed time is "about 15 seconds on an M3 Pro" (measured 14 s).
+- `lab/check.sh`: 15 `ok` after the first commit. Not touched, as asked: late failure report in `macro.sh`, the Swoole pin in two places.
 
 ## Impasses
 
@@ -245,3 +268,10 @@ Rien.
 - **Ce que le plan aurait dû trancher :** which exit code an invalid run has, and whether the lab may assume the VM's ports 80 and 8080 are free (they are not on this Mac); the k6 major version (1.x vs 2.x).
 
 - (scope 5, reprise) I ran my own "Done when" twice and called it reliable: two runs cannot show a drop that happens in 4 of 5. For any "must hold reliably" criterion, run it 5 times before saying it passes. Proof: the first handover claim vs 4 of 5 runs dropping.
+
+### Scope 6
+
+- **Ce que j'ai deviné :** that the printed `.txt` of each run is worth committing next to the JSON (not asked); that a small `summarize.sh` in the results folder is welcome; that the README may say "MiB" for the RSS (the prediction said MB, I gave both).
+- **Où j'ai perdu du temps :** nowhere significant. One slip: a `sed -i` without the empty suffix argument (macOS) broke an `&&` chain and half of the README heredoc was skipped, caught because I read the section titles afterwards. Use `perl -pi -e` here.
+- **Ce qui aurait pu être déterministe :** a `lab/series.sh <dir>` (interleaved rates x repeats, one command) and a summary script in `lab/` instead of a scratchpad loop; the next series (phase 3) will need both.
+- **Ce que le plan aurait dû trancher :** whether a prediction that fails by 50 % (30 vs 8 to 20) should trigger a closed-loop run to compare with the prior art on equal terms (not done: out of scope).
