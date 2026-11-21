@@ -102,7 +102,8 @@ if all 5 are filled on `stock` and all 5 empty on `nocache`.
 
 A trap: Workerman keeps an HTTP connection alive for 60 s whatever the request's `Connection: close` or the response header
 says, so a client that reads until the server closes (PHP's `file_get_contents('http://...')`) waits a minute. Close from the
-handler (`$connection->close($response)`), as `check/fixtures/workerman-hello.php` does.
+handler (`$connection->close($response)`). `servers/bake-workerman.php` does not need it: the harnesses' clients keep their
+connections open and never read until the server closes.
 
 ## Micro benchmarks
 
@@ -277,6 +278,27 @@ The runtime bake-off compares runtimes (Swoole, Workerman, ext-event, a hand-wri
   backlog of 4,096 and TCP_NODELAY on. At boot it prints `socket: backlog=4096 open_tcp_nodelay=1`: the settings it asked for,
   as the images' Swoole is not built with sockets support and cannot read them back. `macro.sh` and `conformance.sh` copy that
   line into their output, and `macro.sh` into the JSON (`server.socket`).
+- **`lab/servers/bake-workerman.php`** is the Workerman 5.2.4 server on that handler: one HTTP `Worker` (`count = 1`) on the
+  Event loop, `Worker::$eventLoopClass` set to it explicitly. It reads `WORKERMAN_TREE`: `nocache` (the default, Workerman with
+  its 5 request caches patched out) or `stock` (as released); any other value exits 1 with a message. It also exits 1 when
+  `event` is not loaded, instead of letting Workerman fall back to `select()`. `onMessage` sends a `Response` object (status,
+  `Content-Type: application/json`, the handler's body), the way Workerman's documentation does it: a plain string would always
+  answer 200 `text/html`. Listen backlog 4,096 (the `backlog` socket context option); Workerman sets `TCP_NODELAY` itself on
+  the listening socket when `sockets` is loaded. At boot the worker prints the tree, the loop class and
+  `socket: backlog=4096 tcp_nodelay=1`, where `tcp_nodelay` is read back from the listening socket (`socket_get_option` on
+  `socket_import_stream`) and the backlog is what was asked (the kernel does not give it back). Run it on each tree:
+
+  ```bash
+  bash lab/conformance.sh --image 8.5 --server lab/servers/bake-workerman.php --ext pcntl --ext sockets --ext event --env WORKERMAN_TREE=nocache
+  bash lab/macro.sh --image 8.5 --server lab/servers/bake-workerman.php --ext pcntl --ext sockets --ext event \
+    --env WORKERMAN_TREE=stock --label stock --rate 7000 --duration 20 --path /posts/1 --script lab/macro/k6/posts.js
+  ```
+
+  The extensions go in that order (`sockets` before `event`, which depends on it); `--label` puts the tree in the result's file
+  name and JSON. **Two processes run in the container's cgroup:** Workerman's master (`WorkerMan: master process`, it only
+  supervises) and its one worker. The CPU reading is the cgroup's, so it covers both; Pss and VmHWM are summed over every
+  process of the cgroup; `conns.sh` reads memory the same way. The pid, status and log files are in `/tmp` (`/lab` is
+  read-only), and the copy of the seed is made by the master before it forks, the SQLite handle opened by the worker.
 - **`lab/conformance.sh`** proves that a server speaks HTTP/1.1 correctly with that handler:
 
   ```bash

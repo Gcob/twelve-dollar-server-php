@@ -264,30 +264,53 @@ check_workerman_caches() {
   [ "$(grep -c -E '^nocache +[A-Za-z:]+ +empty$' <<<"$out")" = 5 ] || { echo "the nocache tree does not show 5 empty caches: ${out//$'\n'/ | }"; return 1; }
 }
 
-# Workerman boots on each tree with pcntl, sockets and ext-event loaded and the Event loop chosen, and answers one request.
-check_workerman_boots() {
-  local tree name="lab-check-workerman" port=18110 body=""
-  for tree in stock nocache; do
-    docker rm -f "$name" >/dev/null 2>&1
-    # Why: lab_build_php_flags and lab_start_server read these three arrays.
-    # shellcheck disable=SC2034
-    LAB_EXT=(pcntl sockets event) LAB_INI=() LAB_ENV=("WORKERMAN_TREE=$tree")
-    lab_build_php_flags
-    lab_start_server "$name" 8.5 "$port" /lab/check/fixtures/workerman-hello.php || { echo "could not start the $tree container"; return 1; }
-    body=""
-    # Why: the master binds the port before its worker starts, so a server whose worker died accepts and never answers.
-    for _ in $(seq 1 15); do
-      body="$(docker exec "$name" php -d default_socket_timeout=2 -r "echo @file_get_contents('http://127.0.0.1:$port/');" 2>/dev/null)" && [ -n "$body" ] && break
-      body=""
-      sleep 1
-    done
-    if [ "$body" != "hello Workerman\\Events\\Event $tree" ]; then
-      echo "$tree: expected 'hello Workerman\\Events\\Event $tree', got '$body'; log: $(docker logs "$name" 2>&1 | tail -n 5 | tr '\n' '|')"
-      docker rm -f "$name" >/dev/null 2>&1
-      return 1
-    fi
-    docker rm -f "$name" >/dev/null 2>&1
+# Workerman's bake-off server passes every conformance case on both trees (Event loop, the handler's answers, keep-alive,
+# pipelining, a split request, a body then reuse) and prints the socket settings it read back from its listening socket.
+check_conformance_bake_workerman() {
+  local tree out ok rc
+  for tree in nocache stock; do
+    rc=0
+    out="$(bash "$LAB/conformance.sh" --image 8.5 --server "$LAB/servers/bake-workerman.php" \
+      --ext pcntl --ext sockets --ext event --env "WORKERMAN_TREE=$tree" 2>&1)" || rc=$?
+    [ "$rc" = 0 ] || { echo "$tree: lab/conformance.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
+    ok="$(grep -c '^ok  ' <<<"$out")"
+    [ "$ok" = 8 ] || { echo "$tree: expected 8 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
+    grep -q 'FAIL' <<<"$out" && { echo "$tree: a case failed: ${out//$'\n'/ | }"; return 1; }
+    grep -qx 'socket settings the server printed at boot: backlog=4096 tcp_nodelay=1' <<<"$out" || { echo "$tree: the socket line is missing: ${out//$'\n'/ | }"; return 1; }
   done
+}
+
+# The server refuses to start on a tree that does not exist, and without ext-event (Workerman would fall back to select() and
+# the numbers would not be the Event loop's): exit 1 and a message that names the problem.
+check_workerman_server_refuses() {
+  local out rc=0
+  out="$(bash "$LAB/run.sh" 8.5 env WORKERMAN_TREE=bogus php -d extension=pcntl -d extension=sockets -d extension=event \
+    /lab/servers/bake-workerman.php 2>&1)" || rc=$?
+  [ "$rc" = 1 ] || { echo "unknown tree: expected exit 1, got $rc: ${out//$'\n'/ | }"; return 1; }
+  grep -q "WORKERMAN_TREE must be 'stock' or 'nocache', got 'bogus'" <<<"$out" || { echo "unknown tree: the message does not name the tree: ${out//$'\n'/ | }"; return 1; }
+  rc=0
+  out="$(bash "$LAB/run.sh" 8.5 php -d extension=pcntl -d extension=sockets /lab/servers/bake-workerman.php 2>&1)" || rc=$?
+  [ "$rc" = 1 ] || { echo "no event: expected exit 1, got $rc: ${out//$'\n'/ | }"; return 1; }
+  grep -q 'ext-event is not loaded' <<<"$out" || { echo "no event: the message does not say so: ${out//$'\n'/ | }"; return 1; }
+}
+
+# Workerman's bake-off server under k6 on /posts/<id>, nocache tree: the run is valid, and the JSON holds the tree (label, env),
+# the extensions in their load order and the socket line the server read back.
+check_macro_bake_workerman_posts_is_valid() {
+  local out rc=0 json detail
+  json="$(mktemp -d)/macro.json"
+  out="$(bash "$LAB/macro.sh" --image 8.5 --server "$LAB/servers/bake-workerman.php" --ext pcntl --ext sockets --ext event \
+    --env WORKERMAN_TREE=nocache --label nocache --rate 500 --duration 5 --warmup 2 \
+    --script "$LAB/macro/k6/posts.js" --path /posts/1 --out "$json" 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "lab/macro.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
+  grep -qx 'VALID' <<<"$out" || { echo "the run is not marked VALID: ${out//$'\n'/ | }"; return 1; }
+  jq -e '.valid == true and .results.requests > 2000 and .results.error_rate == 0
+         and .label == "nocache" and .server.ext == ["pcntl", "sockets", "event"] and .server.env == ["WORKERMAN_TREE=nocache"]
+         and .server.socket == {backlog: 4096, tcp_nodelay: 1}
+         and .results.memory.under_load.max_pss_mib > 0' "$json" >/dev/null && return 0
+  detail="$(jq -c '{valid, label, server: {ext: .server.ext, env: .server.env, socket: .server.socket}, memory: .results.memory.under_load}' "$json")"
+  echo "the JSON does not hold the run's options and numbers: $detail"
+  return 1
 }
 
 # The bash scripts of the lab, one repo-relative path per line: every `*.sh` and every file whose first line is a bash or sh
@@ -353,7 +376,9 @@ CHECKS=(
   check_conns_finds_ceiling
   check_conns_back_to_back
   check_workerman_caches
-  check_workerman_boots
+  check_conformance_bake_workerman
+  check_workerman_server_refuses
+  check_macro_bake_workerman_posts_is_valid
   check_shellcheck
   check_shellcheck_catches_warning
 )
