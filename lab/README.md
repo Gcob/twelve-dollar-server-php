@@ -160,6 +160,103 @@ for each run the image id (`docker image inspect` id of the local build), the PH
 and the ini values that matter. Numbers from another machine or another Docker version are not comparable with these.
 `results/micro-sample-*.json` is the harness's first run: it proves the harness, not a step.
 
+## Macro benchmarks
+
+```bash
+bash lab/macro.sh --image 8.4 --server lab/servers/noop-swoole.php --rate 2000 --duration 30
+```
+
+Loads a server running in a lab container with [k6](https://k6.io) at a **fixed request rate** (k6 starts `--rate`
+requests per second whatever the server does, so a slow server shows up as latency and dropped iterations, not as a lower
+rate), and reports what a request costs the server. Needs `jq` on the Mac. Options: `--warmup <s>` (default 10, same
+rate, not measured), `--script <k6 js under lab/>` (default `lab/macro/k6/fixed-rate.js`), `--out <path>`,
+`--port` (default 18080), `--path` (the URL path, default `/`), `--pre-vus` / `--max-vus` (default 50 / 200),
+`--php-ini key=value` (added after the entries' PHP flags, repeatable).
+
+`lab/servers/noop-swoole.php` is the floor: a Swoole HTTP server with the settings of both Swoole entries
+(`SWOOLE_BASE`, one worker, no coroutine, POST/cookie/file parsing and compression off) that answers `200 {"status":"ok"}`
+to every request. The server runs with the PHP flags of the entries' `start.sh` (`LAB_SERVER_PHP_FLAGS` in `lib.sh`).
+
+### Layout
+
+Three containers, all `--network host` inside Docker's VM. **Never run k6 on macOS itself**: Docker Desktop forwards a
+port from the Mac into its VM through a userspace proxy, which would pollute every number.
+
+| Container          | Image                         | CPUs                 | Limits                                |
+|--------------------|-------------------------------|----------------------|---------------------------------------|
+| `lab-macro-server` | `php-lab:<image>`             | `2` (`LAB_CPUSET_SERVER`) | 1 CPU, 2 GiB, no swap, 65535 fds (the lab's) |
+| `lab-macro-k6`     | `grafana/k6` 1.8.3 by digest  | `4-11` (`LAB_CPUSET_K6`)  | none of its own                       |
+| `lab-macro-probe`  | `php-lab:<image>`, sleeping   | `0-1` (`LAB_CPUSET_PROBE`) | none                                  |
+
+The three have fixed names: a run refuses to start if one exists (a killed run, or another run in progress), and tells
+you the `docker rm -f` to run. The three are removed at the end of every run that started, whatever happens (a `trap`).
+The k6 image is pinned by tag **and** digest in `lib.sh` (`LAB_K6_IMAGE`; the 1.x line, 2.x exists). k6 runs as
+`docker exec` in a container that stays alive, so its cgroup still exists when its CPU is read after the run.
+
+### How the numbers are computed
+
+- **How `cpu.stat` is read: from outside the cgroup.** The probe container has `--cgroupns host --pid host`, so it
+  sees the VM's whole cgroup tree and every process. It reads `/sys/fs/cgroup/docker/<server id>/cpu.stat` itself, so the
+  read costs the server nothing (a `docker exec <server> cat ...` would run inside the server's cgroup and land in the
+  measure). The probe sits on CPUs 0 and 1, away from the server and k6. The probe's script is `lab/macro/probe.sh`.
+- **µs CPU per request** = (`usage_usec` of the server's cgroup after the measured run, minus before) / (the
+  `http_reqs` count of that run, from k6's `--summary-export`). The window between the two reads is a few hundred ms longer
+  than the run (starting and stopping k6). The server's idle cost is measured too, over 2 s right after the warm-up
+  (`server_idle_usec_per_s`, 45 to 290 µs per second in trial runs, against about 38 ms of CPU per second under load, so it does not move the number). The connections k6 opens
+  at the start of the run are in the measure.
+- **Latency** p50, p95, p99, max, from k6's `http_req_duration` (ms, as k6 measures it; k6 is on the same machine).
+- **VUs used** = the maximum of k6's `vus` gauge. Each VU keeps its own keep-alive connection, so this is the number of
+  open connections. `--pre-vus` VUs are started before the test and `--max-vus` is the ceiling; both must be high enough
+  that nothing is dropped.
+- **Peak RSS**, two numbers, because they differ: the server cgroup's `memory.peak` (counts page cache charged to the
+  cgroup) and the highest `VmHWM` of the processes in the cgroup (`/proc/<pid>/status`, counts the pages the process maps,
+  shared libraries included). Both cover the whole life of the server, warm-up included. In trial runs `VmHWM` was about
+  twice `memory.peak` (26 vs 12 MiB); a likely reason is that the image's file pages were charged to the cgroup that read
+  them first, not to the server (not checked).
+- **k6's own CPU** = its container's `usage_usec` delta over the same window, as a percent of one CPU. In trial runs k6
+  used about 50 % of one CPU at 2,000 req/s with 8 CPUs of room: it is not the bottleneck. Check this number whenever
+  the rate goes up.
+- The server's `throttled_usec` over the window is in the output too (non-zero means the 1 CPU limit cut the server).
+
+### Validity
+
+A run with an **error rate above 0 %** or **`dropped_iterations` above 0** is still printed and written, but is marked
+`INVALID: <reasons>` in the table and `"valid": false` in the JSON, and `lab/macro.sh` exits 3. Dropped iterations mean k6
+could not start requests at the requested rate (not enough VUs, or the server too slow to free them), so the rate that
+was measured is not the rate that was asked for. Exit 1 is any other failure (bad argument, the server did not answer, k6
+failed); exit 2 is a usage error.
+
+### Reading the output
+
+```text
+image 8.4 (PHP 8.4.28, Swoole 6.2.6), noop-swoole.php, k6 v1.8.3 (...)
+requested 2000 req/s for 30s (warm-up 10s), target http://127.0.0.1:18080/
+  requests                     60001
+  CPU us / request             38.67
+  latency ms p50 / p95 / p99   0.19 / 0.6 / 1.58
+  error rate                   0.00%
+  dropped iterations           0
+  ...
+VALID
+```
+
+The JSON (`results/macro-<server>-<image>-<rate>rps-<UTC date and time>.json`) holds the same numbers, where it ran
+(Docker Desktop and engine versions, the VM's kernel, CPU layout, limits), the image id, the PHP and Swoole versions, the
+PHP flags, the k6 image by digest and its version, the exact command, and under `raw` everything the numbers come from:
+both `cpu.stat` snapshots (before and after the measured run, and around the idle window), the memory files, and k6's
+full summaries of the measured run and the warm-up. Numbers from another machine or Docker version are not comparable.
+
+### Traps
+
+- **Ports 8080 and 80 are usually taken on the VM's host network** by other containers (a Swoole server that cannot bind
+  dies at once, but a "wait until it answers" would have succeeded against the other server). The default port is 18080,
+  and the run refuses a port that already accepts connections before starting the server.
+- **The same case can swing about 2x from one process to the next on this Mac** (see "Why the spread is across processes").
+  The macro numbers can swing the same way: repeat a run, and compare the JSON files, before trusting one number.
+- k6 1.x is pinned, but the `--summary-export` format is read by key (`http_reqs.count`, `http_req_duration.med`,
+  `vus.max`, `dropped_iterations.count`, which k6 leaves out when it is 0): re-check them when the pin moves.
+- Do not start an image build or another benchmark during a measured run: they share the VM's CPUs and its memory bus.
+
 ## Checks
 
 ```bash

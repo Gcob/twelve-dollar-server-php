@@ -106,6 +106,38 @@ check_micro_refuses_wrong_state() {
   fi
 }
 
+# The macro harness against the no-op Swoole server: a short run at a low rate (the numbers mean nothing) must be valid,
+# with requests, a CPU cost per request and a latency in its JSON.
+check_macro_noop_is_valid() {
+  local out json rc=0
+  json="$(mktemp -d)/macro.json"
+  out="$(bash "$LAB/macro.sh" --image 8.4 --server "$LAB/servers/noop-swoole.php" --rate 500 --duration 5 --warmup 2 --out "$json" 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "lab/macro.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
+  grep -qx 'VALID' <<<"$out" || { echo "the run is not marked VALID: ${out//$'\n'/ | }"; return 1; }
+  jq -e '.valid == true and .results.requests > 2000 and .results.cpu_usec_per_request > 0 and .results.latency_ms.p95 > 0
+         and .results.error_rate == 0 and .results.dropped_iterations == 0 and .results.memory.vmhwm_mib > 0' "$json" >/dev/null \
+    || { echo "the JSON does not hold a valid run with its numbers: $(jq -c .results "$json")"; return 1; }
+}
+
+# A rate that one VU cannot hold drops iterations: the run is printed, marked INVALID (JSON too), and exits 3.
+check_macro_marks_invalid_run() {
+  local out json rc=0
+  json="$(mktemp -d)/macro.json"
+  out="$(bash "$LAB/macro.sh" --image 8.4 --server "$LAB/servers/noop-swoole.php" --rate 20000 --duration 3 --warmup 0 --pre-vus 1 --max-vus 1 --out "$json" 2>&1)" || rc=$?
+  [ "$rc" = 3 ] || { echo "expected exit 3 for an invalid run, got $rc: ${out//$'\n'/ | }"; return 1; }
+  grep -q '^INVALID: .*dropped iterations' <<<"$out" || { echo "the table does not say INVALID: ${out//$'\n'/ | }"; return 1; }
+  jq -e '.valid == false and .results.dropped_iterations > 0' "$json" >/dev/null || { echo "the JSON does not say invalid"; return 1; }
+}
+
+# A k6 script that fails: macro.sh exits 1 and no lab-macro container is left behind.
+check_macro_cleans_up_after_failure() {
+  local out left rc=0
+  out="$(bash "$LAB/macro.sh" --image 8.4 --server "$LAB/servers/noop-swoole.php" --rate 100 --duration 2 --warmup 0 --script "$LAB/macro/fixtures/broken.js" --out "$(mktemp -d)/macro.json" 2>&1)" || rc=$?
+  [ "$rc" = 1 ] || { echo "expected exit 1 for a broken k6 script, got $rc: ${out//$'\n'/ | }"; return 1; }
+  left="$(docker ps -a --format '{{.Names}}' | grep '^lab-macro-' || true)"
+  [ -z "$left" ] || { echo "containers left behind: ${left//$'\n'/ }"; return 1; }
+}
+
 CHECKS=(
   check_seed_files_exist
   check_seed_has_posts
@@ -119,6 +151,9 @@ CHECKS=(
   check_micro_sample
   check_micro_skips_failed_case
   check_micro_refuses_wrong_state
+  check_macro_noop_is_valid
+  check_macro_marks_invalid_run
+  check_macro_cleans_up_after_failure
 )
 
 failed=0

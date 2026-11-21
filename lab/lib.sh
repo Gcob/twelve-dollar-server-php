@@ -24,6 +24,7 @@ lab_source_release() {
 # CPU layout of Docker's VM (12 vCPUs): CPUs 0 and 1 stay free for the VM itself.
 LAB_CPUSET_SERVER=2     # the server and the micro benches
 LAB_CPUSET_K6=4-11      # the load generator
+LAB_CPUSET_PROBE=0-1    # the helper that reads cgroup files and /proc for lab/macro.sh, next to the VM's own CPUs
 
 # Resource limits of every lab container (the bench VM of the challenge has the same budget).
 LAB_RESOURCE_FLAGS=(--cpus=1 --memory=2g --memory-swap=2g --ulimit nofile=65535:65535)
@@ -43,3 +44,11 @@ lab_require_variant() {
     return 1
   fi
 }
+
+# The load generator of lab/macro.sh: pinned by tag and by digest (the multi-arch index digest, so the same line works on
+# arm64 here and amd64 on the bench VM). 1.8.3 is the latest 1.x release (2.x exists); to move, change both.
+LAB_K6_IMAGE=grafana/k6:1.8.3@sha256:2cd9cd09e4119340a122aaf06f30cf3009c19db23b87954909fba0d3eda58e08
+
+# PHP flags of a server in lab/macro.sh: the ones the Swoole entries' start.sh use. Source images ship no php.ini, so
+# nothing else configures PHP.
+LAB_SERVER_PHP_FLAGS=(-d extension=swoole -d memory_limit=-1 -d opcache.enable_cli=1 -d opcache.jit=tracing -d opcache.jit_buffer_size=32M)
