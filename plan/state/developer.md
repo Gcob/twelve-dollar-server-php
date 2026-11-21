@@ -1,6 +1,6 @@
 # Developer: phase 3, runtime bake-off
 
-**State:** scope 6 done (`3e74d76`, review fixes `e1cf918`), scope 5 done (`ad52342`), scope 4 done (`8c8f7cc`), scope 3 done (`deeb8d1`), scope 2 done (`0d74fda`), scope 1 done (`a0477ba`). Phase 2's handovers are in `plan/runs/phase-2/state/developer.md` (read its "Où regarder"
+**State:** scope 6 done (`3e74d76`, review fixes `e1cf918`, `9aadddc`), scope 5 done (`ad52342`), scope 4 done (`8c8f7cc`), scope 3 done (`deeb8d1`), scope 2 done (`0d74fda`), scope 1 done (`a0477ba`). Phase 2's handovers are in `plan/runs/phase-2/state/developer.md` (read its "Où regarder"
 and "Impasses" if you touch `macro.sh`, `micro.sh`, `seed.sh` or the images).
 
 ## Verified
@@ -187,6 +187,15 @@ Rien.
 ## Handover of scope 6, review fixes (`e1cf918`)
 
 Three fixes from the pr-reviewer in one commit: (1) the dead `wait` mode of `lab/conformance/client.php` is gone (only `poll` and `run`; header and usage text updated); (2) `bake-workerman.php`'s comment no longer claims a `Server` header (Workerman 5.2.4 adds only Content-Length and Connection with a `Response` object); (3) `conformance.sh` prints `event loop the server printed at boot: <loop>` (read from the `loop:` boot line, nothing printed when there is none) just before the socket line. `check_conformance_bake_workerman` asserts `Workerman\Events\Event` on both trees, and `check_conformance_bake_diy` asserts `epoll`. README updated. Full `bash lab/check.sh`: 32/32 ok. Both new assertions passed on first run (no separate red run); the Workerman conformance by hand printed `event loop the server printed at boot: Workerman\Events\Event`.
+
+## Handover of scope 6, blind-review fixes (`9aadddc`)
+
+- **Pss_Anon:** `probe.sh memory-now` also prints `memory_now pss_anon_kb` (sum of `Pss_Anon` over the cgroup's processes). macro JSON: `results.memory.under_load.samples.*.pss_anon_kb` and `max_pss_anon_mib` (the table line reads `Pss .. (with the mapped database), Pss_Anon .., memory.current ..`). conns JSON: `steps[].probe.pss_anon_kb`, `results.baseline.pss_anon_kb`, `results.memory_per_connection.pss_anon_kib_per_connection`; table gets a `Pss_Anon MiB` column, a Pss_Anon slope and a baseline Pss_Anon. Checks assert `Pss_Anon > 0` and `< Pss` on the posts runs and the conns step. README says runtimes are compared on `Pss_Anon` and `memory.current`, with the reason. Evidence, Swoole 8.5, 7000 req/s, 10 s, warm-up 5 s: `/posts/1` Pss 139.35 MiB, Pss_Anon 12.49 MiB; `/noop` Pss 31.32 MiB, Pss_Anon 12.49 MiB (the same): Pss moves with the database pages touched, Pss_Anon does not. **Result files of earlier runs lack `pss_anon_kb`.**
+- **DIY 500:** `handler_handle()` is in `try/catch (Throwable)`: logs one line to stderr, answers `500 {"error":"internal server error"}` (reason phrase added), connection keeps serving. Parser test case (stub `/boom` throws; both in one piece and in two).
+- **DIY whitespace before the colon:** a space or tab before the colon, or a line starting with one (obsolete fold), is a 400 and a close. Three parser cases. Red run: against the previous `diy-connection.php` (in a scratch copy of `lab/`) the space and tab cases and the 500 case failed (the fold case already passed: a continuation line has no colon). Parser test is now 34 cases; `check_diy_parser` expects 34.
+- **Docs:** README `micro.sh` does not record other containers (said so); `conformance.sh` says three pipelined requests; the "allocates nothing" claims in `diy-connection.php`, `bake-diy.php` and the README now list what a request allocates (its strings, the `explode()` array of header lines, its response); `install-extras.sh` comment on the libevent version now says the Ubuntu archive on build day, and **the next image build rebuilds the extras layer because of that comment (apt could give another libevent): I did not rebuild**; I did not add the libevent version to `php-info`.
+- **Workerman 60 s claim was wrong** (scope 4's "Raw learnings" entry too): a raw socket that sent `Connection: close` got its answer (`Connection: keep-alive`) at once, then 100 s of silence with no close from the server; the 60 s was PHP's `default_socket_timeout` on the client. README corrected: Workerman ignores `Connection: close` and keeps the connection open.
+- Left alone as asked: items 9, 10, 11. Full `bash lab/check.sh`: 32/32 ok.
 
 ## Questions for the project manager
 

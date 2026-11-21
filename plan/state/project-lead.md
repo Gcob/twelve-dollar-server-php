@@ -37,7 +37,8 @@ Skill defaults (`autonomous-run/pipeline.yml`), no run override file. Changes fr
 | pr-reviewer | ac896543c8894bdb6 | pass 1 OK 18:23 (6 🟡) |
 | 6 (fixes)   | a5ac629088e976752 | R1 R2 R4 fixed `e1cf918`, pushed 18:30 |
 | blind-reviewer | abca1a48d5f108622 | pass 1 NOT_OK 18:38 (1 🟠) |
-| 6 (fixes 2) | a5ac629088e976752 | R7 to R10 since 18:38 |
+| 6 (fixes 2) | a5ac629088e976752 | R7 to R10 fixed `9aadddc`, pushed 18:47 |
+| blind-reviewer | abca1a48d5f108622 | pass 2 since 18:48 |
 
 ## Verified
 
