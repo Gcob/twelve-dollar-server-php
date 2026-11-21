@@ -3,7 +3,7 @@
 **Pace:** 🟢 full · 5-hour 44 % · weekly 18 % at 16:25 · 5-hour resets 18:30 · away
 
 **Status:** 🔵 Running
-**Progress:** step 4/7, `pr-reviewer` OK at 18:23, R1 R2 R4 fixed (`e1cf918`, check.sh 32/32); `blind-reviewer` since 18:31; scope 7 waits for a quiet VM; scopes 1 to 6 pushed; ext-event built on 8.6 too; plan review OK (delta) at 16:48; scope 1 done and pushed at 16:34 · started 2026-11-21 16:24
+**Progress:** step 4/7, `pr-reviewer` OK at 18:23, R1 R2 R4 fixed (`e1cf918`, check.sh 32/32); `blind-reviewer` pass 1 NOT_OK at 18:38 (1 🟠), fixes running; scope 7 waits for a quiet VM; scopes 1 to 6 pushed; ext-event built on 8.6 too; plan review OK (delta) at 16:48; scope 1 done and pushed at 16:34 · started 2026-11-21 16:24
 **Since your last read:** scope 2 smoke numbers on a busy VM (not results): Swoole 21 µs/req on `/noop`, 31 on posts at 7k. phase 2's run is archived in [runs/phase-2/](runs/phase-2/run.md). Phase 3 is planned in
 [details/phase-3.md](details/phase-3.md), predictions written at 16:29 before any measurement; D17 to D20 taken while
 you're away.
@@ -18,7 +18,7 @@ you're away.
 | 2   | Questions         | skipped     |       |     | no `run` question opened by this phase; Q7 stays open (not blocking) |
 | 3   | Lab suite         | done        | 18:17 | 18:17 | `lab/check.sh` 32/32 on `3e74d76` |
 | 4   | `pr-reviewer`     | done        | 18:17 | 18:23 | pass 1 OK on scopes 1 to 6 (6 🟡); a delta pass on scope 7 later |
-| 5   | `blind-reviewer`  | in progress | 18:31 |     | pass 1 on scopes 1 to 6 and the fixes (`e1cf918`) |
+| 5   | `blind-reviewer`  | in progress | 18:31 |     | pass 1 NOT_OK at 18:38 (1 🟠); fixes running, then pass 2 |
 | 6   | Delivery          | to do       |       |     | branch pushed, not merged |
 
 ## Scopes
@@ -83,6 +83,38 @@ caches script.
 
 **Scopes:** 5, 6 · **Status:** left: no socket option returns it and the images have no `ss`; `somaxconn` is 4,096
 on the VM, so no clamp. Said in the README.
+
+### `blind-reviewer`, pass 1 · 18:31 to 18:38 · NOT_OK
+
+**Report:** [BLIND-2026-11-21-1831.md](reviews/BLIND-2026-11-21-1831.md). No 🔴; it found no broken path in the DIY
+parser, the back-pressure or the connection test. Mental load 🔴 high (3,278 lines, 28 files).
+
+#### R7 🟠 "Memory under load, Pss" counts SQLite's mapped database pages
+
+**Scopes:** 2, 3 · **Status:** to fix (scope 6's developer): also sum `Pss_Anon`, compare runtimes on it.
+
+The handler maps the database (`mmap_size`), and Pss counts every mapped page touched, up to about 105 MiB. How much
+depends on how many rows a run touched (warm-up included), not on the runtime, so two runtimes measured at different
+rates or run lengths would differ by tens of MiB for nothing.
+
+#### R8 🟡 DIY stops on a handler exception, and has no 500
+
+**Scopes:** 6 · **Status:** to fix: catch, answer the spec's 500, keep serving.
+
+#### R9 🟡 DIY accepts a header with a space before the colon
+
+**Scopes:** 6 · **Status:** to fix: 400 and close (RFC 9112).
+
+#### R10 🟡 Five doc inaccuracies
+
+**Scopes:** 2, 4, 5, 6 · **Status:** to fix (README and comments: the quiet-VM sentence, three pipelined requests,
+Workerman's 60 s keep-alive claim, the libevent version, "allocates nothing").
+
+#### R11 🟡 Three leftovers
+
+**Scopes:** 4, 6 · **Status:** left: a comment that assumes phase 2 context, `workerman-caches.php` living next to
+the servers, and the warm-up replaying the measured run's ids (the same for every runtime, so it doesn't bias a
+comparison).
 
 ### `plan-reviewer`, delta · 16:46 to 16:48 · OK
 

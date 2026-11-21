@@ -36,7 +36,8 @@ Skill defaults (`autonomous-run/pipeline.yml`), no run override file. Changes fr
 | 6     | a5ac629088e976752 | done `3e74d76`, pushed 18:17 (DIY spins on accept at the fd limit: noted for the conns run) |
 | pr-reviewer | ac896543c8894bdb6 | pass 1 OK 18:23 (6 🟡) |
 | 6 (fixes)   | a5ac629088e976752 | R1 R2 R4 fixed `e1cf918`, pushed 18:30 |
-| blind-reviewer | (id below) | pass 1 since 18:31 |
+| blind-reviewer | abca1a48d5f108622 | pass 1 NOT_OK 18:38 (1 🟠) |
+| 6 (fixes 2) | a5ac629088e976752 | R7 to R10 since 18:38 |
 
 ## Verified
 
@@ -65,6 +66,8 @@ Skill defaults (`autonomous-run/pipeline.yml`), no run override file. Changes fr
   with the reviewer's own picks. 🟡 folded into phase-3.md. Predictions 7, 8 revised 16:44 (before any measurement).
 - pr-reviewer pass 1 (OK): R1, R2, R4 fixed by scope 6's developer (broadest context, one writer); R3, R5, R6 left
   (no failure scenario that changes a number).
+- blind pass 1 (NOT_OK): R7 🟠 Pss counts mmap pages → fix (Pss_Anon); R8, R9, R10 🟡 → fix (cheap, R8 is close to a
+  bug); R11 left. One developer (scope 6's: DIY context, one writer on README).
 
 ## Suggested skills
 
