@@ -170,5 +170,5 @@ Fable, "because I don't want to spend money other than my subscription".
 **Verdict:** 🔶 open: Claude's take is yes, from phase 3, code on a branch per phase and `plan/` on `main`. Replaces
 the "no worktree" part of D12 if Jacob agrees.
 
-**2026-11-21 09:50:** Jacob: "Yes, from phase 3". **Verdict:** ✅ D13 (recorded by the project manager in
+**2026-11-21 09:50:** Jacob: "Yes, from phase 3". **Verdict:** ✅ D14 (recorded by the project manager in
 `decisions.md`): from phase 3, code on a branch per phase in its own worktree, `plan/` stays on `main`.
