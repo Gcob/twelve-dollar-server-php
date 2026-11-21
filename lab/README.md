@@ -54,7 +54,55 @@ An unknown variant exits non-zero and lists the known ones. `lab/run.sh` runs a 
 no swap, 65535 file descriptors, on the host network, pinned to CPU 2; `lab/` is mounted at `/lab` (read-only, except
 `lab/results/` and `lab/data/`). The CPU layout and the limits live in `lab/lib.sh`, shared by every lab script.
 `php-info` prints the PHP, Swoole and SQLite versions, OPcache and JIT, and which extensions are present (`swoole:
-not built` when the image has no Swoole).
+not built` when the image has no Swoole), then `pcntl`, `sockets`, `event` (its version, or `not built`) and the Workerman
+version of its two trees (`workerman: 5.2.4 (stock, nocache)`).
+
+### Extensions and Workerman
+
+The last layer of `Dockerfile.src` (`images/install-extras.sh`, about 12 to 14 s to build) comes after PHP and Swoole, so a
+change to it, or to `php-info`, reuses those two layers (a `php-info` change rebuilds in under a second). It adds, on every
+source image (8.3 to 8.6; `8.3-apt` is left as it was, nothing in the lab runs Workerman or the hand-written server on it):
+
+| What | Version | Built from |
+| --- | --- | --- |
+| `pcntl`, `sockets` | the image's PHP | shared extensions, `phpize` on **the php.net tarball and sha256 the image's PHP was built from**, `CFLAGS=-O2` |
+| `event` (PECL) | 3.2.0 | shared extension, `phpize`, against Ubuntu's `libevent-dev`, with `sockets` support; no OpenSSL, no pthreads |
+| Workerman | 5.2.4 | the GitHub tag tarball, with `workerman/coroutine` 1.1.7 (the release its `composer.json` accepts) |
+
+Every download is pinned by sha256 in the script, and the build stops on a mismatch. None of the three extensions is enabled
+globally: a server loads them with `-d extension=...` (`--ext` of `macro.sh`, `conformance.sh` and `conns.sh`), **in this
+order**, because `event` declares `sockets` as a dependency and PHP refuses to load it first:
+
+```bash
+php -d extension=pcntl -d extension=sockets -d extension=event server.php
+```
+
+`event` builds on PHP 8.6 as well (the switch `WITH_EVENT` in `lab_source_release` stays, in case a later PHP breaks it).
+Workerman needs `pcntl` and `posix` to start (`posix` is built in), and runs on ext-event because its fallback, the `select()`
+loop, is capped at 1,024 descriptors.
+
+**Two Workerman trees**, so a run can show what its request caches buy:
+
+- `/opt/workerman/stock`: Workerman as released.
+- `/opt/workerman/nocache`: the same tree with `images/workerman-nocache.patch` applied. The 5 request caches are
+  function-local `static` variables: `static $requests` in `TcpConnection::baseRead()`, and `static $cache` in `Http::input()`
+  and in `Request::parseHeaders()`, `parseGet()` and `parsePost()`. The patch deletes them and their lookups; the code
+  computes what it would have cached, every time, and nothing else changes. **The build fails** if the patch does not apply
+  without fuzz, if the stock tree does not hold exactly those 5 statics, or if one is left in the patched tree.
+
+Each tree has `<tree>/autoload.php`, a small PSR-4 autoloader with no Composer (`require '/opt/workerman/stock/autoload.php';`).
+It follows the two `composer.json` files: `Workerman\Coroutine\` is the coroutine package's `src/`, and `Workerman\` is
+looked up in Workerman's `src/`, then in the coroutine package's `src/`. A server file picks its tree and requires that file.
+Both trees declare the same classes, so one PHP process can load only one of them.
+
+`bash lab/run.sh 8.5 php /lab/servers/workerman-caches.php` proves the patch: a child process per tree pushes the same
+request (a query string and a form body) through Workerman's HTTP protocol twice, over a socket pair, then reads the 5
+statics with `ReflectionMethod::getStaticVariables()`. It prints `filled` or `empty` per cache and tree, and exits 0 only
+if all 5 are filled on `stock` and all 5 empty on `nocache`.
+
+A trap: Workerman keeps an HTTP connection alive for 60 s whatever the request's `Connection: close` or the response header
+says, so a client that reads until the server closes (PHP's `file_get_contents('http://...')`) waits a minute. Close from the
+handler (`$connection->close($response)`), as `check/fixtures/workerman-hello.php` does.
 
 ## Micro benchmarks
 

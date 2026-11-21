@@ -1,5 +1,6 @@
-# php-lab:<8.3|8.4|8.5|8.6>: Ubuntu 24.04 + PHP compiled from the php.net tarball + Swoole 6.2.6 (when it builds).
-# One Dockerfile for every source build: the version, its sha256 and the Swoole switch come from build args.
+# php-lab:<8.3|8.4|8.5|8.6>: Ubuntu 24.04 + PHP compiled from the php.net tarball + Swoole 6.2.6 (when it builds), then
+# pcntl, sockets and PECL event (when it builds) and two Workerman trees as the last layer.
+# One Dockerfile for every source build: the version, its sha256 and the Swoole and event switches come from build args.
 # Build through lab/build.sh, never by hand: the build context is lab/images/ and the args live in lab/lib.sh.
 FROM ubuntu:24.04@sha256:9c7f200c07e3d4a03e7249d2c16bf66a51120fb876aa2242cf31451412543289
 
@@ -10,6 +11,13 @@ ARG WITH_SWOOLE=1
 COPY install-php-src.sh /tmp/install.sh
 RUN PHP_VERSION="$PHP_VERSION" PHP_SHA256="$PHP_SHA256" WITH_SWOOLE="$WITH_SWOOLE" bash /tmp/install.sh \
     && rm /tmp/install.sh
+
+# Last layer, after PHP and Swoole: changing it leaves those two cached. WITH_EVENT is declared here so that flipping it
+# does not invalidate them either.
+ARG WITH_EVENT=1
+COPY install-extras.sh workerman-nocache.patch /tmp/
+RUN PHP_VERSION="$PHP_VERSION" PHP_SHA256="$PHP_SHA256" WITH_EVENT="$WITH_EVENT" bash /tmp/install-extras.sh \
+    && rm /tmp/install-extras.sh /tmp/workerman-nocache.patch
 
 COPY php-info /usr/local/bin/php-info
 RUN chmod +x /usr/local/bin/php-info

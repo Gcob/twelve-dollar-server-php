@@ -1,0 +1,203 @@
+--- a/src/Connection/TcpConnection.php
++++ b/src/Connection/TcpConnection.php
+@@ -684,7 +684,6 @@
+      */
+     public function baseRead($socket, bool $checkEof = true): void
+     {
+-        static $requests = [];
+         $buffer = '';
+         try {
+             if ($this->transport !== 'ssl') {
+@@ -726,29 +725,6 @@
+                 return;
+             }
+             if ($this->recvBuffer === '') {
+-                if (!isset($buffer[static::MAX_CACHE_STRING_LENGTH]) && isset($requests[$buffer])) {
+-                    ++self::$statistics['total_request'];
+-                    if ($this->protocol === Http::class) {
+-                        $request = $requests[$buffer];
+-                        $request->connection = $this;
+-                        try {
+-                            ($this->onMessage)($this, $request);
+-                        } catch (Throwable $e) {
+-                            $this->error($e);
+-                        }
+-                        $request = clone $request;
+-                        $request->destroy();
+-                        $requests[$buffer] = $request;
+-                        return;
+-                    }
+-                    $request = $requests[$buffer];
+-                    try {
+-                        ($this->onMessage)($this, $request);
+-                    } catch (Throwable $e) {
+-                        $this->error($e);
+-                    }
+-                    return;
+-                }
+                 $this->recvBuffer = $buffer;
+             } else {
+                 $this->recvBuffer .= $buffer;
+@@ -806,36 +782,11 @@
+                 // Reset the current packet length to 0.
+                 $this->currentPackageLength = 0;
+                 try {
+-                    if (!isset($oneRequestBuffer[static::MAX_CACHE_STRING_LENGTH]) && isset($requests[$oneRequestBuffer])) {
+-                        $request = $requests[$oneRequestBuffer];
+-                        if ($request instanceof Request) {
+-                            $request->connection = $this;
+-                            ($this->onMessage)($this, $request);
+-                            $request = clone $request;
+-                            $request->destroy();
+-                            $requests[$oneRequestBuffer] = $request;
+-                        } else {
+-                            ($this->onMessage)($this, $request);
+-                        }
+-                        continue;
+-                    }
+                     // Decode request buffer before Emitting onMessage callback.
+                     $request = $this->protocol::decode($oneRequestBuffer, $this);
+                     // The protocol closed the connection while decoding, so there is nothing to deliver.
+                     if ($this->status === self::STATUS_CLOSING || $this->status === self::STATUS_CLOSED) {
+                         return;
+-                    }
+-                    if ((!is_object($request) || $request instanceof Request) && !isset($oneRequestBuffer[static::MAX_CACHE_STRING_LENGTH])) {
+-                        ($this->onMessage)($this, $request);
+-                        if ($request instanceof Request) {
+-                            $request = clone $request;
+-                            $request->destroy();
+-                        }
+-                        $requests[$oneRequestBuffer] = $request;
+-                        if (count($requests) > static::MAX_CACHE_SIZE) {
+-                            unset($requests[key($requests)]);
+-                        }
+-                        continue;
+                     }
+                     ($this->onMessage)($this, $request);
+                 } catch (Throwable $e) {
+--- a/src/Protocols/Http/Request.php
++++ b/src/Protocols/Http/Request.php
+@@ -492,7 +492,6 @@
+      */
+     protected function parseHeaders(): void
+     {
+-        static $cache = [];
+         $this->data['headers'] = [];
+         $rawHead = $this->rawHead();
+         $endLinePosition = strpos($rawHead, "\r\n");
+@@ -500,11 +499,6 @@
+             return;
+         }
+         $headBuffer = substr($rawHead, $endLinePosition + 2);
+-        $cacheable = !isset($headBuffer[static::MAX_CACHE_STRING_LENGTH]);
+-        if ($cacheable && isset($cache[$headBuffer])) {
+-            $this->data['headers'] = $cache[$headBuffer];
+-            return;
+-        }
+         $headData = explode("\r\n", $headBuffer);
+         foreach ($headData as $content) {
+             if ($content === '') {
+@@ -522,12 +516,6 @@
+                 $this->data['headers'][$key] = $value;
+             }
+         }
+-        if ($cacheable) {
+-            $cache[$headBuffer] = $this->data['headers'];
+-            if (count($cache) > static::MAX_CACHE_SIZE) {
+-                unset($cache[key($cache)]);
+-            }
+-        }
+     }
+ 
+     /**
+@@ -537,24 +525,12 @@
+      */
+     protected function parseGet(): void
+     {
+-        static $cache = [];
+         $queryString = $this->queryString();
+         $this->data['get'] = [];
+         if ($queryString === '') {
+             return;
+         }
+-        $cacheable = !isset($queryString[static::MAX_CACHE_STRING_LENGTH]);
+-        if ($cacheable && isset($cache[$queryString])) {
+-            $this->data['get'] = $cache[$queryString];
+-            return;
+-        }
+         parse_str($queryString, $this->data['get']);
+-        if ($cacheable) {
+-            $cache[$queryString] = $this->data['get'];
+-            if (count($cache) > static::MAX_CACHE_SIZE) {
+-                unset($cache[key($cache)]);
+-            }
+-        }
+     }
+ 
+     /**
+@@ -564,7 +540,6 @@
+      */
+     protected function parsePost(): void
+     {
+-        static $cache = [];
+         $this->data['post'] = $this->data['files'] = [];
+         $contentType = $this->header('content-type', '');
+         if (preg_match('/boundary=(?|"([^"]+)"|([^\s";,]+))/i', $contentType, $match)) {
+@@ -577,22 +552,10 @@
+             return;
+         }
+         $isJson = str_contains($contentType, 'json');
+-        $cacheable = !isset($bodyBuffer[static::MAX_CACHE_STRING_LENGTH]);
+-        $cacheKey = $cacheable ? ($isJson ? 'json:' : 'form:') . $bodyBuffer : '';
+-        if ($cacheable && isset($cache[$cacheKey])) {
+-            $this->data['post'] = $cache[$cacheKey];
+-            return;
+-        }
+         if ($isJson) {
+             $this->data['post'] = (array)json_decode($bodyBuffer, true);
+         } else {
+             parse_str($bodyBuffer, $this->data['post']);
+-        }
+-        if ($cacheable) {
+-            $cache[$cacheKey] = $this->data['post'];
+-            if (count($cache) > static::MAX_CACHE_SIZE) {
+-                unset($cache[key($cache)]);
+-            }
+         }
+     }
+ 
+--- a/src/Protocols/Http.php
++++ b/src/Protocols/Http.php
+@@ -113,8 +113,6 @@
+      */
+     public static function input(string $buffer, TcpConnection $connection): int
+     {
+-        static $cache = [];
+-
+         $crlfPos = strpos($buffer, "\r\n\r\n");
+         if (false === $crlfPos) {
+             if (strlen($buffer) >= static::MAX_HEADER_LENGTH) {
+@@ -130,10 +128,6 @@
+         }
+         $header = isset($buffer[$length + 1]) ? substr($buffer, 0, $length) : $buffer;
+ 
+-        if ($length <= TcpConnection::MAX_CACHE_STRING_LENGTH && isset($cache[$header])) {
+-            return $cache[$header];
+-        }
+-
+         // Validate request line: METHOD SP origin-form SP HTTP/1.x
+         $firstLineEnd = strpos($header, "\r\n");
+         if (!preg_match(
+@@ -197,12 +191,6 @@
+             return 0;
+         }
+ 
+-        if ($length <= TcpConnection::MAX_CACHE_STRING_LENGTH) {
+-            $cache[$header] = $length;
+-            if (count($cache) > TcpConnection::MAX_CACHE_SIZE) {
+-                unset($cache[key($cache)]);
+-            }
+-        }
+         return $length;
+     }
+ 

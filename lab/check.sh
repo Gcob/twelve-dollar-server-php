@@ -39,7 +39,7 @@ check_image_8_3_apt() {
 # the apt image, and Swoole 6.2.6 (or "not built" when lab/lib.sh says this variant is built without it).
 check_source_image() {
   local v="$1" php_version with_swoole info want_swoole apt_sqlite
-  read -r php_version _ with_swoole <<<"$(lab_source_release "$v")"
+  read -r php_version _ with_swoole _ <<<"$(lab_source_release "$v")"
   docker image inspect "php-lab:$v" >/dev/null 2>&1 || { echo "image php-lab:$v is missing (run lab/build.sh $v)"; return 1; }
   info="$(bash "$LAB/run.sh" "$v" php-info 2>&1)" || { echo "php-info failed: $info"; return 1; }
   grep -qx "php: $php_version" <<<"$info" || { echo "php-info does not report PHP $php_version: ${info//$'\n'/ | }"; return 1; }
@@ -52,10 +52,26 @@ check_source_image() {
   grep -qxF "$apt_sqlite" <<<"$info" || { echo "SQLite differs from 8.3-apt ($apt_sqlite): ${info//$'\n'/ | }"; return 1; }
 }
 
-check_image_8_3() { check_source_image 8.3; }
-check_image_8_4() { check_source_image 8.4; }
-check_image_8_5() { check_source_image 8.5; }
-check_image_8_6() { check_source_image 8.6; }
+# check_source_extras <variant>: pcntl, sockets and Workerman 5.2.4 (both trees) are in the image; ext-event is there, or
+# `not built` when lab/lib.sh says this variant is built without it. The phase-2 lines are checked by check_source_image.
+check_source_extras() {
+  local v="$1" with_event info
+  read -r _ _ _ with_event <<<"$(lab_source_release "$v")"
+  info="$(bash "$LAB/run.sh" "$v" php-info 2>&1)" || { echo "php-info failed: $info"; return 1; }
+  grep -qx 'pcntl: present' <<<"$info" || { echo "pcntl is not present: ${info//$'\n'/ | }"; return 1; }
+  grep -qx 'sockets: present' <<<"$info" || { echo "sockets is not present: ${info//$'\n'/ | }"; return 1; }
+  if [ "$with_event" = 1 ]; then
+    grep -qx 'event: 3.2.0' <<<"$info" || { echo "php-info does not report 'event: 3.2.0': ${info//$'\n'/ | }"; return 1; }
+  else
+    grep -qx 'event: not built' <<<"$info" || { echo "php-info does not report 'event: not built': ${info//$'\n'/ | }"; return 1; }
+  fi
+  grep -qx 'workerman: 5.2.4 (stock, nocache)' <<<"$info" || { echo "php-info does not report the two Workerman trees: ${info//$'\n'/ | }"; return 1; }
+}
+
+check_image_8_3() { check_source_image 8.3 && check_source_extras 8.3; }
+check_image_8_4() { check_source_image 8.4 && check_source_extras 8.4; }
+check_image_8_5() { check_source_image 8.5 && check_source_extras 8.5; }
+check_image_8_6() { check_source_image 8.6 && check_source_extras 8.6; }
 
 # Every source image was configured with the same flags (the build keeps the full list in the image).
 check_source_flags_match() {
@@ -238,6 +254,42 @@ check_conns_back_to_back() {
     || { echo "both runs started from the same source address: $(jq -c '.client.source_addresses' "$json1")"; return 1; }
 }
 
+# Workerman's 5 request caches (function-local statics) are all filled in the stock tree and all empty in the nocache tree,
+# after the same request went through the HTTP protocol twice.
+check_workerman_caches() {
+  local out rc=0
+  out="$(bash "$LAB/run.sh" 8.5 php /lab/servers/workerman-caches.php 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "workerman-caches.php exited $rc: ${out//$'\n'/ | }"; return 1; }
+  [ "$(grep -c -E '^stock +[A-Za-z:]+ +filled$' <<<"$out")" = 5 ] || { echo "the stock tree does not show 5 filled caches: ${out//$'\n'/ | }"; return 1; }
+  [ "$(grep -c -E '^nocache +[A-Za-z:]+ +empty$' <<<"$out")" = 5 ] || { echo "the nocache tree does not show 5 empty caches: ${out//$'\n'/ | }"; return 1; }
+}
+
+# Workerman boots on each tree with pcntl, sockets and ext-event loaded and the Event loop chosen, and answers one request.
+check_workerman_boots() {
+  local tree name="lab-check-workerman" port=18110 body=""
+  for tree in stock nocache; do
+    docker rm -f "$name" >/dev/null 2>&1
+    # Why: lab_build_php_flags and lab_start_server read these three arrays.
+    # shellcheck disable=SC2034
+    LAB_EXT=(pcntl sockets event) LAB_INI=() LAB_ENV=("WORKERMAN_TREE=$tree")
+    lab_build_php_flags
+    lab_start_server "$name" 8.5 "$port" /lab/check/fixtures/workerman-hello.php || { echo "could not start the $tree container"; return 1; }
+    body=""
+    # Why: the master binds the port before its worker starts, so a server whose worker died accepts and never answers.
+    for _ in $(seq 1 15); do
+      body="$(docker exec "$name" php -d default_socket_timeout=2 -r "echo @file_get_contents('http://127.0.0.1:$port/');" 2>/dev/null)" && [ -n "$body" ] && break
+      body=""
+      sleep 1
+    done
+    if [ "$body" != "hello Workerman\\Events\\Event $tree" ]; then
+      echo "$tree: expected 'hello Workerman\\Events\\Event $tree', got '$body'; log: $(docker logs "$name" 2>&1 | tail -n 5 | tr '\n' '|')"
+      docker rm -f "$name" >/dev/null 2>&1
+      return 1
+    fi
+    docker rm -f "$name" >/dev/null 2>&1
+  done
+}
+
 # The bash scripts of the lab, one repo-relative path per line: every `*.sh` and every file whose first line is a bash or sh
 # shebang, except the fixtures (they hold deliberate warnings) and the seed data.
 lab_bash_scripts() {
@@ -300,6 +352,8 @@ CHECKS=(
   check_conns_holds_steps
   check_conns_finds_ceiling
   check_conns_back_to_back
+  check_workerman_caches
+  check_workerman_boots
   check_shellcheck
   check_shellcheck_catches_warning
 )
