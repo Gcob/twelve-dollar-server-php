@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# Runs once as root on a clean Ubuntu 24.04: compiles PHP $PHP_VERSION from the php.net tarball (sha256 checked)
+# and, when WITH_SWOOLE=1, the Swoole 6.2.6 extension from its source tarball (same pin as install-php83-apt.sh).
+# The extension is not enabled globally; the server loads it with `-d extension=swoole`, like on the apt image.
+#
+#   PHP_VERSION=8.4.28 PHP_SHA256=<sha256 of php-8.4.28.tar.xz> WITH_SWOOLE=1 bash install-php-src.sh
+set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
+: "${PHP_VERSION:?}" "${PHP_SHA256:?}" "${WITH_SWOOLE:=1}"
+
+# At most 8 compiler jobs, so a build leaves the Mac usable even when Docker's VM has 12 CPUs.
+JOBS="$(nproc)"
+[ "$JOBS" -le 8 ] || JOBS=8
+
+# libssl-dev: Swoole's configure looks for it even though the build leaves OpenSSL off (php8.3-dev pulls it in on
+# the apt image). PHP itself is not configured with OpenSSL.
+apt-get update
+apt-get install -y --no-install-recommends \
+  ca-certificates curl xz-utils build-essential autoconf pkg-config \
+  libxml2-dev libsqlite3-dev libonig-dev libsodium-dev libffi-dev libssl-dev
+
+# The flags are identical for every PHP version, so the versions are compared on equal terms.
+# Why each one:
+#   CFLAGS=-O2                  what the distro builds use, so a source build is not faster or slower by its flags
+#   --prefix=/usr/local         php and php-config land on the PATH
+#   --with-config-file-path     where php looks for php.ini (none is shipped: the server passes its settings with -d)
+#   --with-config-file-scan-dir where the OPcache ini below goes
+#   --disable-cgi, --disable-fpm  CLI only: the servers under test are started with `php file.php`
+#   --enable-opcache            OPcache with its JIT (a flag up to 8.4; always built from 8.5, where it is ignored)
+#   --with-pdo-sqlite           pdo_sqlite against the system libsqlite3, the one the apt image uses
+#   --enable-mbstring           mbstring (needs libonig)
+#   --with-sodium               sodium (needs libsodium)
+#   --with-ffi                  ffi (needs libffi)
+#   --enable-ctype, --with-iconv  ctype and iconv (iconv uses glibc)
+FLAGS=(
+  CFLAGS=-O2
+  --prefix=/usr/local
+  --with-config-file-path=/usr/local/etc/php
+  --with-config-file-scan-dir=/usr/local/etc/php/conf.d
+  --disable-cgi
+  --disable-fpm
+  --enable-opcache
+  --with-pdo-sqlite
+  --enable-mbstring
+  --with-sodium
+  --with-ffi
+  --enable-ctype
+  --with-iconv
+)
+echo "PHP $PHP_VERSION configure flags: ${FLAGS[*]}"
+# Why: php -i leaves CFLAGS out of its "Configure Command" line, so the full list is kept here for lab/check.sh.
+mkdir -p /usr/local/etc/php/conf.d
+echo "${FLAGS[*]}" > /usr/local/etc/php/configure-flags
+
+tmp="$(mktemp -d)"
+cd "$tmp"
+curl -fsSL -o php.tar.xz "https://www.php.net/distributions/php-$PHP_VERSION.tar.xz"
+echo "$PHP_SHA256  php.tar.xz" | sha256sum -c -
+tar -xJf php.tar.xz
+cd "php-$PHP_VERSION"
+./configure "${FLAGS[@]}"
+make -j"$JOBS"
+make install
+
+# Up to 8.4 OPcache is a shared extension that must be loaded; from 8.5 it is built in and needs nothing.
+if [ -f "$(php-config --extension-dir)/opcache.so" ]; then
+  echo "zend_extension=opcache" > /usr/local/etc/php/conf.d/opcache.ini
+fi
+cd "$tmp"
+
+if [ "$WITH_SWOOLE" = 1 ]; then
+  SWOOLE_VERSION=6.2.6
+  SWOOLE_SHA256=b0a97398d50dc9442d48a71238cafa5f75d2c53d2e35d12a59235f9d52dab718
+  curl -fsSL -o swoole.tar.gz "https://github.com/swoole/swoole-src/archive/refs/tags/v$SWOOLE_VERSION.tar.gz"
+  echo "$SWOOLE_SHA256  swoole.tar.gz" | sha256sum -c -
+  tar -xzf swoole.tar.gz
+  cd "swoole-src-$SWOOLE_VERSION"
+  phpize
+  # Only the HTTP server is used: no OpenSSL, HTTP/2 client libs, curl/sqlite coroutine hooks or brotli.
+  ./configure --disable-brotli --disable-zstd
+  make -j"$JOBS"
+  make install
+fi
+
+cd /
+rm -rf "$tmp"
+php -v

@@ -2,11 +2,15 @@
 # One line per fact about this PHP: versions, OPcache, JIT, and the extensions the entries may need.
 # A missing extension is printed as `missing`, never fatal: the caller decides if it needs it.
 set -uo pipefail
+# Why: loading a swoole.so that does not exist prints a startup warning; a build without Swoole just reports "not built".
+swoole_args=()
+if [ -f "$(php -r 'echo ini_get("extension_dir");')/swoole.so" ]; then swoole_args=(-d extension=swoole); fi
 # Why: the JIT only starts with opcache enabled in the CLI, so the probe turns it on like the server will.
-exec php -d display_errors=0 -d extension=swoole \
+exec php -d display_errors=0 "${swoole_args[@]}" \
   -d opcache.enable_cli=1 -d opcache.jit=tracing -d opcache.jit_buffer_size=32M -r '
 echo "php: ", PHP_VERSION, "\n";
-echo "swoole: ", extension_loaded("swoole") ? phpversion("swoole") : "missing", "\n";
+// "not built" is a build that left no swoole.so behind (Swoole did not compile on this PHP); "missing" is a broken load.
+echo "swoole: ", extension_loaded("swoole") ? phpversion("swoole") : (file_exists(ini_get("extension_dir") . "/swoole.so") ? "missing" : "not built"), "\n";
 try {
     echo "sqlite: ", (new PDO("sqlite::memory:"))->query("select sqlite_version()")->fetchColumn(), "\n";
 } catch (Throwable $e) {
