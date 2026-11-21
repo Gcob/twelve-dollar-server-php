@@ -1,6 +1,6 @@
 # Project manager: phase 3, runtime bake-off
 
-**State:** plan written (`details/phase-3.md`, D17 to D20), plan review running. No scope started.
+**State:** plan written and pushed (`4e3a8a5`), plan review running, scope 1 developer working.
 
 ## Resolved config
 
@@ -27,6 +27,8 @@ Skill defaults (`autonomous-run/pipeline.yml`), no run override file. Changes fr
 
 | Scope | Agent id | State |
 |-------|----------|-------|
+| plan-reviewer | aafd6e0f78a1cc771 | running since 16:30 |
+| 1     | a912ed904256c9783 | done `a0477ba`, pushed 16:34 (fixture SC2046: SC2086 is info level; tag v0.11.0) |
 
 ## Verified
 
