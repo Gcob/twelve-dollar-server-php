@@ -103,8 +103,8 @@ return [
 - **One fresh PHP process per case, and each case in K processes (`--procs`, default 5).** The tracing JIT compiles the
   timing loop for the closure it saw first; timing the next case in the same process would make its number depend on the
   cases before it. The K processes are run round by round: round 1 runs every case with JIT off then on, then round 2
-  does the same, and so on, so a slow period of the host hits every case alike. A run of 5 processes takes about 90 s
-  per image and JIT state for the sample bench.
+  does the same, and so on, so a slow period of the host hits every case alike. A run of 5 processes takes about 41 s
+  per image and JIT state for the sample bench (about 82 s per image, from the committed sample run's start and end time).
 - **Warm-up:** at least 1 s of the real loop (100 ms with `--quick`), which also finds N, the iteration count that makes
   one repeat last about 100 ms (10 ms with `--quick`). N is shown in the output.
 - **Timing:** in each process, `hrtime(true)` around N iterations, 10 repeats, `gc_collect_cycles()` between them
@@ -181,15 +181,20 @@ rate), and reports what a request costs the server. Needs `jq` on the Mac. Optio
 rate, not measured), `--script <k6 js under lab/>` (default `lab/macro/k6/fixed-rate.js`), `--out <path>`,
 `--port` (default 18080), `--path` (the URL path, default `/`), `--pre-vus` / `--max-vus` (default both `rate / 10`, at
 least 50: see "VUs and connections"),
-`--php-ini key=value` (added after the entries' PHP flags, repeatable).
+`--php-ini key=value` (added after the server's PHP flags, repeatable).
 
-`lab/servers/noop-swoole.php` is the floor: a Swoole HTTP server with the settings of both Swoole entries
+`lab/servers/noop-swoole.php` is the floor: a Swoole HTTP server with the settings of the `php-swoole-mattsplat` entry
 (`SWOOLE_BASE`, one worker, no coroutine, POST/cookie/file parsing and compression off) that answers `200 {"status":"ok"}`
-to every request. The server runs with the PHP flags of the entries' `start.sh` plus two the lab pins
+to every request. The server runs with the PHP flags of mattsplat's `start.sh` plus two the lab pins
 (`LAB_SERVER_PHP_FLAGS` in `lib.sh`): `opcache.file_update_protection=0` (by default a file saved less than 2 s before the
 server starts is not cached, so it would run without OPcache and JIT, and the run would still look valid) and
 `zend.assertions=-1` (Ubuntu's `php.ini` sets it; the source images have none and PHP's own default is 1). The JSON
 records the ini values PHP reads back with these flags and whether the JIT is on (`server.ini`).
+
+The other Swoole entry, tzimpel's, is configured differently, and the lab does not copy it: it runs `php -c php.ini` (64M
+JIT buffer, `memory_limit=512M`, `opcache.validate_timestamps=0`, `zend.assertions=-1`) and sets `reactor_num`,
+`open_tcp_nodelay`, `backlog` 8192 and `package_max_length`. The code adapted from mattsplat's entry is credited in
+`lab/NOTICE.md`.
 
 ### Layout
 

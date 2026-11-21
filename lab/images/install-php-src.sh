@@ -21,7 +21,9 @@ apt-get install -y --no-install-recommends \
 
 # The flags are identical for every PHP version, so the versions are compared on equal terms.
 # Why each one:
-#   CFLAGS=-O2                  what the distro builds use, so a source build is not faster or slower by its flags
+#   CFLAGS=-O2                  -O2 like Ubuntu's build, without its other flags: dpkg-buildflags in the apt image prints
+#                               -g -O2 -fno-omit-frame-pointer -flto=auto -fstack-protector-strong -fstack-clash-protection
+#                               -mbranch-protection=standard ... (so 8.3 from source vs 8.3-apt stays a control, not a twin)
 #   --prefix=/usr/local         php and php-config land on the PATH
 #   --with-config-file-path     where php looks for php.ini (none is shipped: the server passes its settings with -d)
 #   --with-config-file-scan-dir where the OPcache ini below goes

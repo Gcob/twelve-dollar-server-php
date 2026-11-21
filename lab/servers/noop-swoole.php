@@ -1,10 +1,16 @@
 <?php
 // The cheapest Swoole HTTP server the challenge allows: 200 {"status":"ok"} to every request, no route, no database.
 // It sets the floor of the macro harness (what a request costs before any application code) and checks the harness.
-// Swoole settings are the ones both Swoole entries use; the port is PORT (default 8080).
+// The Swoole settings are the ones of the php-swoole-mattsplat entry (tzimpel's differs, see lab/README.md); the port is
+// PORT (default 8080).
+//
+// Adapted from submissions/php-swoole-mattsplat/server.php of the twelve-dollar-server-challenge repository
+// (MIT License, Copyright (c) 2026 arjaythedev and the challenge contributors; the license text is in lab/NOTICE.md).
+//
+// lab/macro.sh starts it with LAB_SERVER_PHP_FLAGS (lab/lib.sh): mattsplat's flags plus two the lab pins. By hand:
 //
 //   php -d extension=swoole -d memory_limit=-1 -d opcache.enable_cli=1 -d opcache.jit=tracing \
-//       -d opcache.jit_buffer_size=32M lab/servers/noop-swoole.php
+//       -d opcache.jit_buffer_size=32M -d opcache.file_update_protection=0 -d zend.assertions=-1 lab/servers/noop-swoole.php
 
 use Swoole\Http\Request;
 use Swoole\Http\Response;

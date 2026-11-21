@@ -3,6 +3,8 @@
 # Swoole 6.2.6 extension from its source tarball (checksum pinned) into PHP's extension directory.
 # The extension is not enabled globally; the server loads it with `-d extension=swoole`.
 # Written to also work as a submission's install.sh on a bare Ubuntu 24.04.
+# Adapted from submissions/php-swoole-mattsplat/install.sh of the twelve-dollar-server-challenge repository
+# (MIT License, Copyright (c) 2026 arjaythedev and the challenge contributors; the license text is in lab/NOTICE.md).
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 apt-get update

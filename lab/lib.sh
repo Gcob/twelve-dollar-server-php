@@ -26,7 +26,9 @@ LAB_CPUSET_SERVER=2     # the server and the micro benches
 LAB_CPUSET_K6=4-11      # the load generator
 LAB_CPUSET_PROBE=0-1    # the helper that reads cgroup files and /proc for lab/macro.sh, next to the VM's own CPUs
 
-# Resource limits of every lab container (the bench VM of the challenge has the same budget).
+# Resource limits of every lab container: 1 CPU, 2 GiB, no swap, like the challenge VM (1 vCPU, about 2 GB). Not the same
+# budget, though: the VM's memory is shared with the OS (and Nginx when used), the lab gives the server the whole 2 GiB. A
+# variant that peaks near 2 GiB passes here and can be OOM-killed there.
 LAB_RESOURCE_FLAGS=(--cpus=1 --memory=2g --memory-swap=2g --ulimit nofile=65535:65535)
 
 lab_known_variant() {
@@ -49,7 +51,7 @@ lab_require_variant() {
 # arm64 here and amd64 on the bench VM). 1.8.3 is the latest 1.x release (2.x exists); to move, change both.
 LAB_K6_IMAGE=grafana/k6:1.8.3@sha256:2cd9cd09e4119340a122aaf06f30cf3009c19db23b87954909fba0d3eda58e08
 
-# PHP flags of a server in lab/macro.sh: the ones the Swoole entries' start.sh use, plus two the lab pins. Source images
+# PHP flags of a server in lab/macro.sh: the ones of the php-swoole-mattsplat entry's start.sh, plus two the lab pins. Source images
 # ship no php.ini, so nothing else configures PHP.
 # - opcache.file_update_protection=0: by default a file modified less than 2 s ago is not cached, so a server file saved just
 #   before a run would run without OPcache and without JIT.

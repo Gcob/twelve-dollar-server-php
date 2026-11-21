@@ -1,7 +1,9 @@
 # First number: the no-op Swoole server
 
 Written in two steps. The **Prediction** section below was written before any measured run of this series (the first
-run of the series started after the file existed). Everything after it was written once the runs were done.
+run of the series started after the file existed). Everything after it was written once the runs were done. This file
+was committed together with the results, so git alone does not show the order: the same prediction was committed before
+any run in `plan/details/phase-2.md` (commit `85978ab`, section "Predictions for the first number").
 
 ## Prediction
 
@@ -69,7 +71,7 @@ Reading the columns:
 - **memory.peak** counts page cache, **VmHWM** (the PHP process's peak resident set) does not. Both cover the whole life
   of the server container, warm-up included, not only the measured run.
 - The server was never throttled by its CPU limit (`server_throttled_usec` is 0 in all 9 runs). It used 5 to 13 % of its
-  CPU over the window; its idle cost between runs was 49 to 149 µs per second, so idle time is not in the number.
+  CPU over the window; its idle cost, measured over 2 s right after each run's warm-up and before the measured run, was 49 to 149 µs per second, so idle time is not in the number.
 - k6 ran at 31 %, 64 % and 89 % of one CPU at 1k, 3k and 6k, on 8 CPUs it can spread over, so it was not the limit either.
 
 ## Environment
@@ -86,7 +88,7 @@ Reading the columns:
 | PHP flags | `-d extension=swoole -d memory_limit=-1 -d opcache.enable_cli=1 -d opcache.jit=tracing -d opcache.jit_buffer_size=32M` |
 | k6 | v1.8.3 (go1.26.4, linux/arm64), image `grafana/k6:1.8.3@sha256:2cd9cd09e4119340a122aaf06f30cf3009c19db23b87954909fba0d3eda58e08`, script `lab/macro/k6/fixed-rate.js` |
 | VUs | pre-allocated = max = rate / 10 (100, 300, 600) |
-| Harness | `lab/macro.sh` at the commit that contains this file |
+| Harness | `lab/macro.sh` at commit `c3a487b` (the harness then ran without `opcache.file_update_protection=0` and `zend.assertions=-1`, added later: no effect on these numbers, the server file was not freshly saved and the no-op server calls no `assert()`) |
 | Other load | Not quiet. The VM ran 49 containers of other projects (idle most of the time, not paused), the Mac's load average was 8.2 at the start of the series and 5.0 after it, and `Virtualization.framework` was using about 125 % of a CPU before the first run. I ran no image build, no other bench and no test suite during the 9 runs. |
 
 The exact commands, from the repo root (`series.sh` was a loop in my scratchpad, not committed; it is these 9 calls in
@@ -115,7 +117,7 @@ above every 3k run, which is above every 6k run. In CPU per second the server co
 and 130.0 ms/s at 6k: six times the requests for 2.6 times the CPU. A straight line through the 1k and 6k points gives
 about 16 µs per extra request plus about 34 ms of CPU per second that does not depend on the rate (the 3k point lies
 about 10 % above this line, so it is only a rough fit with three points). The part that does not depend on the rate is not idle
-time (49 to 149 µs/s measured between runs); that it comes from per-wake-up work is a hypothesis, not checked here. It is also confounded with the connection
+time (49 to 149 µs/s, measured over 2 s after each run's warm-up); that it comes from per-wake-up work is a hypothesis, not checked here. It is also confounded with the connection
 count in this series: the rate and the connections rise together (100, 300 and 600 connections at 1k, 3k and 6k), so a part that
 does not depend on the rate could depend on the connections instead. The 2,000 req/s runs in `lab/README.md` ("VUs and
 connections", 50, 200 and 500 connections, no visible effect on µs/req) point to connections not mattering, but they were taken
