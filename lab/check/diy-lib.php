@@ -9,7 +9,7 @@ require __DIR__ . '/../servers/diy-connection.php';
 
 /**
  * /big/<n> answers n bytes (n a multiple of 16) of counters, so that a byte lost, repeated or moved shows in a comparison;
- * anything else echoes `<method> <path> <body>`.
+ * /boom throws, like a handler whose database read fails; anything else echoes `<method> <path> <body>`.
  *
  * @return array{int, string}
  */
@@ -17,6 +17,9 @@ function handler_handle(string $method, string $path, string $body): array
 {
     if (str_starts_with($path, '/big/')) {
         return [200, diy_body((int) substr($path, 5))];
+    }
+    if ($path === '/boom') {
+        throw new RuntimeException('the database is locked');
     }
     return [200, '{"echo":"' . $method . ' ' . $path . ' ' . $body . '"}'];
 }

@@ -100,10 +100,12 @@ request (a query string and a form body) through Workerman's HTTP protocol twice
 statics with `ReflectionMethod::getStaticVariables()`. It prints `filled` or `empty` per cache and tree, and exits 0 only
 if all 5 are filled on `stock` and all 5 empty on `nocache`.
 
-A trap: Workerman keeps an HTTP connection alive for 60 s whatever the request's `Connection: close` or the response header
-says, so a client that reads until the server closes (PHP's `file_get_contents('http://...')`) waits a minute. Close from the
-handler (`$connection->close($response)`). `servers/bake-workerman.php` does not need it: the harnesses' clients keep their
-connections open and never read until the server closes.
+A trap: Workerman ignores a request's `Connection: close` (it answers `Connection: keep-alive` and keeps the connection open),
+so a client that reads until the server closes (PHP's `file_get_contents('http://...')`) waits for its own timeout (PHP's
+`default_socket_timeout`, 60 s). Checked with a raw socket that sent `Connection: close` and waited 100 s: the answer came at
+once, then nothing, and the client's timeout ended the wait, with no close from the server. Close from the handler
+(`$connection->close($response)`) when a client needs it. `servers/bake-workerman.php` does not need it: the harnesses' clients
+keep their connections open and never read until the server closes.
 
 ## Micro benchmarks
 
@@ -271,8 +273,9 @@ The runtime bake-off compares runtimes (Swoole, Workerman, ext-event, a hand-wri
   **The database is a copy:** `lab/data/feed.db` is in WAL mode, so opening it would leave `-wal` and `-shm` files in `lab/data/`.
   The server containers mount `lab/data` read-only, and the first boot copies the seed (250 MB, a few seconds, before the server
   listens) to `/tmp/feed.db` inside the container. Side effect: `memory.peak` of a server that reads the database includes
-  about 250 MB of page cache from that copy (about 500 MiB against 12 MiB for the no-op server); use the Pss reading below
-  to compare runtimes.
+  about 250 MB of page cache from that copy (about 500 MiB against 12 MiB for the no-op server). The handler also maps the database (`mmap_size` 256 MiB), so a server's
+  `Pss` includes the database pages its requests touched: compare runtimes on `Pss_Anon` and `memory.current` (see "Memory under
+  load" below), not on `Pss`.
 - **`lab/servers/bake-swoole.php`** is the Swoole server on that handler: the settings of `noop-swoole.php` plus
   `open_tcp_nodelay`, `Content-Type: application/json`, the status the handler gives. Every bake-off server uses a listen
   backlog of 4,096 and TCP_NODELAY on. At boot it prints `socket: backlog=4096 tcp_nodelay=1`: the settings it asked for,
@@ -312,8 +315,9 @@ The runtime bake-off compares runtimes (Swoole, Workerman, ext-event, a hand-wri
   - **The loop** (`bake-diy.php`): one `EventBase` (`epoll`); one persistent read event on the listening socket, which accepts
     until `accept()` has nothing left, so a burst of connections is taken in one callback; one persistent read event per
     connection; a write event only while a connection holds bytes the socket did not take. A connection's state is one small
-    object (`DiyPeer`: its parser object and its two events) allocated at accept, and nothing is allocated per request but the
-    strings of the request itself. ext-event is used because PHP's `stream_select` is capped at 1,024 descriptors.
+    object (`DiyPeer`: its parser object and its two events) allocated at accept. A request
+    allocates only its own strings (head, request line, method, target, body), the array `explode()` makes of its header lines,
+    and its response. ext-event is used because PHP's `stream_select` is capped at 1,024 descriptors.
   - **The listening socket:** `stream_socket_server` with `backlog` 4,096 and `so_reuseport` off (one process), non-blocking;
     `TCP_NODELAY` is set on it with `socket_import_stream` and `socket_set_option`. At boot the server prints
     `socket: backlog=4096 tcp_nodelay=1` like the other two (the backlog is what was asked: the kernel does not give it back,
@@ -381,7 +385,7 @@ A measurement next to other work is not comparable with one on a quiet VM. Just 
 running containers that are not its own three (whoever started them, another checkout's lab run included) and writes them in
 the JSON (`other_containers`: `count` and `names`). Above 0, it prints `WARNING: N other containers running (...)` when it
 reads them and again before the verdict. The run completes and its validity does not change: a smoke run is not a measurement,
-and whether the VM is quiet enough is for whoever reads the results to judge. Every measuring script of the lab does the same.
+and whether the VM is quiet enough is for whoever reads the results to judge. `macro.sh` and `conns.sh` do the same; `micro.sh` does not.
 
 ### Layout
 
@@ -414,11 +418,15 @@ The k6 image is pinned by tag **and** digest in `lib.sh` (`LAB_K6_IMAGE`; the 1.
 - **Connections open** = the established connections to the server's port, counted from the probe in `/proc/net/tcp` at 1/4, 1/2
   and 3/4 of the measured run (the table shows the largest, the JSON keeps the three). **VUs running at once** = the maximum
   of k6's `vus` gauge: how many iterations were in flight together, which is not the number of connections (see below).
-- **Memory under load, Pss.** The probe reads the sum of `Pss` from `/proc/<pid>/smaps_rollup` over the server's processes
-  and the cgroup's `memory.current` at 1/4, 1/2 and 3/4 of the measured run (the JSON keeps the three in
-  `results.memory.under_load`, the table shows the largest of each). Pss splits a page that several processes share between
-  them, so it is what the server costs, where `VmHWM` counts shared libraries and mapped files in full and `memory.peak` counts
-  page cache. A runtime that forks workers is comparable with one that does not through this number.
+- **Memory under load, `Pss_Anon` and `Pss`.** The probe reads the sums of `Pss_Anon` and of `Pss` from
+  `/proc/<pid>/smaps_rollup` over the server's processes, and the cgroup's `memory.current`, at 1/4, 1/2 and 3/4 of the measured
+  run (the JSON keeps the three in `results.memory.under_load`, with `max_pss_anon_mib` and `max_pss_mib`; the table shows the
+  largest of each). **Compare runtimes on `Pss_Anon` (heap and stacks, no file pages) and on `memory.current`, not on `Pss`:**
+  `Pss` counts the file pages a process maps, and the handler maps the SQLite database (`mmap_size`), so `Pss` grows with the
+  rows the requests touched (the same server read 74 MiB on `/noop` and 182 MiB on `/posts/<id>`): it depends on the request
+  count and the ids, not on the runtime. `Pss` is kept as "including the mapped database". Both split a page that several
+  processes share between them, where `VmHWM` counts shared libraries and mapped files in full and `memory.peak` counts page
+  cache, so a runtime that forks workers is comparable with one that does not.
 - **Peak RSS**, two numbers, because they differ: the server cgroup's `memory.peak` (counts page cache charged to the
   cgroup) and the highest `VmHWM` of the processes in the cgroup (`/proc/<pid>/status`, counts the pages the process maps,
   shared libraries included). Both cover the whole life of the server, warm-up included. In trial runs `VmHWM` was about
@@ -519,7 +527,7 @@ more containers join it: the probe of `macro.sh` (`lab/macro/probe.sh`, from out
   still there, and never fails on `bind`. `127.0.0.1` stays for the probe's fresh request. No `sysctl` is changed: the Docker
   VM is shared. If every address from 127.0.0.2 to 127.0.0.254 is taken, the client waits up to 70 s, then fails.
 - **What is read at each step,** after the client opened its connections and swept them (non-blocking reads: an EOF or a reset
-  means the server closed one), and 1 s later: the summed `Pss` of the server's processes, the cgroup's `memory.current` and
+  means the server closed one), and 1 s later: the summed `Pss` and `Pss_Anon` of the server's processes, the cgroup's `memory.current` and
   `memory.events` (`oom_kill`), the established connections to the server port in `/proc/net/tcp`, and a fresh request from
   `127.0.0.1`, which must answer within 1 s. The `/proc/net/tcp` count is a cross-check of the client's count, not what max
   connections is made of.
@@ -536,14 +544,14 @@ more containers join it: the probe of `macro.sh` (`lab/macro/probe.sh`, from out
 - **A client-side error is a harness failure** (exit 1), never a ceiling: a `bind` that fails, `EMFILE` in the client, no free
   port, no free source address, a client that exits or prints something that is not an event.
 - **Memory per connection** is the least-squares slope of the summed `Pss` against the connections held, and the same for
-  `memory.current`, over the held steps (KiB per connection; `n/a` below two held steps). It is a slope over the steps, not a
+  `Pss_Anon` (the figure to compare runtimes on) and `memory.current`, over the held steps (KiB per connection; `n/a` below two held steps). It is a slope over the steps, not a
   per-connection constant: in one run on a busy VM (not a result) Swoole went from about 69 KiB per connection between 1,000
   and 10,000 connections to about 5 KiB between 20,000 and 65,000, so the slope depends on the steps it covers. Read the table
   too.
 - **`--server-nofile N`** sets the server container's `nofile` (a test hook, recorded in the JSON as `server.nofile`).
   `lab/conns.sh` reads the limit back from `/proc/<pid>/limits`.
-- **Output:** a table (one row per step: target, held, Pss, `memory.current`, `/proc/net/tcp` count, fresh request in ms, `ok`
-  or the reason), then max connections, why it stopped, both slopes, the baseline, the server's socket line, the number of other
+- **Output:** a table (one row per step: target, held, Pss, `Pss_Anon`, `memory.current`, `/proc/net/tcp` count, fresh request in ms, `ok`
+  or the reason), then max connections, why it stopped, the three slopes, the baseline (`Pss`, `Pss_Anon`, `memory.current`), the server's socket line, the number of other
   containers (with the same warning as `macro.sh`) and the versions. The JSON (`lab/results/conns-<server>[-<label>]-<image>-
   <UTC date and time>.json`) holds every reading (`steps[]` with the client's event and the probe's reading), the exact command,
   `results.ceiling` and `results.memory_per_connection`. The three containers (`lab-conns-server`, `-client`, `-probe`) are

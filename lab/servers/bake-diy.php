@@ -6,8 +6,8 @@
 //   --ext sockets --ext event
 // (sockets before event, which depends on it; sockets also sets TCP_NODELAY and reads it back).
 //
-// Per connection: one DiyPeer (the connection's parser state, its read event, its write event when it has one) and nothing
-// per request. The listening socket has one persistent read event and accepts until the queue is empty. A connection has a
+// Per connection: one DiyPeer (the connection's parser state, its read event, its write event when it has one), made at accept.
+// A request allocates only its own strings, the array of its header lines and its response. The listening socket has one persistent read event and accepts until the queue is empty. A connection has a
 // persistent read event all its life, except while its write buffer is over the limit (DiyConnection::WRITE_LIMIT), and a
 // write event only while it has bytes the socket did not take.
 

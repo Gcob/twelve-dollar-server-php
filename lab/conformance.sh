@@ -7,7 +7,7 @@
 #
 # One line per case, `ok    <case>` or `FAIL  <case>: <why>`; exit 0 when every case is ok, 1 when one fails or the run could not
 # be done, 2 on a usage error. The cases: /noop, /posts/1 (against what sqlite3 gives for the seed), the error bodies, two
-# requests on a keep-alive connection, two pipelined requests, a request split across two writes, a POST with a body and the
+# requests on a keep-alive connection, three pipelined requests, a request split across two writes, a POST with a body and the
 # reuse of its connection. After them: the exact bytes of the /noop response, the `loop:` line the server printed at boot
 # (when it prints one) and its socket line (backlog, tcp_nodelay). Both containers are removed at the end, whatever happens.
 set -euo pipefail

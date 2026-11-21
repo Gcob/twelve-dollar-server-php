@@ -21,7 +21,7 @@
 # where a connect or a request times out (2 s), a connection is reset, a held connection is closed by the server (EOF), a
 # connect is refused, an answer is wrong, the fresh request fails, or the server died or was OOM-killed. A client that fails
 # itself (bind, no fd left, no free port) is a harness failure, never a ceiling.
-# Memory per connection: least-squares slope of Pss (and of memory.current) against the connections held, over the held steps.
+# Memory per connection: least-squares slope of Pss, Pss_Anon (the mapped database pages left out) and memory.current against the connections held, over the held steps.
 #
 # Prints a table and writes a JSON file with every reading and the exact command (default: lab/results/conns-<server>[-<label>]-
 # <image>-<UTC date and time>.json). Exit codes: 0 a ceiling was found or --max was reached (both are results), 1 the harness
@@ -224,7 +224,7 @@ read_probe() {
   tcp="$(probe connections "$port" | lines_to_json)" || return 1
   fresh="$(probe fresh-request "$port" /noop | lines_to_json)" || return 1
   jq -nc --argjson mem "$mem" --argjson events "$events" --argjson tcp "$tcp" --argjson fresh "$fresh" '{
-    pss_kb: $mem.memory_now.pss_kb, cgroup_current: $mem.memory_now.cgroup_current, oom_kill: $events.memory_events.oom_kill,
+    pss_kb: $mem.memory_now.pss_kb, pss_anon_kb: $mem.memory_now.pss_anon_kb, cgroup_current: $mem.memory_now.cgroup_current, oom_kill: $events.memory_events.oom_kill,
     tcp_established: $tcp.connections.established, fresh_http_code: $fresh.fresh.http_code, fresh_ms: $fresh.fresh.ms}'
 }
 
@@ -340,10 +340,11 @@ jq -n \
                       client_failure: $last.client.failure, client_detail: $last.client.detail} end),
       reason_stopped: ($last.ceiling_reason
                        // (if $max == "" then "no ceiling: every planned step held" else "no ceiling: every planned step up to --max held" end)),
-      baseline: {pss_kb: $baseline.pss_kb, cgroup_current_bytes: $baseline.cgroup_current},
+      baseline: {pss_kb: $baseline.pss_kb, pss_anon_kb: $baseline.pss_anon_kb, cgroup_current_bytes: $baseline.cgroup_current},
       memory_per_connection: {
         held_steps_used: ($held | length),
         pss_kib_per_connection: ($held | slope(.held; .probe.pss_kb)),
+        pss_anon_kib_per_connection: ($held | slope(.held; .probe.pss_anon_kb)),
         cgroup_current_kib_per_connection: ($held | slope(.held; .probe.cgroup_current / 1024))
       }
     },
@@ -354,19 +355,21 @@ jq -n \
 # The table reads the JSON just written, so what is printed is what is stored.
 echo
 echo "image $image (PHP $php_version${swoole_version:+, Swoole $swoole_version}), $(basename "$server_file"), server nofile $server_limit"
-printf '  %8s %8s %10s %12s %10s %9s  %s\n' target held "Pss MiB" "mem.cur MiB" "/proc tcp" "fresh ms" status
+printf '  %8s %8s %10s %13s %12s %10s %9s  %s\n' target held "Pss MiB" "Pss_Anon MiB" "mem.cur MiB" "/proc tcp" "fresh ms" status
 jq -r '.steps[] | [.target, .held, ((.probe.pss_kb // null) | if . == null then null else . / 1024 * 100 | round / 100 end),
+    ((.probe.pss_anon_kb // null) | if . == null then null else . / 1024 * 100 | round / 100 end),
     ((.probe.cgroup_current // null) | if . == null then null else . / 1048576 * 100 | round / 100 end),
     (.probe.tcp_established // null), (.probe.fresh_ms // null), (.ceiling_reason // "ok")]
   | map(if . == null then "n/a" else . end) | @tsv' "$out" \
-  | while IFS=$'\t' read -r t h pss cur tcp fresh status; do
-      printf '  %8s %8s %10s %12s %10s %9s  %s\n' "$t" "$h" "$pss" "$cur" "$tcp" "$fresh" "$status"
+  | while IFS=$'\t' read -r t h pss anon cur tcp fresh status; do
+      printf '  %8s %8s %10s %13s %12s %10s %9s  %s\n' "$t" "$h" "$pss" "$anon" "$cur" "$tcp" "$fresh" "$status"
     done
-IFS=$'\t' read -r maxc maxstep stopped reason pss_slope cur_slope used base_pss base_cur socket < <(
+IFS=$'\t' read -r maxc maxstep stopped reason pss_slope anon_slope cur_slope used base_pss base_anon base_cur socket < <(
   jq -r '.results as $r | [$r.max_connections, ($r.max_connections_step // "none"), $r.held_at_stop, $r.reason_stopped,
     ($r.memory_per_connection.pss_kib_per_connection | if . == null then "n/a" else "\(. * 100 | round / 100) KiB" end),
+    ($r.memory_per_connection.pss_anon_kib_per_connection | if . == null then "n/a" else "\(. * 100 | round / 100) KiB" end),
     ($r.memory_per_connection.cgroup_current_kib_per_connection | if . == null then "n/a" else "\(. * 100 | round / 100) KiB" end),
-    $r.memory_per_connection.held_steps_used, ($r.baseline.pss_kb / 1024), ($r.baseline.cgroup_current_bytes / 1048576),
+    $r.memory_per_connection.held_steps_used, ($r.baseline.pss_kb / 1024), ($r.baseline.pss_anon_kb / 1024), ($r.baseline.cgroup_current_bytes / 1048576),
     (.server.socket // "none printed" | if type == "object" then to_entries | map("\(.key)=\(.value)") | join(" ") else . end)]
     | map(if type == "number" then (. * 100 | round / 100) else . end) | @tsv' "$out")
 echo
@@ -375,8 +378,9 @@ printf '  %-38s %s\n' \
   "held when it stopped" "$stopped" \
   "stopped because" "$reason" \
   "memory per connection, Pss" "$pss_slope (slope over $used held steps)" \
+  "memory per connection, Pss_Anon" "$anon_slope (slope over $used held steps)" \
   "memory per connection, memory.current" "$cur_slope (slope over $used held steps)" \
-  "baseline (one request, no connection)" "Pss $base_pss MiB, memory.current $base_cur MiB" \
+  "baseline (one request, no connection)" "Pss $base_pss MiB, Pss_Anon $base_anon MiB, memory.current $base_cur MiB" \
   "socket settings (server's boot line)" "$socket" \
   "other containers on the VM" "$(jq -r '.other_containers.count' "$out")"
 [ -z "$other_warning" ] || echo "$other_warning"

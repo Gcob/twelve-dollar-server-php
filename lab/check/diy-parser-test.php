@@ -10,6 +10,7 @@ const SAMPLE = "POST /echo/1 HTTP/1.1\r\nHost: x\r\nContent-Type: text/plain\r\n
 const SAMPLE_RESPONSE = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 29\r\n\r\n{\"echo\":\"POST /echo/1 hello\"}";
 const GET = "GET /noop HTTP/1.1\r\nHost: x\r\n\r\n";
 const GET_RESPONSE = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 21\r\n\r\n{\"echo\":\"GET /noop \"}";
+const INTERNAL_ERROR = "HTTP/1.1 500 Internal Server Error\r\nContent-Type: application/json\r\nContent-Length: 33\r\n\r\n{\"error\":\"internal server error\"}";
 const BAD_REQUEST = "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: 23\r\n\r\n{\"error\":\"bad request\"}";
 
 /**
@@ -129,6 +130,9 @@ $bad = [
     'Content-Length empty' => "POST /x HTTP/1.1\r\nContent-Length:\r\n\r\n",
     'two Content-Length' => "POST /x HTTP/1.1\r\nContent-Length: 5\r\nContent-Length: 5\r\n\r\nhello",
     'Content-Length over 1 MiB' => "POST /x HTTP/1.1\r\nContent-Length: 1048577\r\n\r\n",
+    'a space before the colon' => "POST /x HTTP/1.1\r\nContent-Length : 5\r\n\r\nhello",
+    'a tab before the colon' => "POST /x HTTP/1.1\r\nContent-Length\t: 5\r\n\r\nhello",
+    'an obsolete line fold' => "GET /noop HTTP/1.1\r\nX-A: b\r\n c\r\n\r\n",
     'Transfer-Encoding: chunked' => "POST /x HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n",
     'headers over 8 KiB, terminated' => "GET /x HTTP/1.1\r\nX-Pad: " . str_repeat('a', 9000) . "\r\n\r\n",
 ];
@@ -149,6 +153,13 @@ diy_case('headers of exactly 8 KiB are accepted', function () {
 });
 
 diy_case('a good request, then a bad one: both answered in order, then close', fn () => diy_expect(diy_run([SAMPLE . "GET /x HTTP/9\r\n\r\n"]), SAMPLE_RESPONSE . BAD_REQUEST, false));
+
+diy_case('a handler that throws gets a 500, and the connection serves the next request', function () {
+    // The stub's exception message goes to stderr; the cases around it must still pass.
+    $boom = "GET /boom HTTP/1.1\r\n\r\n";
+    return diy_expect(diy_run([$boom . GET]), INTERNAL_ERROR . GET_RESPONSE, true)
+        ?? diy_expect(diy_run([$boom, GET]), INTERNAL_ERROR . GET_RESPONSE, true);
+});
 
 diy_case('a client that closes frees the connection', fn () => diy_expect(diy_run([GET], true), GET_RESPONSE, false));
 

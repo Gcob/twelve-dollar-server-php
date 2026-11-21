@@ -7,7 +7,8 @@
 // What it parses: the request line (method, target, HTTP/1.1 or HTTP/1.0), the headers (only Content-Length, Connection and
 // Transfer-Encoding are read; every other header line only has to have a name and a colon), a body of Content-Length bytes.
 // What it does not: Authorization (a later phase), chunked bodies (400), absolute-form targets (the handler answers 404), lines
-// ended by a bare \n (the request never completes, and a client that sends 8 KiB of it gets a 400).
+// ended by a bare \n (the request never completes, and a client that sends 8 KiB of it gets a 400). A header name with
+// whitespace before the colon, or a line fold, gets a 400. A handler that throws gets a 500 and the connection serves on.
 //
 // A response is `HTTP/1.1 <status> <reason>`, Content-Type, Content-Length and the body: nothing else, whatever the request's
 // version. An HTTP/1.0 client that asks for keep-alive gets it (the connection stays open) without a `Connection: keep-alive`
@@ -28,7 +29,9 @@ final class DiyConnection
         200 => "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ",
         400 => "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: ",
         404 => "HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\nContent-Length: ",
+        500 => "HTTP/1.1 500 Internal Server Error\r\nContent-Type: application/json\r\nContent-Length: ",
     ];
+    private const INTERNAL_ERROR = '{"error":"internal server error"}';
     private const BAD_REQUEST = "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: 23\r\n\r\n{\"error\":\"bad request\"}";
 
     private string $rbuf = '';
@@ -36,7 +39,9 @@ final class DiyConnection
     /** The connection closes once wbuf is empty: nothing more is read or parsed. */
     private bool $closing = false;
 
-    // What parseHead() found in the request it just read (properties, not a returned array, so a request allocates nothing).
+    // What parseHead() found in the request it just read: properties, so no array comes back from the call. A request still
+    // allocates its strings (head, request line, method, target, body), the array explode() makes of its header lines, and
+    // its response; nothing is allocated per request that outlives it.
     private string $method = '';
     private string $target = '';
     private int $bodyLength = 0;
@@ -138,7 +143,13 @@ final class DiyConnection
             }
             $body = $this->bodyLength === 0 ? '' : substr($rbuf, $bodyStart, $this->bodyLength);
             $pos = $bodyStart + $this->bodyLength;
-            [$status, $payload] = handler_handle($this->method, $this->target, $body);
+            // Why: an exception that escaped here would leave the ext-event callback and stop the loop for every connection.
+            try {
+                [$status, $payload] = handler_handle($this->method, $this->target, $body);
+            } catch (Throwable $e) {
+                fwrite(STDERR, 'bake-diy: the handler failed: ' . get_class($e) . ': ' . $e->getMessage() . "\n");
+                [$status, $payload] = [500, self::INTERNAL_ERROR];
+            }
             $this->wbuf .= self::HEAD[$status] . strlen($payload) . "\r\n\r\n" . $payload;
             if ($this->closeAfter) {
                 $this->closing = true;
@@ -181,7 +192,9 @@ final class DiyConnection
         if ($eol !== false) {
             foreach (explode("\r\n", substr($head, $eol + 2)) as $header) {
                 $colon = strpos($header, ':');
-                if ($colon === false || $colon === 0) {
+                // Why: a space or a tab before the colon (`Content-Length : 5`) would make a server that skips it and one that reads it
+                // disagree on where the body ends (RFC 9112, 5.1: answer 400); a line that starts with one is an obsolete line fold.
+                if ($colon === false || $colon === 0 || $header[$colon - 1] === ' ' || $header[$colon - 1] === "\t" || $header[0] === ' ' || $header[0] === "\t") {
                     return false;
                 }
                 if ($colon === 14 && strncasecmp($header, 'content-length', 14) === 0) {

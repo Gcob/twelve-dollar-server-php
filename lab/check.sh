@@ -202,7 +202,7 @@ check_macro_bake_swoole_posts_is_valid() {
          and .server.socket == {backlog: 4096, tcp_nodelay: 1}
          and (.other_containers.count == (.other_containers.names | length))
          and (.other_containers.names | map(startswith("lab-macro-")) | any | not)
-         and .results.memory.under_load.max_pss_mib > 0 and .results.memory.under_load.max_cgroup_current_mib > 0
+         and .results.memory.under_load.max_pss_anon_mib > 0 and .results.memory.under_load.max_pss_anon_mib < .results.memory.under_load.max_pss_mib and .results.memory.under_load.max_cgroup_current_mib > 0
          and (.results.memory.under_load.samples | keys == ["q1", "q2", "q3"])' "$json" >/dev/null && holds=yes
   detail="$(jq -c '{valid, label, other_containers, server: {ext: .server.ext, env: .server.env, socket: .server.socket}, memory: .results.memory.under_load}' "$json")"
   # Why: the default file name is part of what is tested, and it lands in lab/results/: do not leave it there.
@@ -221,7 +221,8 @@ check_conns_holds_steps() {
   jq -e '.results.max_connections == 500 and .results.ceiling == null and (.steps | map(.target) == [200, 500])
          and .results.memory_per_connection.pss_kib_per_connection > 0
          and .results.memory_per_connection.cgroup_current_kib_per_connection > 0
-         and .server.socket == {backlog: 4096, tcp_nodelay: 1} and .results.baseline.pss_kb > 0
+         and .server.socket == {backlog: 4096, tcp_nodelay: 1} and .results.baseline.pss_kb > 0 and .results.baseline.pss_anon_kb > 0
+         and (.steps | all(.probe.pss_anon_kb > 0 and .probe.pss_anon_kb < .probe.pss_kb))
          and (.steps | all(.probe.tcp_established == .held and .probe.fresh_http_code == 200))' "$json" >/dev/null \
     || { echo "the JSON does not hold a run that held 200 and 500 connections: $(jq -c '{results, steps: [.steps[] | {target, held, probe}]}' "$json")"; return 1; }
   grep -q '^  max connections (held, answered) *500 ' <<<"$out" || { echo "the table does not report 500 connections: ${out//$'\n'/ | }"; return 1; }
@@ -308,7 +309,7 @@ check_macro_bake_workerman_posts_is_valid() {
   jq -e '.valid == true and .results.requests > 2000 and .results.error_rate == 0
          and .label == "nocache" and .server.ext == ["pcntl", "sockets", "event"] and .server.env == ["WORKERMAN_TREE=nocache"]
          and .server.socket == {backlog: 4096, tcp_nodelay: 1}
-         and .results.memory.under_load.max_pss_mib > 0' "$json" >/dev/null && return 0
+         and .results.memory.under_load.max_pss_anon_mib > 0 and .results.memory.under_load.max_pss_anon_mib < .results.memory.under_load.max_pss_mib' "$json" >/dev/null && return 0
   detail="$(jq -c '{valid, label, server: {ext: .server.ext, env: .server.env, socket: .server.socket}, memory: .results.memory.under_load}' "$json")"
   echo "the JSON does not hold the run's options and numbers: $detail"
   return 1
@@ -321,7 +322,7 @@ check_diy_parser() {
   out="$(bash "$LAB/run.sh" 8.5 php /lab/check/diy-parser-test.php 2>&1)" || rc=$?
   [ "$rc" = 0 ] || { echo "diy-parser-test.php exited $rc: ${out//$'\n'/ | }"; return 1; }
   ok="$(grep -c '^ok  ' <<<"$out")"
-  [ "$ok" = 30 ] || { echo "expected 30 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
+  [ "$ok" = 34 ] || { echo "expected 34 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
   grep -q 'FAIL' <<<"$out" && { echo "a case failed: ${out//$'\n'/ | }"; return 1; }
   return 0
 }
@@ -361,7 +362,7 @@ check_macro_bake_diy_posts_is_valid() {
   jq -e '.valid == true and .results.requests > 2000 and .results.error_rate == 0
          and .label == "diy" and .server.ext == ["sockets", "event"]
          and .server.socket == {backlog: 4096, tcp_nodelay: 1}
-         and .results.memory.under_load.max_pss_mib > 0' "$json" >/dev/null && return 0
+         and .results.memory.under_load.max_pss_anon_mib > 0 and .results.memory.under_load.max_pss_anon_mib < .results.memory.under_load.max_pss_mib' "$json" >/dev/null && return 0
   detail="$(jq -c '{valid, label, server: {ext: .server.ext, socket: .server.socket}, memory: .results.memory.under_load}' "$json")"
   echo "the JSON does not hold the run's options and numbers: $detail"
   return 1

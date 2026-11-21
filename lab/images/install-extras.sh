@@ -22,8 +22,9 @@ COROUTINE_SHA256=23d053371e357f2acc85c5337da3da6bd73cbc5d49aa9d2fcfd52be99b19e08
 JOBS="$(nproc)"
 [ "$JOBS" -le 8 ] || JOBS=8
 
-# libevent-dev: what PECL event builds against (its version is whatever the pinned Ubuntu digest ships). patch: applies
-# the Workerman patch below.
+# libevent-dev: what PECL event builds against. Its version is whatever the Ubuntu archive holds on the day of the build
+# (`apt-get update` runs at build time, so two builds of the same base digest can differ; `dpkg-query -W libevent-dev` in
+# the image says which one a build got). patch: applies the Workerman patch below.
 apt-get update
 apt-get install -y --no-install-recommends libevent-dev patch
 

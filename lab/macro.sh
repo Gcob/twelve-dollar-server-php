@@ -305,8 +305,9 @@ jq -n \
         under_load: {
           samples: $memory_now,
           max_pss_mib: ([$memory_now[].pss_kb] | max / 1024 * 100 | round / 100),
+          max_pss_anon_mib: ([$memory_now[].pss_anon_kb] | max / 1024 * 100 | round / 100),
           max_cgroup_current_mib: ([$memory_now[].cgroup_current] | max | mib),
-          note: "read at 1/4, 1/2 and 3/4 of the measured run; Pss is the sum over the server processes (/proc/<pid>/smaps_rollup), a shared page split between the processes that map it"
+          note: "read at 1/4, 1/2 and 3/4 of the measured run; Pss and Pss_Anon are sums over the server processes (/proc/<pid>/smaps_rollup), a shared page split between the processes that map it. Pss includes the mapped SQLite database pages (they grow with the rows the requests touched); Pss_Anon does not: compare runtimes on Pss_Anon and cgroup memory.current"
         }
       }
     },
@@ -317,12 +318,12 @@ jq -n \
   }' >"$out"
 
 # The table reads the JSON just written, so what is printed is what is stored.
-IFS=$'\t' read -r valid requests achieved usec p50 p95 p99 pmax err dropped vus conns peak hwm k6cpu srvpct idle thr window pss_now cur_now socket < <(
+IFS=$'\t' read -r valid requests achieved usec p50 p95 p99 pmax err dropped vus conns peak hwm k6cpu srvpct idle thr window pss_now anon_now cur_now socket < <(
   jq -r '.results as $r | [.valid, $r.requests, $r.achieved_req_per_s, $r.cpu_usec_per_request, $r.latency_ms.p50,
     $r.latency_ms.p95, $r.latency_ms.p99, $r.latency_ms.max, $r.error_rate, $r.dropped_iterations, $r.vus_used, $r.connections_open,
     $r.memory.cgroup_memory_peak_mib, $r.memory.vmhwm_mib, $r.k6_cpu_percent_of_one_cpu,
     $r.server_cpu_percent_of_one_cpu, $r.server_idle_usec_per_s, $r.server_throttled_usec, $r.window_s,
-    $r.memory.under_load.max_pss_mib, $r.memory.under_load.max_cgroup_current_mib,
+    $r.memory.under_load.max_pss_mib, $r.memory.under_load.max_pss_anon_mib, $r.memory.under_load.max_cgroup_current_mib,
     (.server.socket // "none printed" | if type == "object" then to_entries | map("\(.key)=\(.value)") | join(" ") else . end)]
     | map(if . == null then "n/a" elif type == "number" then (. * 100 | round / 100) else . end) | @tsv' "$out")
 echo
@@ -340,7 +341,7 @@ printf '  %-28s %s\n' \
   "connections open (max of 3)" "$conns (k6 pre-allocated $pre_vus VUs)" \
   "peak RSS, cgroup memory.peak" "$peak MiB (counts page cache)" \
   "peak RSS, VmHWM" "$hwm MiB" \
-  "memory under load (max of 3)" "Pss $pss_now MiB, cgroup memory.current $cur_now MiB" \
+  "memory under load (max of 3)" "Pss $pss_now MiB (with the mapped database), Pss_Anon $anon_now MiB, cgroup memory.current $cur_now MiB" \
   "socket settings (server's boot line)" "$socket" \
   "server CPU over the window" "$srvpct % of one CPU ($window s window, idle $idle us/s, throttled $thr us)" \
   "k6 CPU over the window" "$k6cpu % of one CPU (k6 is pinned to $(awk -F- '{print $2-$1+1}' <<<"$LAB_CPUSET_K6") CPUs)"
