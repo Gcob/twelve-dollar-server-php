@@ -56,8 +56,8 @@ bash lab/micro.sh lab/micro/benches/sample.php --images 8.4,8.5 --jit on --out /
 ```
 
 Options: `--images a,b,...` (default: every variant), `--jit on|off|both` (default `both`), `--out <path>` (default
-`lab/results/micro-<bench>-<UTC date and time>.json`), `--jit-buffer-size 64M`, `--quick` (short timing, for smoke
-checks: never a result). The bench file must be under `lab/` (it is mounted in the container).
+`lab/results/micro-<bench>-<UTC date and time>.json`), `--procs N` (processes per case, default 5), `--jit-buffer-size
+64M`, `--quick` (short timing and 2 processes, for smoke checks: never a result). The bench file must be under `lab/` (it is mounted in the container).
 
 It runs the bench through `lab/run.sh` (1 CPU, 2 GiB, pinned to CPU 2), **one image at a time**: never start two benches
 at once, they would share the CPU. It exits non-zero on an unknown image, a missing image, a bad argument, or a JIT
@@ -92,14 +92,21 @@ return [
 
 ### How it measures
 
-- **One fresh PHP process per case.** The tracing JIT compiles the timing loop for the closure it saw first; timing the
-  next case in the same process would make its number depend on the cases before it.
+- **One fresh PHP process per case, and each case in K processes (`--procs`, default 5).** The tracing JIT compiles the
+  timing loop for the closure it saw first; timing the next case in the same process would make its number depend on the
+  cases before it. The K processes are run round by round: round 1 runs every case with JIT off then on, then round 2
+  does the same, and so on, so a slow period of the host hits every case alike. A run of 5 processes takes about 90 s
+  per image and JIT state for the sample bench.
 - **Warm-up:** at least 1 s of the real loop (100 ms with `--quick`), which also finds N, the iteration count that makes
   one repeat last about 100 ms (10 ms with `--quick`). N is shown in the output.
-- **Timing:** `hrtime(true)` around N iterations, 10 repeats, `gc_collect_cycles()` between them (outside the clock).
-- **Reported:** the **median** ns/op of the 10 repeats, and the **spread**: the smallest and the largest repeat
-  (`min .. max`). The JSON also holds the 10 repeats, sorted. A spread wider than 10 to 15 % of the median means a noisy run
-  (another process on the Mac, thermal throttling): run it again.
+- **Timing:** in each process, `hrtime(true)` around N iterations, 10 repeats, `gc_collect_cycles()` between them
+  (outside the clock); the process's number is the median of its 10 repeats.
+- **Reported:** the **median of the processes' medians** in ns/op, and the **spread across processes**: the smallest and
+  the largest process median (`min .. max`). The JSON keeps, for each process, its median, its within-process spread
+  (min, max) and its 10 sorted repeats.
+- **UNSTABLE:** a case whose largest process median is more than 1.3 times its smallest gets `UNSTABLE xR` in the table
+  (`unstable: true` and `max_over_min` in the JSON). Do not compare an unstable number between versions: run it again, or
+  read the per-process medians first.
 - **The loop's own cost** is the first row of every run, `(empty loop)`: the same loop calling a closure that returns
   `null`. It is **not subtracted** from the cases. Read a case as "this much, including about that much of loop". The
   loop costs less with JIT on, so a JIT gain on a very cheap case is partly the loop's.
@@ -114,15 +121,40 @@ return [
   if not. Trap found: with the default `opcache.file_update_protection=2`, a file modified in the last 2 seconds is
   **not** cached, so a bench you just saved would run without JIT; the harness sets it to 0.
 
+### Why the spread is across processes
+
+The spread inside one process hides the real variance. With the first version of the harness (one process per case),
+the same image and the same case (`ctype_digit "12345"`, 8.4, JIT on) gave medians of 27.8, 13.5, 28.0 and 27.3 ns in four
+runs in a row, and `json_encode small array` gave 132.6, 135.1, 142.8 and 103.2 ns, while the min..max inside each run stayed
+within about 10 %. Across images, `ctype_digit "12a"` with JIT on gave 26.6 ns on 8.3 and 11.3 ns on 8.4. Both modes are
+steady inside a process, so the swing happens between processes.
+
+The cause is **not established**. Hypotheses, untested except the first:
+
+- *The JIT's code or memory layout differs between processes (ASLR).* One experiment, done once: the same worker 12 times
+  with ASLR on and 12 times with ASLR off (`setarch -R`, verified: the stack and heap addresses were fixed), alternating, 8.4,
+  JIT on, same case. ASLR on gave 27.4 28.2 27.5 13.2 13.1 28.0 28.2 13.1 27.2 26.7 28.8 28.3 (3 fast of 12); ASLR off gave
+  27.6 26.7 27.4 28.2 27.0 28.2 13.1 27.1 28.5 27.0 27.5 27.2 (1 fast of 12). Two modes, about 13 and 27 ns, in both
+  settings, so **ASLR alone does not explain it**. `setarch -R` is refused by Docker's default seccomp profile
+  (`Operation not permitted`), so this needed `docker run --security-opt seccomp=unconfined` outside `lab/run.sh`.
+- *macOS puts the Docker VM's vCPU on a performance core in some processes and on an efficiency core in others.* Not
+  tested (the Mac gives no way to pin a core). It fits the 2x ratio and the two clean modes. The first full run with several
+  processes (`results/micro-sample-20261121-1512.json`) points the same way: the slow mode also showed up with JIT off and on
+  the empty loop (8.3-apt JIT off: `12.0 .. 25.4` ns), so it is not specific to JIT-compiled code. It does not prove it.
+- *Which trace the JIT ends up with depends on timing during warm-up* (when the hot loop is compiled). Not tested.
+
+Whatever the cause, the harness shows it instead of hiding it: several processes, the spread across them, and the
+UNSTABLE flag.
+
 ### Reading the output
 
 ```text
-image   php      jit  case                                median ns/op  spread (min .. max)         iterations
+image   php      jit  case                                median ns/op  spread across procs         iterations  note
 8.4     8.4.28   on   (empty loop)                                 5.2  5.1 .. 5.7                    19754482
-8.4     8.4.28   on   ctype_digit "12345"                         13.0  12.9 .. 14.1                   7759183
+8.4     8.4.28   on   ctype_digit "12345"                         20.5  13.1 .. 28.2                   7759183  UNSTABLE x2.15
 ```
 
-One row per case, per image, per JIT state. The JSON file has the same numbers plus where they ran: the date, the exact
+One row per case, per image, per JIT state (the example above is made up to show the flag). The JSON file has the same numbers plus where they ran: the date, the exact
 command (paths under the repo written relative), the Docker version and architecture, the CPU pinning and limits, and
 for each run the image id (`docker image inspect` id of the local build), the PHP version, the JIT status as PHP reports it
 and the ini values that matter. Numbers from another machine or another Docker version are not comparable with these.

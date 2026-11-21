@@ -2,9 +2,9 @@
 // The micro benchmark harness, run inside a lab image by lab/micro.sh (never by hand: the ini flags matter).
 //
 // Two modes of the same file:
-//   orchestrator  php micro.php <bench> --image .. --jit on|off ..   starts one worker per case, prints the rows,
-//                                                                    writes the JSON of this (image, JIT) run
-//   worker        php -d <ini flags> micro.php --worker ..           times ONE case in a fresh process
+//   orchestrator  php micro.php <bench> --image .. --jit on|off|both ..   runs each case in K workers, prints the
+//                                                                         rows, writes one JSON per (image, JIT)
+//   worker        php -d <ini flags> micro.php --worker ..                times ONE case in a fresh process
 //
 // Why one process per case: the tracing JIT compiles the timing loop for the closure it saw first. Timing the next
 // case in the same process would re-trace the same loop and could blacklist it, so a case's number would depend on
@@ -13,6 +13,8 @@
 declare(strict_types=1);
 
 const EMPTY_LOOP = '(empty loop)';
+// A case is flagged when its slowest process median is more than this times its fastest one.
+const UNSTABLE_RATIO = 1.3;
 
 /** Parses `--name value` and `--flag` options; the first non-option argument is "bench". */
 function micro_args(array $argv): array
@@ -203,7 +205,7 @@ function micro_worker(array $argv): int
 function micro_orchestrator(array $argv): int
 {
     $a = micro_args($argv);
-    foreach (['bench', 'image', 'jit', 'out'] as $required) {
+    foreach (['bench', 'image', 'jit', 'out-dir'] as $required) {
         if (($a[$required] ?? '') === '') {
             return micro_fail("missing --$required (this file is started by lab/micro.sh)", 1);
         }
@@ -213,75 +215,136 @@ function micro_orchestrator(array $argv): int
         'warmup_ms' => $quick ? 100 : 1000,
         'target_ms' => $quick ? 10 : 100,
         'repeats' => 10,
+        'procs' => (int)($a['procs'] ?? ($quick ? 2 : 5)),
         'quick' => $quick,
     ];
+    $states = $a['jit'] === 'both' ? ['off', 'on'] : [$a['jit']];
     $cases = require $a['bench'];
     if (!is_array($cases)) {
         return micro_fail("{$a['bench']} must return an array of cases", 1);
     }
+    $indexes = [-1, ...array_keys(array_values($cases))];
 
-    $workerBase = [PHP_BINARY];
-    foreach (micro_ini_flags($a['jit'], $a['jit-buffer-size'] ?? '64M') as $flag) {
-        array_push($workerBase, '-d', $flag);
+    // One entry per (JIT state, case index): the results of its K processes.
+    $procs = [];
+    $env = [];
+    $dead = []; // a case whose check failed or that threw is not run again in the next processes
+    for ($p = 1; $p <= $timing['procs']; $p++) {
+        fwrite(STDERR, "micro: {$a['image']}, process round $p of {$timing['procs']}\n");
+        // Why this order: round by round, every case and both JIT states inside each round, so a slow period of the
+        // host (the same case swung 2x between processes) hits every case alike instead of one case only.
+        foreach ($states as $state) {
+            foreach ($indexes as $index) {
+                if (isset($dead["$state/$index"])) {
+                    continue;
+                }
+                $result = micro_run_worker($a, $timing, $state, $index, $code);
+                if ($result === null) {
+                    return $code;
+                }
+                $env[$state] ??= $result['env'];
+                unset($result['env']);
+                $procs["$state/$index"][] = $result;
+                if ($result['status'] !== 'ok') {
+                    $dead["$state/$index"] = true;
+                }
+            }
+        }
     }
-    array_push($workerBase, __FILE__, '--worker', $a['bench'], '--jit', $a['jit'],
-        '--warmup-ms', (string)$timing['warmup_ms'], '--target-ms', (string)$timing['target_ms'],
-        '--repeats', (string)$timing['repeats']);
 
     if (isset($a['header'])) {
-        micro_row('image', 'php', 'jit', 'case', 'median ns/op', 'spread (min .. max)', 'iterations');
+        micro_row('image', 'php', 'jit', 'case', 'median ns/op', 'spread across procs', 'iterations', 'note');
     }
-
-    $results = [];
-    $env = null;
     $skipped = 0;
-    foreach ([-1, ...array_keys(array_values($cases))] as $index) {
-        $process = proc_open([...$workerBase, '--case-index', (string)$index], [1 => ['pipe', 'w'], 2 => STDERR], $pipes);
-        $stdout = stream_get_contents($pipes[1]);
-        $code = proc_close($process);
-        if ($code !== 0) {
-            return $code; // the worker already said why on stderr (a JIT state that is not the requested one, for example)
+    foreach ($states as $state) {
+        $results = [];
+        foreach ($indexes as $index) {
+            $results[] = $summary = micro_summarize($procs["$state/$index"]);
+            $php = $env[$state]['php_version'];
+            if ($summary['status'] === 'ok') {
+                micro_row($a['image'], $php, $state, $summary['case'], number_format($summary['median_ns'], 1, '.', ''),
+                    number_format($summary['min_ns'], 1, '.', '') . ' .. ' . number_format($summary['max_ns'], 1, '.', ''),
+                    (string)$summary['iterations'], $summary['unstable'] ? sprintf('UNSTABLE x%.2f', $summary['max_over_min']) : '');
+            } else {
+                $skipped++;
+                $why = $summary['status'] === 'check_failed' ? 'check failed' : 'error';
+                micro_row($a['image'], $php, $state, $summary['case'], '-', "SKIPPED, $why: {$summary['message']}", '-', '');
+            }
         }
-        $result = json_decode($stdout, true);
-        if (!is_array($result)) {
-            return micro_fail("a worker printed something that is not JSON: $stdout");
-        }
-        $env ??= $result['env'];
-        unset($result['env']);
-        $results[] = $result;
-
-        $php = $env['php_version'];
-        if ($result['status'] === 'ok') {
-            micro_row($a['image'], $php, $a['jit'], $result['case'], number_format($result['median_ns'], 1, '.', ''),
-                number_format($result['min_ns'], 1, '.', '') . ' .. ' . number_format($result['max_ns'], 1, '.', ''), (string)$result['iterations']);
-        } else {
-            $skipped++;
-            $why = $result['status'] === 'check_failed' ? 'check failed' : 'error';
-            micro_row($a['image'], $php, $a['jit'], $result['case'], '-', "SKIPPED, $why: {$result['message']}", '-');
-        }
+        $run = [
+            'image' => $a['image'],
+            'image_id' => $a['image-id'] ?? null,
+            'php_version' => $env[$state]['php_version'],
+            'jit' => $state,
+            'jit_state' => $env[$state]['jit'],
+            'ini' => $env[$state]['ini'],
+            'opcache_cache' => $env[$state]['opcache_cache'],
+            'timing' => $timing,
+            'cases' => $results,
+        ];
+        file_put_contents("{$a['out-dir']}/{$a['image']}-$state.json", json_encode($run, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
     }
     if ($skipped > 0) {
-        fwrite(STDERR, "micro: $skipped case(s) skipped on {$a['image']} (JIT {$a['jit']}), see the rows above\n");
+        fwrite(STDERR, "micro: $skipped case(s) skipped on {$a['image']}, see the rows above\n");
     }
-
-    $run = [
-        'image' => $a['image'],
-        'image_id' => $a['image-id'] ?? null,
-        'php_version' => $env['php_version'],
-        'jit' => $a['jit'],
-        'jit_state' => $env['jit'],
-        'ini' => $env['ini'],
-        'opcache_cache' => $env['opcache_cache'],
-        'timing' => $timing,
-        'cases' => $results,
-    ];
-    file_put_contents($a['out'], json_encode($run, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
     return 0;
+}
+
+/** Runs one case in a fresh process; null (with the exit code in $code) when the worker failed. */
+function micro_run_worker(array $a, array $timing, string $state, int $index, ?int &$code): ?array
+{
+    $command = [PHP_BINARY];
+    foreach (micro_ini_flags($state, $a['jit-buffer-size'] ?? '64M') as $flag) {
+        array_push($command, '-d', $flag);
+    }
+    array_push($command, __FILE__, '--worker', $a['bench'], '--jit', $state, '--case-index', (string)$index,
+        '--warmup-ms', (string)$timing['warmup_ms'], '--target-ms', (string)$timing['target_ms'],
+        '--repeats', (string)$timing['repeats']);
+    $process = proc_open($command, [1 => ['pipe', 'w'], 2 => STDERR], $pipes);
+    $stdout = stream_get_contents($pipes[1]);
+    $code = proc_close($process);
+    if ($code !== 0) {
+        return null; // the worker already said why on stderr (a JIT state that is not the requested one, for example)
+    }
+    $result = json_decode($stdout, true);
+    if (!is_array($result)) {
+        $code = micro_fail("a worker printed something that is not JSON: $stdout");
+        return null;
+    }
+    return $result;
+}
+
+/**
+ * The number of a case = the median of its processes' medians; its spread = their min and max (that is what swings
+ * between processes). Each process keeps its own medians and its within-process spread in "procs".
+ */
+function micro_summarize(array $processes): array
+{
+    $first = $processes[0];
+    if ($first['status'] !== 'ok') {
+        return ['case' => $first['case'], 'status' => $first['status'], 'message' => $first['message']];
+    }
+    $medians = array_column($processes, 'median_ns');
+    sort($medians);
+    $iterations = array_column($processes, 'iterations');
+    sort($iterations);
+    $ratio = $medians[0] > 0 ? $medians[count($medians) - 1] / $medians[0] : 1.0;
+    return [
+        'case' => $first['case'],
+        'status' => 'ok',
+        'median_ns' => round(micro_median($medians), 2),
+        'min_ns' => $medians[0],
+        'max_ns' => $medians[count($medians) - 1],
+        'max_over_min' => round($ratio, 3),
+        'unstable' => count($medians) > 1 && $ratio > UNSTABLE_RATIO,
+        'iterations' => (int)micro_median($iterations),
+        'procs' => array_map(static fn($r) => array_diff_key($r, ['case' => 1, 'status' => 1]), $processes),
+    ];
 }
 
 function micro_row(string ...$cols): void
 {
-    echo sprintf('%-7s %-8s %-4s %-34s %13s  %-26s %11s', ...$cols), "\n";
+    echo rtrim(sprintf('%-7s %-8s %-4s %-34s %13s  %-26s %11s  %s', ...$cols)), "\n";
 }
 
 // Why last: the constants above must be defined before the first function runs.
