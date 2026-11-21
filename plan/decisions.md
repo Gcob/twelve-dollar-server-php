@@ -42,6 +42,18 @@
   so numbers from a busy VM are remeasured before any comparison ([Q8](questions/2026-11-21-1411.ronde-2.md)).
 - **D16:** phases 3 and 4 compare variants at about 7,000 req/s (a 75,000-user score), and the finalists also at
   9,500 req/s (100,000 users) ([Q9](questions/2026-11-21-1411.ronde-2.md)).
+- **D17:** the phase 3 bake-off runs on PHP 8.5: the newest version all three runtimes build on (Swoole stops at 8.5,
+  Q7), from source with the lab's flags (D13). Workerman and DIY also get one information run on 8.6 if ext-event
+  builds there (project manager, phase 3, 2026-11-21, while Jacob was away).
+- **D18:** Workerman and DIY run on ext-event (libevent, epoll). PHP's `stream_select` is capped at 1,024 fds, so
+  Workerman's default loop would fail the connection test; the same loop for both leaves the framework and the parser
+  as their only difference (project manager, phase 3, 2026-11-21).
+- **D19:** in the bake-off each runtime keeps its own response headers (Swoole 5, Workerman 4, DIY 2); the results
+  record the exact response bytes. Fewer header bytes are part of what a runtime can save (project manager, phase 3,
+  2026-11-21).
+- **D20:** the bake-off has two routes: `GET /noop` (the runtime alone) and `GET /posts/:id` (plus one indexed read with
+  the spec's query). `/health` would add a third of the runs for a point between the two (project manager, phase 3,
+  2026-11-21).
 
 ## History
 
