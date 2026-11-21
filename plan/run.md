@@ -3,7 +3,7 @@
 **Pace:** 🟢 full · 5-hour 44 % · weekly 18 % at 16:25 · 5-hour resets 18:30 · away
 
 **Status:** 🔵 Running
-**Progress:** step 4/7, `pr-reviewer` OK at 18:23, fixing 3 🟡 before the `blind-reviewer`; scope 7 waits for a quiet VM; scopes 1 to 6 pushed; ext-event built on 8.6 too; plan review OK (delta) at 16:48; scope 1 done and pushed at 16:34 · started 2026-11-21 16:24
+**Progress:** step 4/7, `pr-reviewer` OK at 18:23, R1 R2 R4 fixed (`e1cf918`, check.sh 32/32); `blind-reviewer` since 18:31; scope 7 waits for a quiet VM; scopes 1 to 6 pushed; ext-event built on 8.6 too; plan review OK (delta) at 16:48; scope 1 done and pushed at 16:34 · started 2026-11-21 16:24
 **Since your last read:** scope 2 smoke numbers on a busy VM (not results): Swoole 21 µs/req on `/noop`, 31 on posts at 7k. phase 2's run is archived in [runs/phase-2/](runs/phase-2/run.md). Phase 3 is planned in
 [details/phase-3.md](details/phase-3.md), predictions written at 16:29 before any measurement; D17 to D20 taken while
 you're away.
@@ -18,7 +18,7 @@ you're away.
 | 2   | Questions         | skipped     |       |     | no `run` question opened by this phase; Q7 stays open (not blocking) |
 | 3   | Lab suite         | done        | 18:17 | 18:17 | `lab/check.sh` 32/32 on `3e74d76` |
 | 4   | `pr-reviewer`     | done        | 18:17 | 18:23 | pass 1 OK on scopes 1 to 6 (6 🟡); a delta pass on scope 7 later |
-| 5   | `blind-reviewer`  | to do       |       |     |     |
+| 5   | `blind-reviewer`  | in progress | 18:31 |     | pass 1 on scopes 1 to 6 and the fixes (`e1cf918`) |
 | 6   | Delivery          | to do       |       |     | branch pushed, not merged |
 
 ## Scopes
@@ -30,7 +30,7 @@ you're away.
 | 3   | done | 16:59 | 17:12 | +821 -3 | 10k held, nofile 2048 ceiling 2,035 (timeout), check.sh 24/24 (PM rerun) | `deeb8d1` |       |
 | 4   | done | 17:15 | 17:50 | +636 -16 | php-info 8.5/8.6 event 3.2.0 + Workerman, caches 5/5, boots on both trees, check.sh 26/26 (PM rerun) | `8c8f7cc` |       |
 | 5   | done | 17:53 | 18:01 | +136 -50 | conformance 8/8 on both trees, 4 macro runs VALID, check.sh 28/28 (PM rerun) | `ad52342` |       |
-| 6   | done | 18:03 | 18:14 | +862 -8 | conformance 8/8, parser 30/30, partial write 4/4, VALID at 7k, check.sh 32/32 (PM rerun) | `3e74d76` |       |
+| 6   | done | 18:03 | 18:14 | +862 -8 | conformance 8/8, parser 30/30, partial write 4/4, VALID at 7k, check.sh 32/32 (PM rerun) | `3e74d76` | R1 R2 R4 (`e1cf918`) |
 | 7   | blocked | | | | | | waits for a quiet VM (23 other containers at 18:17) |
 
 ## Reviews
@@ -61,11 +61,11 @@ caches script.
 
 #### R1 🟡 A dead `wait` mode in the conformance client
 
-**Scopes:** 2 · **Status:** to fix (scope 6's developer)
+**Scopes:** 2 · **Status:** fixed (`e1cf918`)
 
 #### R2 🟡 A comment says Workerman adds a `Server` header
 
-**Scopes:** 5 · **Status:** to fix. It contradicts D19 and what scope 5 found.
+**Scopes:** 5 · **Status:** fixed (`e1cf918`). It contradicted D19 and what scope 5 found.
 
 #### R3 🟡 Helpers and the other-containers block duplicated in `macro.sh` and `conns.sh`
 
@@ -73,7 +73,7 @@ caches script.
 
 #### R4 🟡 "The loop is Event" is only checked by hand
 
-**Scopes:** 5 · **Status:** to fix: `conformance.sh` prints the `loop:` line, the check asserts it.
+**Scopes:** 5 · **Status:** fixed (`e1cf918`): `conformance.sh` prints the `loop:` line; the checks assert Event for Workerman, epoll for DIY.
 
 #### R5 🟡 No check that `conns.sh` removes its containers after a failure
 

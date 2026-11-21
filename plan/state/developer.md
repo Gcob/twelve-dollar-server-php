@@ -1,6 +1,6 @@
 # Developer: phase 3, runtime bake-off
 
-**State:** scope 6 done (`3e74d76`), scope 5 done (`ad52342`), scope 4 done (`8c8f7cc`), scope 3 done (`deeb8d1`), scope 2 done (`0d74fda`), scope 1 done (`a0477ba`). Phase 2's handovers are in `plan/runs/phase-2/state/developer.md` (read its "Où regarder"
+**State:** scope 6 done (`3e74d76`, review fixes `e1cf918`), scope 5 done (`ad52342`), scope 4 done (`8c8f7cc`), scope 3 done (`deeb8d1`), scope 2 done (`0d74fda`), scope 1 done (`a0477ba`). Phase 2's handovers are in `plan/runs/phase-2/state/developer.md` (read its "Où regarder"
 and "Impasses" if you touch `macro.sh`, `micro.sh`, `seed.sh` or the images).
 
 ## Verified
@@ -183,6 +183,10 @@ Rien.
 **For scope 7:** one process, so the server's CPU is the whole cgroup's. Smoke numbers on a busy VM (not measurements): `/noop` 18.2 us/req, posts 26.9, against Swoole 21.1 / 31.2 and Workerman 21.7 / 29.9 under the same conditions. Memory per connection can be compared: DIY memory.current slope 3.9 KiB/conn on 200 to 500 (Pss slope 0.2 KiB/conn, too few connections to mean anything). The macro run holds 700 connections (k6 VUs).
 
 **Pitfalls:** `fread` on a socket gives at most 8 KiB, so a test that calls `onReadable()` once per write must loop until the server's end is empty. The 400 rules are strict (Content-Length twice, over 1 MiB, any Transfer-Encoding): a later phase that adds a client sending any of these needs the parser changed, not the test. At the fd limit the listening event spins (accept fails, fires again): not shed yet.
+
+## Handover of scope 6, review fixes (`e1cf918`)
+
+Three fixes from the pr-reviewer in one commit: (1) the dead `wait` mode of `lab/conformance/client.php` is gone (only `poll` and `run`; header and usage text updated); (2) `bake-workerman.php`'s comment no longer claims a `Server` header (Workerman 5.2.4 adds only Content-Length and Connection with a `Response` object); (3) `conformance.sh` prints `event loop the server printed at boot: <loop>` (read from the `loop:` boot line, nothing printed when there is none) just before the socket line. `check_conformance_bake_workerman` asserts `Workerman\Events\Event` on both trees, and `check_conformance_bake_diy` asserts `epoll`. README updated. Full `bash lab/check.sh`: 32/32 ok. Both new assertions passed on first run (no separate red run); the Workerman conformance by hand printed `event loop the server printed at boot: Workerman\Events\Event`.
 
 ## Questions for the project manager
 

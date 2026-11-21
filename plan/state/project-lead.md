@@ -35,7 +35,8 @@ Skill defaults (`autonomous-run/pipeline.yml`), no run override file. Changes fr
 | 5     | a6a4a68f6415877b2 | done `ad52342`, pushed 18:03 |
 | 6     | a5ac629088e976752 | done `3e74d76`, pushed 18:17 (DIY spins on accept at the fd limit: noted for the conns run) |
 | pr-reviewer | ac896543c8894bdb6 | pass 1 OK 18:23 (6 🟡) |
-| 6 (fixes)   | a5ac629088e976752 | R1 R2 R4 since 18:23 |
+| 6 (fixes)   | a5ac629088e976752 | R1 R2 R4 fixed `e1cf918`, pushed 18:30 |
+| blind-reviewer | (id below) | pass 1 since 18:31 |
 
 ## Verified
 
