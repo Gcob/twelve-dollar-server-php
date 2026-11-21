@@ -1,7 +1,8 @@
 # Third-party notice
 
-`lab/images/install-php83-apt.sh` and `lab/servers/noop-swoole.php` are adapted from the `php-swoole-mattsplat` entry
-(`install.sh` and the Swoole settings of `server.php`) of the challenge repository,
+`lab/images/install-php83-apt.sh`, `lab/servers/noop-swoole.php`, `lab/servers/bake-swoole.php` and `lab/servers/handler.php`
+are adapted from the `php-swoole-mattsplat` entry (`install.sh`, the Swoole settings and the SQLite pragmas of `server.php`) of
+the challenge repository,
 <https://github.com/arjaythedev/twelve-dollar-server-challenge>. The challenge repository is under the MIT License; the entry
 has no license file of its own. The license text, as published there:
 

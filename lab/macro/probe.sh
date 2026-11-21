@@ -5,6 +5,7 @@
 #
 #   probe.sh cpu <server container id> <k6 container id>     time (us) and cpu.stat of both cgroups
 #   probe.sh memory <server container id>                    memory.* of the server's cgroup and VmHWM of its processes
+#   probe.sh memory-now <server container id>               Pss (kB, summed over the server's processes) and memory.current now
 #   probe.sh connections <port>                              established connections whose local port is <port> (server side)
 #   probe.sh port-open <port>                                exit 0 if something accepts connections on 127.0.0.1:<port>
 #   probe.sh http-answers <port> <path>                      exit 0 if 127.0.0.1:<port><path> answers any HTTP status
@@ -36,6 +37,18 @@ case "${1:-}" in
       [ -z "$hwm" ] || echo "vmhwm_kb $pid $hwm"
     done
     ;;
+  memory-now)
+    # Why Pss: it splits a shared page between the processes that map it, so the sum is what the server costs, where VmHWM counts
+    # the shared libraries in full and memory.peak counts page cache. Read while the server works, it is the memory under load.
+    s="$(cgroup_dir "$2")"
+    total=0
+    for pid in $(cat "$s/cgroup.procs"); do
+      pss="$(awk '/^Pss:/ {print $2}' "/proc/$pid/smaps_rollup" 2>/dev/null || true)"
+      total=$(( total + ${pss:-0} ))
+    done
+    echo "memory_now pss_kb $total"
+    echo "memory_now cgroup_current $(cat "$s/memory.current")"
+    ;;
   connections)
     # Why: the host network namespace is shared (--network host), so /proc/net/tcp lists the server's sockets. Column 2 is
     # the local address (`0100007F:4650`), column 4 the state (01 = ESTABLISHED).
@@ -51,7 +64,7 @@ case "${1:-}" in
     [ -n "$code" ] && [ "$code" != 000 ]
     ;;
   *)
-    echo "usage: probe.sh cpu|memory|connections|port-open|http-answers ..." >&2
+    echo "usage: probe.sh cpu|memory|memory-now|connections|port-open|http-answers ..." >&2
     exit 2
     ;;
 esac

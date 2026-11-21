@@ -57,10 +57,60 @@ LAB_K6_IMAGE=grafana/k6:1.8.3@sha256:2cd9cd09e4119340a122aaf06f30cf3009c19db23b8
 # the release the `stable` tag points at; to move, change both.
 LAB_SHELLCHECK_IMAGE=koalaman/shellcheck:v0.11.0@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d
 
-# PHP flags of a server in lab/macro.sh: the ones of the php-swoole-mattsplat entry's start.sh, plus two the lab pins. Source images
-# ship no php.ini, so nothing else configures PHP.
+# PHP flags of a server in lab/macro.sh and lab/conformance.sh: the ones of the php-swoole-mattsplat entry's start.sh, plus two
+# the lab pins. The extensions are not here: each run names its own (--ext, see lab_build_php_flags). Source images ship no
+# php.ini, so nothing else configures PHP.
 # - opcache.file_update_protection=0: by default a file modified less than 2 s ago is not cached, so a server file saved just
 #   before a run would run without OPcache and without JIT.
 # - zend.assertions=-1: Ubuntu's php.ini sets it, PHP's built-in default (source images) is 1; the same on every image.
-LAB_SERVER_PHP_FLAGS=(-d extension=swoole -d memory_limit=-1 -d opcache.enable_cli=1 -d opcache.jit=tracing -d opcache.jit_buffer_size=32M
+LAB_SERVER_PHP_FLAGS=(-d memory_limit=-1 -d opcache.enable_cli=1 -d opcache.jit=tracing -d opcache.jit_buffer_size=32M
   -d opcache.file_update_protection=0 -d zend.assertions=-1)
+
+# lab_build_php_flags: fills LAB_PHP_FLAGS with `-d extension=<name>` for each name of the array LAB_EXT, then
+# LAB_SERVER_PHP_FLAGS, then `-d <k=v>` for each entry of the array LAB_INI. The caller sets LAB_EXT and LAB_INI.
+lab_build_php_flags() {
+  local e kv
+  LAB_PHP_FLAGS=()
+  for e in "${LAB_EXT[@]+"${LAB_EXT[@]}"}"; do LAB_PHP_FLAGS+=(-d "extension=$e"); done
+  LAB_PHP_FLAGS+=("${LAB_SERVER_PHP_FLAGS[@]}")
+  for kv in "${LAB_INI[@]+"${LAB_INI[@]}"}"; do LAB_PHP_FLAGS+=(-d "$kv"); done
+}
+
+# lab_start_server <container name> <variant> <port> <server file as the container sees it>: starts the server container the
+# same way for lab/macro.sh and lab/conformance.sh (1 CPU, 2 GiB, the server CPU, host network, lab/ at /lab, the seed
+# read-only at /lab/data). Needs LAB (the lab/ folder) and LAB_PHP_FLAGS (lab_build_php_flags); LAB_ENV, an array of K=V,
+# is passed with -e after PORT. Never mount lab/data writable here: a server must copy feed.db, not open it (WAL files).
+lab_start_server() {
+  local name="$1" variant="$2" port="$3" server_in="$4" env_args=() kv
+  for kv in "${LAB_ENV[@]+"${LAB_ENV[@]}"}"; do env_args+=(-e "$kv"); done
+  docker run -d --name "$name" "${LAB_RESOURCE_FLAGS[@]}" --network host --cpuset-cpus "$LAB_CPUSET_SERVER" \
+    -v "$LAB:/lab:ro" -v "$LAB/data:/lab/data:ro" -e "PORT=$port" "${env_args[@]+"${env_args[@]}"}" \
+    "$LAB_IMAGE:$variant" php "${LAB_PHP_FLAGS[@]}" "$server_in" >/dev/null
+}
+
+# lab_in_container_path <file under lab/>: prints the file's path in the containers (lab/ is mounted at /lab). Returns 1 with a
+# message on stderr when the file is missing or is not under lab/. Needs LAB.
+lab_in_container_path() {
+  local abs
+  [ -f "$1" ] || { echo "file not found: $1" >&2; return 1; }
+  abs="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
+  case "$abs" in
+    "$LAB"/*) echo "/lab/${abs#"$LAB"/}" ;;
+    *) echo "the file must be under lab/ (it is mounted in the containers): $1" >&2; return 1 ;;
+  esac
+}
+
+# lab_other_containers <name>...: the names of the running containers other than the ones named (the run's own), one per
+# line. A measurement on a VM that runs other work, a lab run started from another checkout included, is not comparable
+# with one on a quiet VM, so every measuring script records these just before it measures.
+lab_other_containers() {
+  local own
+  own="$(printf '%s\n' "$@")"
+  docker ps --format '{{.Names}}' | grep -v -x -F -e "$own" || true
+}
+
+# lab_socket_line <container>: the `socket: key=value ...` line a bake-off server prints at boot (the settings it asked
+# for: the images' Swoole cannot read them back), as the text after `socket: `. Empty when the server prints none.
+lab_socket_line() {
+  docker logs "$1" 2>&1 | sed -n 's/^socket: //p' | head -n 1
+}

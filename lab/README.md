@@ -189,7 +189,11 @@ rate), and reports what a request costs the server. Needs `jq` on the Mac. Optio
 rate, not measured), `--script <k6 js under lab/>` (default `lab/macro/k6/fixed-rate.js`), `--out <path>`,
 `--port` (default 18080), `--path` (the URL path, default `/`), `--pre-vus` / `--max-vus` (default both `rate / 10`, at
 least 50: see "VUs and connections"),
-`--php-ini key=value` (added after the server's PHP flags, repeatable).
+`--php-ini key=value` (added after the server's PHP flags, repeatable), `--ext <name>` (a PHP extension to load with
+`-d extension=<name>`, repeatable, default `swoole`; giving one replaces the default), `--env K=V` (passed to the server
+container with `-e`, repeatable) and `--label <text>` (letters, digits, `.`, `_`, `-`; goes in the JSON and in the default
+file name after the server's name: `macro-<server>-<label>-<image>-...`). The JSON records `server.ext`, `server.env` and `label`;
+Swoole's version is probed only when `swoole` is among the extensions.
 
 `lab/servers/noop-swoole.php` is the floor: a Swoole HTTP server with the settings of the `php-swoole-mattsplat` entry
 (`SWOOLE_BASE`, one worker, no coroutine, POST/cookie/file parsing and compression off) that answers `200 {"status":"ok"}`
@@ -203,6 +207,59 @@ The other Swoole entry, tzimpel's, is configured differently, and the lab does n
 JIT buffer, `memory_limit=512M`, `opcache.validate_timestamps=0`, `zend.assertions=-1`) and sets `reactor_num`,
 `open_tcp_nodelay`, `backlog` 8192 and `package_max_length`. The code adapted from mattsplat's entry is credited in
 `lab/NOTICE.md`.
+
+### Bake-off servers, the handler and the conformance test
+
+The runtime bake-off compares runtimes (Swoole, Workerman, ext-event, a hand-written loop) serving the same two routes:
+`GET /noop` (the runtime alone) and `GET /posts/:id` (the runtime plus one indexed read).
+
+- **`lab/servers/handler.php`** is the one handler every runtime calls, so that runtimes differ by what they do around it. It
+  holds no runtime code: `handler_handle($method, $path, $body)` returns `[status, body]`, `handler_boot()` copies the seed and
+  opens it (`handler_copy_db()` and `handler_open_db()` are the two halves, for a runtime that forks workers: copy once before
+  the fork, open in each worker). The routes and the error bodies are the challenge's (`{"error":"not found"}` for an unknown
+  path or method, `invalid post id` with a 400 when `:id` is not a positive integer, `post not found` with a 404). The post query
+  is the spec's with `WHERE p.id = ?`, prepared once at boot, with the pragmas of the `php-swoole-mattsplat` entry.
+  **The database is a copy:** `lab/data/feed.db` is in WAL mode, so opening it would leave `-wal` and `-shm` files in `lab/data/`.
+  The server containers mount `lab/data` read-only, and the first boot copies the seed (250 MB, a few seconds, before the server
+  listens) to `/tmp/feed.db` inside the container. Side effect: `memory.peak` of a server that reads the database includes
+  about 250 MB of page cache from that copy (about 500 MiB against 12 MiB for the no-op server); use the Pss reading below
+  to compare runtimes.
+- **`lab/servers/bake-swoole.php`** is the Swoole server on that handler: the settings of `noop-swoole.php` plus
+  `open_tcp_nodelay`, `Content-Type: application/json`, the status the handler gives. Every bake-off server uses a listen
+  backlog of 4,096 and TCP_NODELAY on. At boot it prints `socket: backlog=4096 open_tcp_nodelay=1`: the settings it asked for,
+  as the images' Swoole is not built with sockets support and cannot read them back. `macro.sh` and `conformance.sh` copy that
+  line into their output, and `macro.sh` into the JSON (`server.socket`).
+- **`lab/conformance.sh`** proves that a server speaks HTTP/1.1 correctly with that handler:
+
+  ```bash
+  bash lab/conformance.sh --image 8.5 --server lab/servers/bake-swoole.php [--ext <name>]... [--env K=V]... [--port 18090]
+  ```
+
+  It starts the server like `macro.sh` does (`lab_start_server` in `lib.sh`) and runs `lab/conformance/client.php`, which
+  uses raw sockets (no curl), in a second container on the same host network. One line per case, `ok    <case>` or
+  `FAIL  <case>: <why>`, exit 1 if one fails; both containers are removed whatever happens. The cases: `noop` (200, the exact
+  body, `Content-Type: application/json`); `post 1` (the same JSON values, with the same types and key order, as `sqlite3`
+  gives on the Mac for post 1 with the same query); `errors` (the 404 and 400 bodies, `/posts/1/like`, `/posts/`);
+  `keep-alive` (two requests on one connection); `pipelining` (three requests in one write, answered in order);
+  `split request` (cut in the middle of the headers, 50 ms apart); `body then reuse` (a `POST /nope` with a body, then a
+  `GET /noop` on the same connection); `response bytes` (prints the exact bytes of the `/noop` response: each runtime keeps
+  its own headers). It ends with the socket line the server printed at boot.
+- **`lab/macro/k6/posts.js`** is `fixed-rate.js` for `GET /posts/<id>`: the id is the iteration number times 999,983 (a prime),
+  modulo 500,000, plus 1, so the sequence over the seed's post ids is the same on every run and uses no random number. It
+  takes the scheme, host and port of `--path`'s URL, so `--path /posts/1` makes the readiness check read the database too.
+
+```bash
+bash lab/macro.sh --image 8.5 --server lab/servers/bake-swoole.php --rate 7000 --duration 20 --path /posts/1 \
+  --script lab/macro/k6/posts.js
+```
+
+### Quiet VM
+
+A measurement next to other work is not comparable with one on a quiet VM. Just before the measured run, `macro.sh` lists the
+running containers that are not its own three (whoever started them, another checkout's lab run included) and writes them in
+the JSON (`other_containers`: `count` and `names`). Above 0, it prints `WARNING: N other containers running (...)` when it
+reads them and again before the verdict. The run completes and its validity does not change: a smoke run is not a measurement,
+and whether the VM is quiet enough is for whoever reads the results to judge. Every measuring script of the lab does the same.
 
 ### Layout
 
@@ -235,6 +292,11 @@ The k6 image is pinned by tag **and** digest in `lib.sh` (`LAB_K6_IMAGE`; the 1.
 - **Connections open** = the established connections to the server's port, counted from the probe in `/proc/net/tcp` at 1/4, 1/2
   and 3/4 of the measured run (the table shows the largest, the JSON keeps the three). **VUs running at once** = the maximum
   of k6's `vus` gauge: how many iterations were in flight together, which is not the number of connections (see below).
+- **Memory under load, Pss.** The probe reads the sum of `Pss` from `/proc/<pid>/smaps_rollup` over the server's processes
+  and the cgroup's `memory.current` at 1/4, 1/2 and 3/4 of the measured run (the JSON keeps the three in
+  `results.memory.under_load`, the table shows the largest of each). Pss splits a page that several processes share between
+  them, so it is what the server costs, where `VmHWM` counts shared libraries and mapped files in full and `memory.peak` counts
+  page cache. A runtime that forks workers is comparable with one that does not through this number.
 - **Peak RSS**, two numbers, because they differ: the server cgroup's `memory.peak` (counts page cache charged to the
   cgroup) and the highest `VmHWM` of the processes in the cgroup (`/proc/<pid>/status`, counts the pages the process maps,
   shared libraries included). Both cover the whole life of the server, warm-up included. In trial runs `VmHWM` was about

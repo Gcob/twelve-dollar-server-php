@@ -4,7 +4,11 @@
 #
 #   bash lab/macro.sh --image 8.4 --server lab/servers/noop-swoole.php --rate 2000 --duration 30
 #                     [--warmup 10] [--script lab/macro/k6/fixed-rate.js] [--out <path>] [--port 18080]
-#                     [--path /] [--pre-vus <n>] [--max-vus <n>] [--php-ini key=value]...
+#                     [--path /] [--pre-vus <n>] [--max-vus <n>] [--php-ini key=value]... [--ext <name>]... [--env K=V]...
+#                     [--label <text>]
+#
+# --ext names a PHP extension to load (`-d extension=<name>`, repeatable, default `swoole`); --env K=V is passed to the server
+# container (repeatable); --label goes in the JSON and in the default file name after the server's name.
 #
 # Three containers, all on the host network of Docker's VM (never k6 from macOS: Docker Desktop forwards a port from the
 # Mac through a userspace proxy, which would pollute every number):
@@ -12,9 +16,11 @@
 #   k6      the pinned grafana/k6 image, pinned to the k6 CPUs, no CPU limit;
 #   probe   php-lab:<image> sleeping, --cgroupns host --pid host: it reads cpu.stat, memory.peak and /proc from OUTSIDE
 #           the server's and k6's cgroups, so a read is never part of the number it reads.
+# Just before the measured run it records the other containers running on the VM (`other_containers` in the JSON, a WARNING
+# line when there are any): a measurement next to other work is not comparable with one on a quiet VM.
 #
 # µs CPU per request = (server cgroup usage_usec after the measured run - before) / requests k6 sent in that run.
-# Prints a table and writes a JSON file with every number (default: lab/results/macro-<server>-<image>-<rate>rps-<UTC
+# Prints a table and writes a JSON file with every number (default: lab/results/macro-<server>[-<label>]-<image>-<rate>rps-<UTC
 # date and time>.json). Exit codes: 0 valid run, 3 run printed but INVALID (errors above 0 % or dropped iterations),
 # 1 any other failure (bad argument, server did not start, k6 failed), 2 usage. The three containers are removed at the
 # end, whatever happens.
@@ -32,7 +38,8 @@ PROBE=lab-macro-probe
 usage() {
   echo "usage: lab/macro.sh --image <variant> --server <php file under lab/> --rate <req/s> --duration <s> [--warmup <s>]" >&2
   echo "                    [--script <k6 js under lab/>] [--out <path>] [--port <n>] [--path </url/path>]" >&2
-  echo "                    [--pre-vus <n>] [--max-vus <n>] [--php-ini key=value]..." >&2
+  echo "                    [--pre-vus <n>] [--max-vus <n>] [--php-ini key=value]... [--ext <name>]... [--env K=V]..." >&2
+  echo "                    [--label <text>]" >&2
   exit 2
 }
 fail() { echo "macro: $*" >&2; exit 1; }
@@ -41,7 +48,8 @@ command_line="lab/macro.sh $*"
 command_line="${command_line//$REPO/.}"
 
 image="" server_file="" rate="" duration="" warmup=10 script="$LAB/macro/k6/fixed-rate.js" out="" port=18080 url_path=/
-pre_vus="" max_vus="" php_ini=()
+pre_vus="" max_vus="" label=""
+LAB_EXT=() LAB_ENV=() LAB_INI=()
 while [ "$#" -gt 0 ]; do
   [ "$#" -ge 2 ] || { echo "missing value for $1" >&2; usage; }
   case "$1" in
@@ -56,7 +64,10 @@ while [ "$#" -gt 0 ]; do
     --path) url_path="$2" ;;
     --pre-vus) pre_vus="$2" ;;
     --max-vus) max_vus="$2" ;;
-    --php-ini) php_ini+=("$2") ;;
+    --php-ini) LAB_INI+=("$2") ;;
+    --ext) LAB_EXT+=("$2") ;;
+    --env) LAB_ENV+=("$2") ;;
+    --label) label="$2" ;;
     *) echo "unknown option: $1" >&2; usage ;;
   esac
   shift 2
@@ -78,23 +89,20 @@ fi
 for n in pre_vus max_vus; do
   [[ "${!n}" =~ ^[0-9]+$ ]] || { echo "--${n//_/-} must be a whole number, got '${!n}'" >&2; usage; }
 done
+[ "${#LAB_EXT[@]}" -gt 0 ] || LAB_EXT=(swoole)
+for kv in "${LAB_ENV[@]+"${LAB_ENV[@]}"}"; do
+  [[ "$kv" == ?*=* ]] || { echo "--env must be K=V, got '$kv'" >&2; usage; }
+done
+# Why: the label becomes part of a file name.
+[[ -z "$label" || "$label" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "--label may only hold letters, digits, . _ and -, got '$label'" >&2; usage; }
 [ "$rate" -ge 1 ] && [ "$duration" -ge 1 ] || { echo "--rate and --duration must be at least 1" >&2; usage; }
 [[ "$url_path" == /* ]] || { echo "--path must start with /" >&2; usage; }
 
 # Everything is checked before the first container starts.
 lab_require_variant "$image" || exit 1
 docker image inspect "$LAB_IMAGE:$image" >/dev/null 2>&1 || fail "image $LAB_IMAGE:$image is missing (run lab/build.sh $image)"
-in_container_path() { # <file under lab/>: prints its path in the containers, where lab/ is mounted at /lab
-  local abs
-  [ -f "$1" ] || fail "file not found: $1"
-  abs="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
-  case "$abs" in
-    "$LAB"/*) echo "/lab/${abs#"$LAB"/}" ;;
-    *) fail "the file must be under lab/ (it is mounted in the containers): $1" ;;
-  esac
-}
-server_in="$(in_container_path "$server_file")"
-script_in="$(in_container_path "$script")"
+server_in="$(lab_in_container_path "$server_file")" || exit 1
+script_in="$(lab_in_container_path "$script")" || exit 1
 if [ -n "$(docker ps -a --format '{{.Names}}' | grep -x -e "$SERVER" -e "$K6C" -e "$PROBE" || true)" ]; then
   fail "a lab/macro.sh run is in progress, or one was killed: remove its containers first (docker rm -f $SERVER $K6C $PROBE)"
 fi
@@ -102,7 +110,7 @@ docker image inspect "$LAB_K6_IMAGE" >/dev/null 2>&1 || { echo "pulling $LAB_K6_
 
 stamp="$(date -u +%Y%m%d-%H%M%S)"
 if [ -z "$out" ]; then
-  out="$LAB/results/macro-$(basename "$server_file" .php)-$image-${rate}rps-$stamp.json"
+  out="$LAB/results/macro-$(basename "$server_file" .php)${label:+-$label}-$image-${rate}rps-$stamp.json"
 fi
 mkdir -p "$LAB/results" "$LAB/data" "$(dirname "$out")"
 
@@ -118,6 +126,8 @@ trap 'exit 130' INT
 trap 'exit 143' TERM HUP
 
 probe() { docker exec "$PROBE" bash /lab/macro/probe.sh "$@"; }
+# json_array <string>...: the arguments as a JSON array (`[]` with none).
+json_array() { jq -nc '$ARGS.positional' --args "$@"; }
 # `<group> <key> <number>` lines on stdin to {"group": {"key": number}}.
 lines_to_json() {
   jq -Rn 'reduce (inputs | split(" ") | select(length == 3)) as $l ({}; .[$l[0]][$l[1]] = ($l[2] | tonumber? // $l[2]))'
@@ -133,11 +143,8 @@ if probe port-open "$port"; then
   fail "port $port is already in use on the VM's host network: pick another with --port"
 fi
 
-php_flags=("${LAB_SERVER_PHP_FLAGS[@]}")
-for kv in "${php_ini[@]+"${php_ini[@]}"}"; do php_flags+=(-d "$kv"); done
-docker run -d --name "$SERVER" "${LAB_RESOURCE_FLAGS[@]}" --network host --cpuset-cpus "$LAB_CPUSET_SERVER" \
-  -v "$LAB:/lab:ro" -v "$LAB/data:/lab/data" -e "PORT=$port" \
-  "$LAB_IMAGE:$image" php "${php_flags[@]}" "$server_in" >/dev/null
+lab_build_php_flags
+lab_start_server "$SERVER" "$image" "$port" "$server_in"
 
 answered=""
 for _ in $(seq 1 100); do
@@ -154,7 +161,7 @@ done
 server_id="$(docker inspect -f '{{.Id}}' "$SERVER")"
 php_version="$(docker exec "$PROBE" php -r 'echo PHP_VERSION;')"
 # The ini values the server's flags give, as PHP reads them back (same flags, same image), and whether the JIT is on.
-php_ini_json="$(docker exec "$PROBE" php "${php_flags[@]}" -d display_errors=stderr -r '
+php_ini_json="$(docker exec "$PROBE" php "${LAB_PHP_FLAGS[@]}" -d display_errors=stderr -r '
   $keys = ["opcache.enable_cli", "opcache.jit", "opcache.jit_buffer_size", "opcache.file_update_protection",
            "zend.assertions", "memory_limit"];
   $ini = [];
@@ -162,7 +169,11 @@ php_ini_json="$(docker exec "$PROBE" php "${php_flags[@]}" -d display_errors=std
   $status = function_exists("opcache_get_status") ? opcache_get_status(false) : false;
   $ini["jit_on"] = $status["jit"]["on"] ?? false;
   echo json_encode($ini);' 2>/dev/null || echo '{}')"
-swoole_version="$(docker exec "$PROBE" php -d extension=swoole -r 'echo phpversion("swoole") ?: "";' 2>/dev/null || true)"
+swoole_version=""
+for e in "${LAB_EXT[@]}"; do
+  [ "$e" != swoole ] || swoole_version="$(docker exec "$PROBE" php -d extension=swoole -r 'echo phpversion("swoole") ?: "";' 2>/dev/null || true)"
+done
+socket_line="$(lab_socket_line "$SERVER")"
 
 # --- k6 --------------------------------------------------------------------------------------------------------------
 # Why a long-lived container and `docker exec k6 run`: the container's cgroup has to exist when its cpu.stat is read after
@@ -196,14 +207,26 @@ sleep 2
 idle_after="$(probe cpu "$server_id" "$k6_id" | lines_to_json)"
 
 echo "measured run: ${duration}s at $rate req/s" >&2
+# Every running container that is not one of this run's three, whoever started it (another checkout's lab run included).
+other_names=()
+while IFS= read -r name; do [ -z "$name" ] || other_names+=("$name"); done < <(lab_other_containers "$SERVER" "$K6C" "$PROBE")
+other_json="$(jq -nc --argjson names "$(json_array "${other_names[@]+"${other_names[@]}"}")" '{count: ($names | length), names: $names}')"
+other_warning=""
+if [ "${#other_names[@]}" -gt 0 ]; then
+  other_warning="WARNING: ${#other_names[@]} other containers running (${other_names[*]})"
+  echo "$other_warning" >&2
+fi
 before="$(probe cpu "$server_id" "$k6_id" | lines_to_json)"
-# Why in the background: the connections are counted while k6 runs (they close when it ends), at 1/4, 1/2 and 3/4 of the run.
+# Why in the background: the connections and the memory are read while k6 runs (the connections close when it ends, and the
+# memory at rest is not the memory under load), at 1/4, 1/2 and 3/4 of the run.
 run_k6 measured "$duration" &
 k6_job=$!
 connections='{}'
+memory_now='{}'
 for quarter in 1 2 3; do
   sleep "$(awk -v d="$duration" 'BEGIN { printf "%.2f", d / 4 }')"
   connections="$(jq -c --argjson n "$(probe connections "$port" | lines_to_json | jq '.connections.established')" --arg q "q$quarter" '. + {($q): $n}' <<<"$connections")"
+  memory_now="$(jq -c --argjson m "$(probe memory-now "$server_id" | lines_to_json | jq '.memory_now')" --arg q "q$quarter" '. + {($q): $m}' <<<"$memory_now")"
 done
 wait "$k6_job" || exit 1
 after="$(probe cpu "$server_id" "$k6_id" | lines_to_json)"
@@ -220,12 +243,14 @@ jq -n \
   --arg arch "$(uname -m)" --arg limits "${LAB_RESOURCE_FLAGS[*]}" \
   --arg variant "$image" --arg image_id "$(docker image inspect -f '{{.Id}}' "$LAB_IMAGE:$image")" \
   --arg php_version "$php_version" --arg swoole_version "$swoole_version" \
-  --arg server_file "${server_in#/lab/}" --arg flags "${php_flags[*]}" --argjson php_ini "$php_ini_json" --argjson port "$port" \
+  --arg server_file "${server_in#/lab/}" --arg flags "${LAB_PHP_FLAGS[*]}" --argjson php_ini "$php_ini_json" --argjson port "$port" \
   --arg k6_image "$LAB_K6_IMAGE" --arg k6_version "$k6_version" --arg script "${script_in#/lab/}" --arg url "$target_url" \
   --argjson rate "$rate" --argjson duration "$duration" --argjson warmup "$warmup" \
   --argjson pre_vus "$pre_vus" --argjson max_vus "$max_vus" \
   --arg cpuset_server "$LAB_CPUSET_SERVER" --arg cpuset_k6 "$LAB_CPUSET_K6" --arg cpuset_probe "$LAB_CPUSET_PROBE" \
   --argjson before "$before" --argjson after "$after" --argjson idle_before "$idle_before" --argjson idle_after "$idle_after" \
+  --argjson ext "$(json_array "${LAB_EXT[@]}")" --argjson env "$(json_array "${LAB_ENV[@]+"${LAB_ENV[@]}"}")" --arg label "$label" \
+  --arg socket_line "$socket_line" --argjson other_containers "$other_json" --argjson memory_now "$memory_now" \
   --argjson memory "$memory" --argjson connections "$connections" --slurpfile measured "$tmp/measured.json" --slurpfile warmup_summary "$tmp/warmup.json" '
   def mib: . / 1048576 * 100 | round / 100;
   ($measured[0].metrics) as $m
@@ -241,12 +266,16 @@ jq -n \
   | {
     date: $date,
     command: $command,
+    label: (if $label == "" then null else $label end),
+    other_containers: $other_containers,
     valid: ($reasons | length == 0),
     invalid_reasons: $reasons,
     host: {docker_desktop: $docker, engine: $engine, vm_kernel: $kernel, arch: $arch,
            cpuset_server: $cpuset_server, cpuset_k6: $cpuset_k6, cpuset_probe: $cpuset_probe, limits: $limits},
     server: {variant: $variant, image_id: $image_id, php_version: $php_version, swoole_version: $swoole_version,
-             file: $server_file, port: $port, php_flags: $flags, ini: $php_ini},
+             file: $server_file, port: $port, php_flags: $flags, ini: $php_ini, ext: $ext, env: $env,
+             socket: (if $socket_line == "" then null
+                      else ($socket_line | split(" ") | map(split("=") | {(.[0]): (.[1] | tonumber? // .[1])}) | add) end)},
     k6: {image: $k6_image, version: $k6_version, script: $script, target_url: $url, rate: $rate, duration_s: $duration,
          warmup_s: $warmup, pre_allocated_vus: $pre_vus, max_vus: $max_vus},
     results: {
@@ -272,7 +301,13 @@ jq -n \
         cgroup_memory_peak_mib: ($memory.memory.peak | mib),
         cgroup_memory_current_mib: ($memory.memory.current | mib),
         vmhwm_mib: ($memory.vmhwm_kb | to_entries | map(.value) | max / 1024 * 100 | round / 100),
-        note: "memory.peak counts page cache, VmHWM does not; both cover the whole life of the server, warm-up included"
+        note: "memory.peak counts page cache, VmHWM does not; both cover the whole life of the server, warm-up included",
+        under_load: {
+          samples: $memory_now,
+          max_pss_mib: ([$memory_now[].pss_kb] | max / 1024 * 100 | round / 100),
+          max_cgroup_current_mib: ([$memory_now[].cgroup_current] | max | mib),
+          note: "read at 1/4, 1/2 and 3/4 of the measured run; Pss is the sum over the server processes (/proc/<pid>/smaps_rollup), a shared page split between the processes that map it"
+        }
       }
     },
     raw: {
@@ -282,11 +317,13 @@ jq -n \
   }' >"$out"
 
 # The table reads the JSON just written, so what is printed is what is stored.
-IFS=$'\t' read -r valid requests achieved usec p50 p95 p99 pmax err dropped vus conns peak hwm k6cpu srvpct idle thr window < <(
+IFS=$'\t' read -r valid requests achieved usec p50 p95 p99 pmax err dropped vus conns peak hwm k6cpu srvpct idle thr window pss_now cur_now socket < <(
   jq -r '.results as $r | [.valid, $r.requests, $r.achieved_req_per_s, $r.cpu_usec_per_request, $r.latency_ms.p50,
     $r.latency_ms.p95, $r.latency_ms.p99, $r.latency_ms.max, $r.error_rate, $r.dropped_iterations, $r.vus_used, $r.connections_open,
     $r.memory.cgroup_memory_peak_mib, $r.memory.vmhwm_mib, $r.k6_cpu_percent_of_one_cpu,
-    $r.server_cpu_percent_of_one_cpu, $r.server_idle_usec_per_s, $r.server_throttled_usec, $r.window_s]
+    $r.server_cpu_percent_of_one_cpu, $r.server_idle_usec_per_s, $r.server_throttled_usec, $r.window_s,
+    $r.memory.under_load.max_pss_mib, $r.memory.under_load.max_cgroup_current_mib,
+    (.server.socket // "none printed" | if type == "object" then to_entries | map("\(.key)=\(.value)") | join(" ") else . end)]
     | map(if . == null then "n/a" elif type == "number" then (. * 100 | round / 100) else . end) | @tsv' "$out")
 echo
 echo "image $image (PHP $php_version${swoole_version:+, Swoole $swoole_version}), $(basename "$server_file"), $k6_version"
@@ -303,8 +340,11 @@ printf '  %-28s %s\n' \
   "connections open (max of 3)" "$conns (k6 pre-allocated $pre_vus VUs)" \
   "peak RSS, cgroup memory.peak" "$peak MiB (counts page cache)" \
   "peak RSS, VmHWM" "$hwm MiB" \
+  "memory under load (max of 3)" "Pss $pss_now MiB, cgroup memory.current $cur_now MiB" \
+  "socket settings (server's boot line)" "$socket" \
   "server CPU over the window" "$srvpct % of one CPU ($window s window, idle $idle us/s, throttled $thr us)" \
   "k6 CPU over the window" "$k6cpu % of one CPU (k6 is pinned to $(awk -F- '{print $2-$1+1}' <<<"$LAB_CPUSET_K6") CPUs)"
+[ -z "$other_warning" ] || echo "$other_warning"
 if [ "$valid" = true ]; then
   echo "VALID"
 else

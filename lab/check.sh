@@ -8,6 +8,7 @@
 set -uo pipefail
 
 LAB="$(cd "$(dirname "$0")" && pwd)"
+REPO="$(dirname "$LAB")"
 DATA="$LAB/data"
 # shellcheck source=lib.sh
 source "$LAB/lib.sh"
@@ -147,6 +148,53 @@ check_macro_cleans_up_after_failure() {
   [ -z "$left" ] || { echo "containers left behind: ${left//$'\n'/ }"; return 1; }
 }
 
+# The bake-off server passes every conformance case (HTTP/1.1 keep-alive, pipelining, a split request, a request with a body,
+# the routes and their error bodies) and prints the socket settings it asked for at boot.
+check_conformance_bake_swoole() {
+  local out ok rc=0
+  out="$(bash "$LAB/conformance.sh" --image 8.5 --server "$LAB/servers/bake-swoole.php" 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "lab/conformance.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
+  ok="$(grep -c '^ok  ' <<<"$out")"
+  [ "$ok" = 8 ] || { echo "expected 8 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
+  grep -q 'FAIL' <<<"$out" && { echo "a case failed: ${out//$'\n'/ | }"; return 1; }
+  grep -qx 'socket settings the server printed at boot: backlog=4096 open_tcp_nodelay=1' <<<"$out" || { echo "the socket line is missing: ${out//$'\n'/ | }"; return 1; }
+}
+
+# A server that answers wrongly: the conformance exits 1, names the cases that fail, and removes its containers.
+check_conformance_fails_on_wrong_server() {
+  local out left rc=0
+  out="$(bash "$LAB/conformance.sh" --image 8.5 --server "$LAB/check/fixtures/wrong-swoole.php" 2>&1)" || rc=$?
+  [ "$rc" = 1 ] || { echo "expected exit 1 for a wrong server, got $rc: ${out//$'\n'/ | }"; return 1; }
+  grep -q '^FAIL  noop: ' <<<"$out" || { echo "the failing case 'noop' is not named: ${out//$'\n'/ | }"; return 1; }
+  grep -q '^FAIL  keep-alive: ' <<<"$out" || { echo "the failing case 'keep-alive' is not named: ${out//$'\n'/ | }"; return 1; }
+  left="$(docker ps -a --format '{{.Names}}' | grep '^lab-conformance-' || true)"
+  [ -z "$left" ] || { echo "containers left behind: ${left//$'\n'/ }"; return 1; }
+}
+
+# The bake-off server under k6 on /posts/<id>, with --env, --label and the default file name: the run is valid, the JSON holds
+# what the options said (extension, env, label, the server's socket line), the other containers and the memory under load.
+check_macro_bake_swoole_posts_is_valid() {
+  local out rc=0 json holds="" detail=""
+  out="$(bash "$LAB/macro.sh" --image 8.5 --server "$LAB/servers/bake-swoole.php" --rate 500 --duration 5 --warmup 2 \
+    --script "$LAB/macro/k6/posts.js" --path /posts/1 --env FOO=bar --label test 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "lab/macro.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
+  grep -qx 'VALID' <<<"$out" || { echo "the run is not marked VALID: ${out//$'\n'/ | }"; return 1; }
+  json="$REPO/$(sed -n 's/^wrote //p' <<<"$out")"
+  [ -f "$json" ] || { echo "no JSON file at $json: ${out//$'\n'/ | }"; return 1; }
+  jq -e '.valid == true and .results.requests > 2000 and .results.error_rate == 0
+         and .label == "test" and .server.ext == ["swoole"] and .server.env == ["FOO=bar"]
+         and .server.socket == {backlog: 4096, open_tcp_nodelay: 1}
+         and (.other_containers.count == (.other_containers.names | length))
+         and (.other_containers.names | map(startswith("lab-macro-")) | any | not)
+         and .results.memory.under_load.max_pss_mib > 0 and .results.memory.under_load.max_cgroup_current_mib > 0
+         and (.results.memory.under_load.samples | keys == ["q1", "q2", "q3"])' "$json" >/dev/null && holds=yes
+  detail="$(jq -c '{valid, label, other_containers, server: {ext: .server.ext, env: .server.env, socket: .server.socket}, memory: .results.memory.under_load}' "$json")"
+  # Why: the default file name is part of what is tested, and it lands in lab/results/: do not leave it there.
+  rm -f "$json"
+  [[ "$json" == */macro-bake-swoole-test-8.5-500rps-*.json ]] || { echo "the label is not in the file name: $json"; return 1; }
+  [ -n "$holds" ] || { echo "the JSON does not hold the run's options and numbers: $detail"; return 1; }
+}
+
 # The bash scripts of the lab, one repo-relative path per line: every `*.sh` and every file whose first line is a bash or sh
 # shebang, except the fixtures (they hold deliberate warnings) and the seed data.
 lab_bash_scripts() {
@@ -203,6 +251,9 @@ CHECKS=(
   check_macro_noop_is_valid
   check_macro_marks_invalid_run
   check_macro_cleans_up_after_failure
+  check_conformance_bake_swoole
+  check_conformance_fails_on_wrong_server
+  check_macro_bake_swoole_posts_is_valid
   check_shellcheck
   check_shellcheck_catches_warning
 )
