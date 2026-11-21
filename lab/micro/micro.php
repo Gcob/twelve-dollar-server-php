@@ -319,13 +319,19 @@ function micro_run_worker(array $a, array $timing, string $state, int $index, ?i
 
 /**
  * The number of a case = the median of its processes' medians; its spread = their min and max (that is what swings
- * between processes). Each process keeps its own medians and its within-process spread in "procs".
+ * between processes). Each process keeps its status, its medians and its within-process spread in "procs".
+ * A case whose check failed (or that threw) in ANY process is not ranked: it is reported with that process's message, even if
+ * the first process passed (a bench that writes to its database copy can pass once and fail the next time).
  */
 function micro_summarize(array $processes): array
 {
     $first = $processes[0];
-    if ($first['status'] !== 'ok') {
-        return ['case' => $first['case'], 'status' => $first['status'], 'message' => $first['message']];
+    $procs = array_map(static fn($r) => array_diff_key($r, ['case' => 1]), $processes);
+    foreach ($processes as $i => $process) {
+        if ($process['status'] !== 'ok') {
+            $where = $i === 0 ? '' : ' (process ' . ($i + 1) . ', the ones before it passed)';
+            return ['case' => $first['case'], 'status' => $process['status'], 'message' => $process['message'] . $where, 'procs' => $procs];
+        }
     }
     $medians = array_column($processes, 'median_ns');
     sort($medians);
@@ -341,7 +347,7 @@ function micro_summarize(array $processes): array
         'max_over_min' => round($ratio, 3),
         'unstable' => count($medians) > 1 && $ratio > UNSTABLE_RATIO,
         'iterations' => (int)micro_median($iterations),
-        'procs' => array_map(static fn($r) => array_diff_key($r, ['case' => 1, 'status' => 1]), $processes),
+        'procs' => $procs,
     ];
 }
 

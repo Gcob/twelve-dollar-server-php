@@ -94,6 +94,15 @@ check_micro_skips_failed_case() {
   grep -q -E 'right variant +[0-9.]+ +[0-9.]+ \.\. ' <<<"$out" || { echo "the other case was not timed: ${out//$'\n'/ | }"; return 1; }
 }
 
+# A check that passes in the first process and fails in a later one: the case is SKIPPED (not ranked with the processes
+# that passed), with the process named, and the other case is still timed.
+check_micro_skips_case_failing_in_later_process() {
+  local out
+  out="$(bash "$LAB/micro.sh" "$LAB/micro/benches/failing-check-later.php" --images 8.4 --jit on --quick --procs 2 --out "$(mktemp -d)/micro.json" 2>&1)" || { echo "lab/micro.sh failed: ${out//$'\n'/ | }"; return 1; }
+  grep -q 'passes once, then fails.*SKIPPED, check failed: state left by an earlier process (process 2' <<<"$out" || { echo "the case that fails in process 2 is not skipped: ${out//$'\n'/ | }"; return 1; }
+  grep -q -E 'always right +[0-9.]+ +[0-9.]+ \.\. ' <<<"$out" || { echo "the other case was not timed: ${out//$'\n'/ | }"; return 1; }
+}
+
 # Asking for JIT on with a zero JIT buffer (JIT stays off) must fail, and so must an unknown image.
 check_micro_refuses_wrong_state() {
   local out
@@ -150,6 +159,7 @@ CHECKS=(
   check_run_limits
   check_micro_sample
   check_micro_skips_failed_case
+  check_micro_skips_case_failing_in_later_process
   check_micro_refuses_wrong_state
   check_macro_noop_is_valid
   check_macro_marks_invalid_run
