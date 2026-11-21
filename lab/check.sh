@@ -77,6 +77,35 @@ check_run_limits() {
   [ "$out" = "$expected" ] || { echo "limits differ from 1 CPU, 2 GiB, no swap, 65535 fds: ${out//$'\n'/ | }"; return 1; }
 }
 
+# The micro harness, in quick mode (short timing, so these numbers mean nothing): the sample bench passes on one image
+# with JIT on and off, and prints a median and a spread for each of its 3 cases plus the empty loop.
+check_micro_sample() {
+  local out rows
+  out="$(bash "$LAB/micro.sh" "$LAB/micro/benches/sample.php" --images 8.4 --jit both --quick --out "$(mktemp -d)/micro.json" 2>&1)" || { echo "lab/micro.sh failed: ${out//$'\n'/ | }"; return 1; }
+  rows="$(grep -c -E '^8\.4 +8\.4\.[0-9]+ +(on|off) +.* [0-9.]+ +[0-9.]+ \.\. [0-9.]+ +[0-9]+$' <<<"$out")"
+  [ "$rows" = 8 ] || { echo "expected 8 rows with a median and a spread, got $rows: ${out//$'\n'/ | }"; return 1; }
+}
+
+# A case whose check fails is reported and skipped, the other case is still timed, the run does not fail.
+check_micro_skips_failed_case() {
+  local out
+  out="$(bash "$LAB/micro.sh" "$LAB/micro/benches/failing-check.php" --images 8.4 --jit on --quick --out "$(mktemp -d)/micro.json" 2>&1)" || { echo "lab/micro.sh failed: ${out//$'\n'/ | }"; return 1; }
+  grep -q 'SKIPPED, check failed: expected 4, got 3' <<<"$out" || { echo "the failed check is not reported: ${out//$'\n'/ | }"; return 1; }
+  grep -q -E 'right variant +[0-9.]+ +[0-9.]+ \.\. ' <<<"$out" || { echo "the other case was not timed: ${out//$'\n'/ | }"; return 1; }
+}
+
+# Asking for JIT on with a zero JIT buffer (JIT stays off) must fail, and so must an unknown image.
+check_micro_refuses_wrong_state() {
+  local out
+  if out="$(bash "$LAB/micro.sh" "$LAB/micro/benches/sample.php" --images 8.4 --jit on --jit-buffer-size 0 --quick --out "$(mktemp -d)/micro.json" 2>&1)"; then
+    echo "JIT on with a zero buffer exited 0: ${out//$'\n'/ | }"; return 1
+  fi
+  grep -q 'JIT requested on but it is off' <<<"$out" || { echo "no JIT message: ${out//$'\n'/ | }"; return 1; }
+  if out="$(bash "$LAB/micro.sh" "$LAB/micro/benches/sample.php" --images nope --quick 2>&1)"; then
+    echo "an unknown image exited 0: $out"; return 1
+  fi
+}
+
 CHECKS=(
   check_seed_files_exist
   check_seed_has_posts
@@ -87,6 +116,9 @@ CHECKS=(
   check_image_8_6
   check_source_flags_match
   check_run_limits
+  check_micro_sample
+  check_micro_skips_failed_case
+  check_micro_refuses_wrong_state
 )
 
 failed=0
