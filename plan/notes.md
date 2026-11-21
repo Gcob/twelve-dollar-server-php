@@ -129,3 +129,23 @@ the work. The team will be able to push and commit. This way, we can keep a good
 
 **Verdict:** ✅ D12. The `main`-without-worktree layout and the one-phase-per-run stop are Claude's choices: challenge
 them anytime.
+
+### 2026-11-21 09:35 · 💡 Idea: a heartbeat, and a git-ignored CLAUDE.local.md like lara-spec-first's
+
+**Jacob:** "Could you have a heartbeat or something? Check lara-spec-first's CLAUDE.local.md, there is info about how it
+runs the software factory. We could add a CLAUDE.local.md here too, gitignore it to take advantage of it." Also: never
+Fable, "because I don't want to spend money other than my subscription".
+
+**Challenge:**
+
+- **Why a heartbeat is needed:** the weekly limit was at 96 %. A turn that fails on a usage limit isn't restarted by
+  the app, and nothing wakes up by itself at the reset.
+- **What it can and can't do:** `CronCreate` jobs live in the planning session only. They die if that session or the
+  app closes, and a recurring job expires after 7 days. Good enough for a run of a few hours.
+- **Pacing beats crashing:** a run that lands at 98 % (agents finish, state saved) resumes cleaner than one cut off at
+  100 % in the middle of an agent.
+- **Kept from the factory:** the pace modes, the heartbeat, the parent that relays without echoing, the reread after a
+  compaction, "the project manager pushes, developers commit". **Left out:** the board, PR merges, parallel cards,
+  digests: one phase, one branch, no PRs here.
+
+**Verdict:** ✅ `CLAUDE.local.md` (git-ignored), an hourly heartbeat plus a one-shot check at 11:07, and no Fable ever.
