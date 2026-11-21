@@ -70,7 +70,17 @@ it.
 
 **Out of scope:** other PHP versions or runtimes (phase 3), changing the server, the connection ceiling.
 
-**Where to look:** `lab/macro.sh`, `lab/README.md` ("Macro benchmarks"), scope 5's handover.
+**Where to look:** `lab/macro.sh`, `lab/README.md` ("Macro benchmarks", "VUs and connections"), scope 5's
+handover. What scope 5 learned (`13291fd`, `d2ff24e`):
+
+- k6 drops an iteration when no VU is idle at that instant: a stall of tens of ms on the VM piles up rate x stall
+  iterations. The harness now pre-allocates rate/10 VUs (at least 50) with `--pre-vus` = `--max-vus`, so open
+  connections = pre-allocated VUs (100 at 1k, 300 at 3k, 600 at 6k req/s). Report `connections_open`, not
+  `vus_used` (that's only the in-flight peak).
+- **The number drifts on this Mac:** 6 back-to-back runs at 2,000 req/s gave 29.7, 30.3, 30.7, 31.7, 35.1 and
+  39.9 µs/req (a 35 % climb in 6 minutes). That's why the runs are interleaved; record each run's time so the drift
+  shows. The spread may exceed what the "Come back to me if" line expects: report it as it is.
+- Rate matters: one run at 500 req/s gave 76 µs/req against 38 at 2,000.
 
 **Read first:** `plan/state/developer.md`.
 

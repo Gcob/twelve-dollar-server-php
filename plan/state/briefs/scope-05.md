@@ -95,3 +95,9 @@ settings, near the end) and `start.sh`; `reference/twelve-dollar-server-challeng
 **Read first:** `plan/state/developer.md`.
 
 **Come back to me if:** a decision is missing from this brief, or the "Done when" doesn't pass after 3 tries.
+
+## Relaunches
+
+- **2026-11-21 10:30:** the PM's rerun on `8.3-apt` at 2,000 req/s was INVALID: 36 dropped iterations with 9 of
+  200 VUs used (PRE_VUS 50), latency max 36.54 ms. Asked: 5 repeats to count the drops, find why k6 drops with idle
+  VUs, fix it if it's k6 or the harness, else report and propose a validity rule (the PM decides).

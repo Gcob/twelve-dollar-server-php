@@ -1,6 +1,6 @@
 # Project manager: phase 2, lab setup
 
-**State:** scope 1 briefed, developer starting.
+**State:** ⏸️ landed at weekly 98 % (10:53). Scopes 1 to 5 done and pushed (last `d2ff24e`). Next: scope 6, brief ready in `briefs/scope-06.md` (updated with scope 5's findings), not launched.
 
 ## Resolved config
 
@@ -23,12 +23,14 @@ Skill defaults (`autonomous-run/pipeline.yml`), no run override file. Changes fr
 | 1     | ad0345bdbd54bc416 | done `7643677`, pushed |
 | 2     | ae7153a7b06d7be23 | done `aef8c0b`, pushed |
 | 3     | a84a7d43b2bb4f619 | done `c584d41`, pushed |
-| 4     | ad96bd86862e37b02 | working |
+| 4     | ad96bd86862e37b02 | done `8151a5e` + `cad0e84`, pushed |
+| 5     | a587078e149d24e5c | done `13291fd` + `d2ff24e`, pushed |
+| 6     | (not launched)    | waiting for the quota reset |
 
 ## Verified
 
-- Scope 1: `lab/seed.sh` prints OK, data ignored, `lab/check.sh` 2/2. **Proof:** rerun by the PM 09:36.
-- Push over HTTPS was refused (403, wrong account); the remote is now the SSH alias and the planning session pushed `85978ab` and `7643677`. **Proof:** `git remote -v`, 09:41.
+- Scope 1: `lab/seed.sh` prints OK, data ignored, `lab/check.sh` 2/2. **Proof:** rerun by the PM 09:27.
+- Push over HTTPS was refused (403, wrong account); the remote is now the SSH alias and the planning session pushed `85978ab` and `7643677`. **Proof:** `git remote -v`, 09:33.
 
 ## Assumed
 
@@ -37,6 +39,8 @@ Skill defaults (`autonomous-run/pipeline.yml`), no run override file. Changes fr
 
 ## Dead ends
 
+- Writing times in `run.md` from memory: they drifted 15 min ahead (the planning session caught it at 10:24). Every time now comes from `date '+%H:%M'` or `git log`.
+
 Rien.
 
 ## Decisions on the way
@@ -44,6 +48,8 @@ Rien.
 - D13: 8.3 from source as a control (in `decisions.md`).
 - D14 (Jacob, via the planning session): branch and worktree per phase from phase 3.
 - Q7 (run, not blocking): Swoole doesn't build on 8.6; the 8.6 image has no Swoole.
+- Scope 5 resent once: k6 dropped iterations with idle VUs (VM stalls); fix `d2ff24e` pre-allocates rate/10 VUs. PM reruns at 10:51: 2 valid, 36.45 and 37.45 µs/req.
+- Scope 4 resent once: per-run spread hid a 2x swing between processes (PM reran 8.4 JIT on 4 times: 27.8, 13.5, 28.0, 27.3 ns). Fix `cad0e84`: K processes per case. Q8 (run, not blocking): how to measure through the Mac's noise.
 - The lab lives in `lab/`; results in `lab/results/`, committed; `lab/data/` ignored.
 - `lab/check.sh` is the lab's "full suite".
 
@@ -67,7 +73,8 @@ Rien.
 
 ## Next steps
 
-1. Scope 1, then 2 to 6 in order.
+1. After the reset: read usage, then launch scope 6 (developer, fresh) with `briefs/scope-06.md`.
+2. Then: questions point (Q7, Q8 are not blocking), `lab/check.sh` in full, `pr-reviewer`, `blind-reviewer` (base `a47aa5e`), delivery.
 
 ## Retro
 

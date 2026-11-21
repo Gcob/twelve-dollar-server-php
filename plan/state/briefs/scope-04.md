@@ -85,7 +85,7 @@ output and commit it in `lab/results/` as the harness's first run.
 
 ## Relaunches
 
-- **2026-11-21 10:25:** "Done when" passes, but the spread lies: 4 runs of `--images 8.4 --jit on` gave
+- **2026-11-21 10:08:** "Done when" passes, but the spread lies: 4 runs of `--images 8.4 --jit on` gave
   `ctype_digit "12345"` medians 27.8, 13.5, 28.0, 27.3 ns, while each run's min..max stays within about 10 %. Asked
   for K processes per case (default 5, interleaved), the median of process medians, the spread across processes, an
   "unstable" flag above 1.3x, a README paragraph on the finding, one quick experiment (ASLR off) at most, and a new
