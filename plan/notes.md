@@ -149,3 +149,23 @@ Fable, "because I don't want to spend money other than my subscription".
   digests: one phase, one branch, no PRs here.
 
 **Verdict:** ✅ `CLAUDE.local.md` (git-ignored), an hourly heartbeat plus a one-shot check at 11:07, and no Fable ever.
+
+### 2026-11-21 09:45 · ❓ Question: can the team work on separate branches?
+
+**Jacob:** "Can the team work on separated branches? I do not understand the problem here?"
+
+**Challenge:**
+
+- **Yes, it can.** The only friction: `plan/` lives in the repo (D11). If the project manager writes its questions and
+  `run.md` inside a worktree on another branch, they land in a copy that the decision board and
+  `~/.claude/plans/...` (both pointing at this checkout) never see until the merge.
+- **The fix is to split by folder, not by branch:** code goes on a branch per phase (`phase-N-claude`) in its own
+  worktree; `plan/` stays on `main`, written from this checkout, so Jacob sees questions right away.
+- **What a branch buys:** `main` only gets a phase once it's done and reviewed (the skill's second gate: Jacob, or a PR,
+  merges); Jacob's own edits never meet a developer's; the diff of a whole phase is one comparison.
+- **What it costs:** two places to keep straight for the project manager, and a merge at the end of each phase.
+- **Timing:** scopes 1 and 2 of phase 2 are already on `main`, scope 3 is running. Switching mid-phase adds risk for
+  little gain: from phase 3 is cleaner.
+
+**Verdict:** 🔶 open: Claude's take is yes, from phase 3, code on a branch per phase and `plan/` on `main`. Replaces
+the "no worktree" part of D12 if Jacob agrees.
