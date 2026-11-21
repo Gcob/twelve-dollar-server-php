@@ -7,13 +7,13 @@
 **Since your last read:** phase 2's run is archived in [runs/phase-2/](runs/phase-2/run.md). Phase 3 is planned in
 [details/phase-3.md](details/phase-3.md), predictions written at 16:29 before any measurement; D17 to D20 taken while
 you're away.
-**👉 Your turn:** Q7 in [plan.md](plan.md), not blocking. · **Branch:** `phase-3-claude` (worktree, D14)
+**👉 Your turn:** Q7 and 1 action (quiet the Docker VM before scope 7) in [plan.md](plan.md), not blocking yet. · **Branch:** `phase-3-claude` (worktree, D14)
 
 ## Steps
 
 | #   | Step              | State       | Start | End | Detail |
 |-----|-------------------|-------------|-------|-----|--------|
-| 0   | Plan review       | in progress | 16:29 |     | `plan-reviewer`, full mode |
+| 0   | Plan review       | in progress | 16:29 |     | full: NOT_OK (1 🔴, 3 🟠), settled as D21 to D24 at 16:44; delta pass next |
 | 1   | Scopes            | in progress | 16:31 |     | 1/7, scope 1 started during the plan review |
 | 2   | Questions         | to do       |       |     |     |
 | 3   | Lab suite         | to do       |       |     | `lab/check.sh` |
@@ -35,4 +35,19 @@ you're away.
 
 ## Reviews
 
-Nothing yet.
+### `plan-reviewer`, full · 16:30 to 16:42 · NOT_OK
+
+**Report:** [PLAN-2026-11-21-1635.md](reviews/PLAN-2026-11-21-1635.md). 5 questions, each settled with the reviewer's
+own pick (D21 to D24, and scope 4's Done-when now boots a Workerman); the 10 🟡 folded into `details/phase-3.md`.
+
+- **🔴 Workerman can't start: no `pcntl` in the images.** Settled: D21, `pcntl`, `sockets`, `event` as shared
+  extensions in scope 4, whose Done-when now starts a `Worker`.
+- **🟠 Listen backlog unset (DIY would get PHP's 32).** Settled: D22, 4,096 and `TCP_NODELAY` everywhere; the client
+  opens connections one at a time.
+- **🟠 Max connections and stop reasons could be wrong** (no "refused" on Linux, the accept queue counted as
+  established, `TIME_WAIT` between runs). Settled: D23, counted by the client, client errors fail the run.
+- **🟠 The partial-write case never forces a partial write.** Settled: D24, a socket-pair test in scope 6.
+- **🟡** D19 miscounted Workerman's headers (3, no `Server`); the spec's 404/400 messages; the caches are static
+  locals; Workerman's `start` argv and pid files; Pss instead of VmRSS; predictions 7 and 8 against the prior art
+  (revised at 16:44, still before any measurement); `micro.sh` dropped from the quiet-VM rule; the VM had 7, then
+  23, other containers running (action in `plan.md`).

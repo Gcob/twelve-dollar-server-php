@@ -48,12 +48,25 @@
 - **D18:** Workerman and DIY run on ext-event (libevent, epoll). PHP's `stream_select` is capped at 1,024 fds, so
   Workerman's default loop would fail the connection test; the same loop for both leaves the framework and the parser
   as their only difference (project manager, phase 3, 2026-11-21).
-- **D19:** in the bake-off each runtime keeps its own response headers (Swoole 5, Workerman 4, DIY 2); the results
+- **D19:** in the bake-off each runtime keeps its own response headers (Swoole 5, Workerman 3, DIY 2); the results
   record the exact response bytes. Fewer header bytes are part of what a runtime can save (project manager, phase 3,
   2026-11-21).
 - **D20:** the bake-off has two routes: `GET /noop` (the runtime alone) and `GET /posts/:id` (plus one indexed read with
   the spec's query). `/health` would add a third of the runs for a point between the two (project manager, phase 3,
   2026-11-21).
+- **D21:** the source images get `pcntl`, `sockets` and `event` as shared extensions built with `phpize` from the same
+  pinned tarballs, in a new last layer, loaded per server. Workerman refuses to start without `pcntl` and skips
+  `TCP_NODELAY` without `sockets`; D13's configure flags stay untouched (plan review, settled by the project manager,
+  phase 3, 2026-11-21).
+- **D22:** every bake-off server gets listen backlog 4,096 and `TCP_NODELAY` on, recorded with the results. PHP's
+  default backlog of 32 for a DIY server would rank the harness, not the runtime (plan review, settled by the
+  project manager, phase 3, 2026-11-21).
+- **D23:** max connections is counted by the client: the connections answered and still open. `/proc/net/tcp` is a
+  cross-check (it also counts the accept queue); a client-side error fails the run instead of looking like a ceiling
+  (plan review, settled by the project manager, phase 3, 2026-11-21).
+- **D24:** DIY's partial write is tested on a socket pair whose peer doesn't read, not end to end: loopback buffers
+  autotune to megabytes, so an end-to-end case could pass without one (plan review, settled by the project manager,
+  phase 3, 2026-11-21).
 
 ## History
 

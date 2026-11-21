@@ -1,10 +1,11 @@
 # $12 server challenge in PHP
 
-**Status:** 🔵 Phase 3 running (runtime bake-off) · 1 question (not blocking) · approved on 2026-11-21 · snapshot
+**Status:** 🔵 Phase 3 running (runtime bake-off) · 1 question (not blocking), 1 action · approved on 2026-11-21 · snapshot
 2026-11-21-0920 · **Round:** 2
 **Since your last read:** phase 3 is planned in [details/phase-3.md](details/phase-3.md), with its predictions
-written before any measurement. While you're away the project manager took D17 to D20 (PHP 8.5 for the bake-off,
-ext-event for Workerman and DIY, each runtime's own headers, two routes). Progress in [run.md](run.md).
+written before any measurement. While you're away the project manager took D17 to D24 (PHP 8.5, ext-event, each
+runtime's own headers, two routes, then the plan review's five points: `pcntl` in the images, the same backlog, max
+connections counted by the client, DIY's partial-write test). Progress in [run.md](run.md).
 **Project:** this repo, `plan/` · **Submission:**
 `submissions/php-<runtime>-Gcob/` · **Jira:** none
 
@@ -51,6 +52,10 @@ one information run on 8.6 if ext-event builds there. Nothing is patched.
 
 ### Actions
 
+- [ ] **[run] Quiet the Docker VM before the bake-off measures** (scope 7, D15): at 16:43, 23 containers of other
+  projects were running (names left out). The project manager never stops them. Scopes 2 to 6 don't
+  need a quiet VM; scope 7 waits for one. Say "go" when they're stopped, or stop them yourself whenever it suits you.
+
 - [ ] **[run] Install `shellcheck`** (`brew install shellcheck`): 4 of 6 developers had no linter for the lab's
   ~600 lines of bash. Phase 3 can then add a lint check to `lab/check.sh`.
   Phase 3 runs shellcheck from a pinned Docker image in `lab/check.sh` (scope 1), so this one is only for your editor.
@@ -81,7 +86,7 @@ step's choice backed by a measurement.
 | 6 | Score           | `bench/load.js` ramps, x86 calibration                      | More than 71,000 held for 5 minutes                     |
 | 7 | Submit          | The PR to the challenge repo                                | CI green                                                |
 
-**Decisions:** 20 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
+**Decisions:** 24 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
 is a prediction we re-measure, not an answer.
 
 ### Phase 3 scopes (running)
@@ -94,7 +99,7 @@ Detail, seams, cases and the predictions in [details/phase-3.md](details/phase-3
 | 1 | `chore(lab): lint the lab's bash with a pinned shellcheck`        | `lab/check.sh` runs shellcheck in Docker, and a fixture makes it fail       |
 | 2 | `feat(lab): shared handler, Swoole bake-off server, conformance`  | conformance all `ok` on Swoole, VALID at 7,000 req/s on both routes         |
 | 3 | `feat(lab): idle-connection harness, max connections and RSS`     | `lab/conns.sh` prints steps, max and RSS per connection, finds a low ceiling |
-| 4 | `feat(lab): ext-event and Workerman 5.2.4 in the lab images`      | `php-info` shows both; the 5 caches are filled on stock, empty when patched |
+| 4 | `feat(lab): pcntl, sockets, ext-event and Workerman in the images` | caches filled on stock, empty when patched; a Workerman boots on both trees |
 | 5 | `feat(lab): Workerman bake-off server, caches off and on`         | conformance all `ok` and VALID at 7,000 on both trees                       |
 | 6 | `feat(lab): DIY server, our own loop and parser`                  | conformance all `ok` (partial reads, pipelining), VALID at 7,000            |
 | 7 | `docs(lab): the runtime bake-off`                                 | the table: µs/req at 7,000 (and 9,500), max connections, RSS per connection |
