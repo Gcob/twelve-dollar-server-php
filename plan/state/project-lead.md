@@ -4,6 +4,8 @@
 
 ## Resolved config
 
+**Also read `CLAUDE.local.md`** (git-ignored, repo root): pace rules (read usage before each agent, land at weekly 98 %), developers commit and the PM pushes after `git fetch` + `git status -sb` (behind: stop, no `pull --rebase`).
+
 Skill defaults (`autonomous-run/pipeline.yml`), no run override file. Changes from D12:
 
 - no worktree: this checkout, `main`; every git command `git -C <repo root> ...`, alone in its call;
@@ -18,11 +20,15 @@ Skill defaults (`autonomous-run/pipeline.yml`), no run override file. Changes fr
 
 | Scope | Agent id | State |
 |-------|----------|-------|
-| 1     |          |       |
+| 1     | ad0345bdbd54bc416 | done `7643677`, pushed |
+| 2     | ae7153a7b06d7be23 | done `aef8c0b`, pushed |
+| 3     | a84a7d43b2bb4f619 | done `c584d41`, pushed |
+| 4     | ad96bd86862e37b02 | working |
 
 ## Verified
 
-Rien.
+- Scope 1: `lab/seed.sh` prints OK, data ignored, `lab/check.sh` 2/2. **Proof:** rerun by the PM 09:36.
+- Push over HTTPS was refused (403, wrong account); the remote is now the SSH alias and the planning session pushed `85978ab` and `7643677`. **Proof:** `git remote -v`, 09:41.
 
 ## Assumed
 
@@ -36,6 +42,8 @@ Rien.
 ## Decisions on the way
 
 - D13: 8.3 from source as a control (in `decisions.md`).
+- D14 (Jacob, via the planning session): branch and worktree per phase from phase 3.
+- Q7 (run, not blocking): Swoole doesn't build on 8.6; the 8.6 image has no Swoole.
 - The lab lives in `lab/`; results in `lab/results/`, committed; `lab/data/` ignored.
 - `lab/check.sh` is the lab's "full suite".
 

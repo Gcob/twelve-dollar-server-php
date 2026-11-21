@@ -24,7 +24,7 @@
 - **D11:** the whole plan (plan, decisions, details, questions, notes) lives in this repo under `plan/` and is
   committed in public, for transparency. Anything about other people's private exchanges (`communications/`) stays
   out, ignored by git (Jacob, 2026-11-21).
-- **D12:** the work runs as an autonomous run (skill `autonomous-run`) with three changes: the
+- **D12:** (the "no worktree, code on `main`" part is replaced by D14 from phase 3) the work runs as an autonomous run (skill `autonomous-run`) with three changes: the
   project manager is its own session and Jacob talks to it through the planning session; the team commits **and
   pushes** on `main` of this repo, in this checkout, with no worktree (the plan, the decision board and the code stay
   in one place); one phase per run, with a stop at the end of each phase so Jacob sees its results before the next
@@ -33,6 +33,10 @@
 - **D13:** PHP 8.3 is built from source too, with the same configure flags as 8.4 to 8.6, next to the apt 8.3 that
   both Swoole entries used. Without it, "8.4 is faster than 8.3" could just mean "our build flags beat Ubuntu's"
   (project manager, phase 2, 2026-11-21).
+- **D14:** from phase 3, the code goes on a branch per phase (`phase-N-claude`) in its own worktree, created by the
+  planning session before the run starts. `plan/` stays on `main`, written and committed from the main checkout. The
+  phase's branch merges into `main` after its final reviews: Jacob merges, or tells the project manager to. Replaces
+  the "no worktree" part of D12; phase 2 stays on `main` (Jacob, 2026-11-21, [notes.md](notes.md) 09:45).
 
 ## History
 
