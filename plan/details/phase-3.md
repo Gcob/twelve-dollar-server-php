@@ -146,7 +146,8 @@ with sha256, no absolute `/Users/...` paths, `reference/` read-only. New for pha
   within 1 s.
 - **The client:** a PHP script in a php-lab container (`--network host`, CPUs `4-11`, `nofile` well above 66k, no CPU
   or memory limit of the server's). **Source addresses rotate over a block of 127.x addresses (from `127.0.0.2`)**, so
-  it never runs out of ephemeral ports (28,232 per source address and destination on this VM). No `sysctl` change
+  it never runs out of ephemeral ports (the client reads `ip_local_port_range`: 55000-65535 in its container, so
+  about 10k ports per source address). No `sysctl` change
   anywhere: the Docker VM is shared with other projects. Before it starts, it waits until no `TIME_WAIT` socket
   remains on its source addresses (a 66k run leaves 66k for 60 s), or the run uses the next block.
 - **Max connections (D23):** the connections the client got an answer on and still holds, at the last step fully held,
@@ -233,7 +234,10 @@ with sha256, no absolute `/Users/...` paths, `reference/` read-only. New for pha
 - **8.6 information:** if scope 4 built ext-event on 8.6, Workerman nocache and DIY once each on both routes at 7,000
   on `8.6`, marked "information, one run".
 - **The table:** runtime, µs/req median and min..max per route at 7,000, at 9,500 for the finalists, p99, peak memory
-  under load, max connections and why it stopped, both slopes per connection, the backlog, `TCP_NODELAY`, and the
+  under load, max connections and why it stopped, both slopes per connection (least squares over every held step, as
+  `conns.sh` prints them: that's what prediction 8 is judged on), plus the average per connection at the max
+  ((Pss at the max − baseline) / held), because scope 3's smoke runs showed Swoole's memory isn't linear in the
+  connections (about 69 KiB each up to 10k, about 5.5 KiB each from 20k to 65k, on a busy VM), the backlog, `TCP_NODELAY`, and the
   response bytes of `/noop`. A `summarize.sh` builds it from the JSON, like phase 2's.
 - **Then:** "Did the predictions hold?", one line each, by the rules written with them, and runtimes.md's flip rule:
   is patched Workerman within 30 % of Swoole on `/noop`?
