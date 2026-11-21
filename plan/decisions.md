@@ -37,6 +37,11 @@
   planning session before the run starts. `plan/` stays on `main`, written and committed from the main checkout. The
   phase's branch merges into `main` after its final reviews: Jacob merges, or tells the project manager to. Replaces
   the "no worktree" part of D12; phase 2 stays on `main` (Jacob, 2026-11-21, [notes.md](notes.md) 09:45).
+- **D15:** the lab measures on a quiet Docker VM: the other projects' containers are stopped and no image builds run
+  during a measurement. Rerun that way, the micro sample's two levels went away (1 UNSTABLE row of 40 instead of 28),
+  so numbers from a busy VM are remeasured before any comparison ([Q8](questions/2026-11-21-1411.ronde-2.md)).
+- **D16:** phases 3 and 4 compare variants at about 7,000 req/s (a 75,000-user score), and the finalists also at
+  9,500 req/s (100,000 users) ([Q9](questions/2026-11-21-1411.ronde-2.md)).
 
 ## History
 

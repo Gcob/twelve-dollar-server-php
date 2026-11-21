@@ -16,6 +16,11 @@ Two levels, always both: a micro result that doesn't hold up end to end doesn't 
     the leaderboard's metric, so our numbers compare with theirs;
   - **p95 and p99**, and the error rate;
   - **peak RSS** of the server's cgroup.
+- **Which rate (D16):** about **7,000 req/s** for every comparison in phases 3 and 4 (the rate of a 75,000-user
+  score, at 1 req/s per 10.8 users), plus **9,500 req/s** (100,000 users) for the finalists. µs/req depends on the
+  rate (the no-op server: 50.2 at 1k, 30.2 at 3k, 21.7 at 6k req/s), so a number measured at another rate doesn't
+  compare. The harness opens rate / 10 connections (700 at 7k), far below the real run's 65k: the connection ceiling
+  stays its own test.
 - **Connection ceiling:** many VUs with long sleeps and a no-op route, to find the max idle connections.
 - **The real score:** `bench/load.js` with ramps, the way the leaderboard runs it, only at the end.
 
@@ -35,6 +40,12 @@ The Mac is an Apple M3 Pro (arm64); the bench VM is x86_64 with AVX-512. Relativ
 hold across both. Absolute numbers (users, µs/req) only count on x86.
 
 - **Default:** Ubuntu 24.04 in Docker on the Mac, `--cpus=1 --memory=2g --memory-swap=2g`, `nofile` 65535.
+- **A quiet VM (D15):** every measurement runs with the other projects' containers stopped in Docker's VM, and no
+  image build at the same time. Rerun that way, the micro sample went from 28 UNSTABLE rows of 40 to 1, every row on
+  its slow mode ([lab/README.md](../../lab/README.md), "Why the spread is across processes"). Numbers measured on a
+  busy VM (the phase 2 first number included) don't compare with quiet-VM numbers: remeasure them before comparing.
+  Phase 3 can make the harnesses record the count of other running containers in their JSON, and warn above 0.
+  If the two modes ever come back on a quiet VM, the next step is fewer CPUs for Docker's VM (not tried).
 - **Network path:** never the Docker bridge, and never k6 on macOS itself: Docker Desktop's port forwarding from
   macOS into its VM goes through a userspace proxy. k6 runs in its own container in the same Docker VM, both with
   `--network host`, the server pinned to one core (`--cpuset-cpus`) and k6 to others, so they don't share the server's

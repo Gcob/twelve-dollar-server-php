@@ -155,6 +155,14 @@ The cause is **not established**. Hypotheses, untested except the first:
 Whatever the cause, the harness shows it instead of hiding it: several processes, the spread across them, and the
 UNSTABLE flag.
 
+**With the Docker VM quiet, the two modes went away.** The same sample, rerun with every other project's container
+stopped (`results/micro-sample-20261121-1912.json`, 0 other containers, the Mac's load average 6.9 at the start), gave
+1 UNSTABLE row of 40 instead of 28, and the largest process-to-process ratio of any other row was 1.16x. All 28 rows
+that swung landed on their **slow** mode: `ctype_digit "12345"`, 8.4, JIT on, went from process medians of 13.4, 27.1,
+27.0, 29.1 and 26.8 ns to 26.9, 27.2, 26.8, 28.2 and 27.3 ns. So the fast mode, not the slow one, came with the busy
+VM. Why is still a hypothesis (a busy VM may keep the vCPU on a faster core or clock). What it means for the lab: measure
+with the VM quiet (plan decision D15), and compare numbers only within the same conditions.
+
 ### Reading the output
 
 ```text

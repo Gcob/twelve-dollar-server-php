@@ -99,3 +99,4 @@ Rien.
    never from a developer's report.
 5. **What the plan should have decided:** the request rate of the method (Q9).
 6. **Blind spot:** the macro harness proves the PHP flags, not that the server's script was cached with the JIT on.
+- 2026-11-21 14:20: after delivery, Q8 → D15 (micro rerun on the quiet VM: 1 UNSTABLE of 40, all on the slow level), Q9 → D16. Q7 open. No phase 3.

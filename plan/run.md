@@ -4,9 +4,9 @@
 
 **Status:** 🏁 Delivered, to review
 **Progress:** step 6/6 done · started 2026-11-21 09:22 · delivered 11:43 · paused 10:53 to 11:07 for the weekly quota
-**Since your last read:** phase 2 is delivered: both final reviews say OK after fixes, `lab/check.sh` is 16/16.
-The first number: **50.2, 30.2 and 21.7 µs CPU/req** at 1k, 3k and 6k req/s (no-op Swoole, arm64). See "Delivery".
-**👉 Your turn:** Q8, Q9 and Q7 in [plan.md](plan.md), not blocking (the Mac's noise; the rate; 8.6 without Swoole), and 1 action (shellcheck). · **Snapshot:** `snapshots/2026-11-21-0920/`
+**Since your last read:** after delivery, Q8 and Q9 answered: D15 (measure on a quiet VM; the micro rerun lost
+its two levels, 1 UNSTABLE row of 40 instead of 28) and D16 (7,000 req/s, 9,500 for the finalists). See "After delivery".
+**👉 Your turn:** Q7 in [plan.md](plan.md), not blocking (8.6 without Swoole), and 1 action (shellcheck). · **Snapshot:** `snapshots/2026-11-21-0920/`
 
 ## Steps
 
@@ -241,6 +241,15 @@ git -C <repo> diff a47aa5e..ec0f3fa -- lab .gitignore README.md ':!lab/results/*
 
 Nothing to merge or close: the work is already on `main` and pushed (D12). From phase 3, D14's branch per phase
 brings back a real merge.
+
+## After delivery
+
+- **14:11:** Jacob answered Q8 (A, the other containers stopped). 14:12 to 14:19: the PM reran the micro sample on
+  the quiet VM (`lab/results/micro-sample-20261121-1912.json`): 1 UNSTABLE row of 40 instead of 28, every row that
+  swung on its slow level. Recorded as D15, with the trail in
+  [questions/2026-11-21-1411.ronde-2.md](questions/2026-11-21-1411.ronde-2.md).
+- **Before 14:14:** Jacob answered Q9 (A): D16, 7,000 req/s for every comparison, 9,500 for the finalists.
+- Phase 3 not started: Q7 is open and Jacob hasn't said go.
 
 ## Retro
 
