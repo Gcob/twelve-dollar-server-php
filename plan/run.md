@@ -3,7 +3,7 @@
 **Pace:** 🟢 full · 5-hour 44 % · weekly 18 % at 16:25 · 5-hour resets 18:30 · away
 
 **Status:** 🔵 Running
-**Progress:** step 0/7, plan review since 16:30; scope 1 done and pushed at 16:34 · started 2026-11-21 16:24
+**Progress:** step 1/7, scope 2 since 16:45; plan review OK (delta) at 16:48; scope 1 done and pushed at 16:34 · started 2026-11-21 16:24
 **Since your last read:** phase 2's run is archived in [runs/phase-2/](runs/phase-2/run.md). Phase 3 is planned in
 [details/phase-3.md](details/phase-3.md), predictions written at 16:29 before any measurement; D17 to D20 taken while
 you're away.
@@ -13,8 +13,8 @@ you're away.
 
 | #   | Step              | State       | Start | End | Detail |
 |-----|-------------------|-------------|-------|-----|--------|
-| 0   | Plan review       | in progress | 16:29 |     | full: NOT_OK (1 🔴, 3 🟠), settled as D21 to D24 at 16:44; delta pass next |
-| 1   | Scopes            | in progress | 16:31 |     | 1/7, scope 1 started during the plan review |
+| 0   | Plan review       | done        | 16:29 | 16:48 | full: NOT_OK (1 🔴, 3 🟠), settled as D21 to D24 at 16:44; delta: OK at 16:48, 4 🟡 folded in |
+| 1   | Scopes            | in progress | 16:31 |     | 1/7, scope 2 since 16:45 |
 | 2   | Questions         | to do       |       |     |     |
 | 3   | Lab suite         | to do       |       |     | `lab/check.sh` |
 | 4   | `pr-reviewer`     | to do       |       |     |     |
@@ -26,7 +26,7 @@ you're away.
 | #   | State | Start | End | Lines | Checks | SHA | Fixes |
 |-----|-------|-------|-----|-------|--------|-----|-------|
 | 1   | done | 16:31 | 16:33 | +55 -3 | shellcheck ok, check.sh 18/18 (PM rerun) | `a0477ba` |       |
-| 2   | to do |       |     |       |        |     |       |
+| 2   | in progress | 16:45 |     |       |        |     |       |
 | 3   | to do |       |     |       |        |     |       |
 | 4   | to do |       |     |       |        |     |       |
 | 5   | to do |       |     |       |        |     |       |
@@ -51,3 +51,10 @@ own pick (D21 to D24, and scope 4's Done-when now boots a Workerman); the 10 �
   locals; Workerman's `start` argv and pid files; Pss instead of VmRSS; predictions 7 and 8 against the prior art
   (revised at 16:44, still before any measurement); `micro.sh` dropped from the quiet-VM rule; the VM had 7, then
   23, other containers running (action in `plan.md`).
+
+### `plan-reviewer`, delta · 16:46 to 16:48 · OK
+
+**Report:** [PLAN-2026-11-21-1650-delta.md](reviews/PLAN-2026-11-21-1650-delta.md). D21 to D24 settle the full
+review's 🔴 and 🟠. 4 🟡, all folded in: each server prints its backlog and `TCP_NODELAY` at boot for the JSON; peak
+Pss sampled during the run; `other_containers` counts every container that isn't the run's own; DIY loads `sockets`
+before `event`. The first three went to scope 2's developer as a relaunch.

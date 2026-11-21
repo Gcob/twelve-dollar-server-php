@@ -10,7 +10,7 @@ phase 4 (D12).
 
 **Plan review:** [PLAN-2026-11-21-1635.md](../reviews/PLAN-2026-11-21-1635.md), NOT_OK (1 🔴, 3 🟠, 10 🟡). Its five
 questions were settled by the project manager with the reviewer's own picks (D21 to D24), and its minor points are
-folded in below.
+folded in below. Delta: [PLAN-2026-11-21-1650-delta.md](../reviews/PLAN-2026-11-21-1650-delta.md), OK, its 4 🟡 folded in.
 
 ## Decisions of this phase
 
@@ -69,7 +69,7 @@ Phase 2's rules hold ([phase-2.md](phase-2.md), "Shared rules"): limits, CPU lay
 with sha256, no absolute `/Users/...` paths, `reference/` read-only. New for phase 3:
 
 - **A quiet VM (D15):** `macro.sh` and `conns.sh` record in their JSON the count and names of running containers that
-  aren't the lab's (`other_containers`), and print a warning above 0. They still run: `check.sh` smoke runs are not
+  aren't this run's own (`other_containers`, a lab run from another checkout included), and print a warning above 0. They still run: `check.sh` smoke runs are not
   measurements. Scope 7 refuses to count a run with `other_containers` above 0.
 - **No image build during a measurement (D15).** Scope 4 rebuilds the images; scope 7 measures only after it.
 - **PHP extensions per server:** `LAB_SERVER_PHP_FLAGS` loads Swoole today (and `macro.sh` probes Swoole's version with
@@ -87,6 +87,10 @@ with sha256, no absolute `/Users/...` paths, `reference/` read-only. New for pha
 - **Memory readings:** the sum of `Pss` from `/proc/<pid>/smaps_rollup` over the server's processes (Workerman runs a
   master and a worker: summed `VmRSS` would count their shared pages twice), and the cgroup's `memory.current`, which
   also holds the kernel's socket buffers (what reaches the 2 GiB limit). Both everywhere a memory number is reported.
+  Pss has no high-water mark: `macro.sh` samples both at 1/4, 1/2 and 3/4 of the run and keeps the largest.
+- **Socket settings recorded (D22):** each server prints its backlog and `TCP_NODELAY` at boot (Workerman and DIY read
+  them back with `socket_get_option`; Swoole prints its configured values, it can't read them back), and the harnesses
+  copy that line into their JSON (`server.socket`).
 
 ## Scope 1: shellcheck (done, `a0477ba`)
 
@@ -190,7 +194,7 @@ with sha256, no absolute `/Users/...` paths, `reference/` read-only. New for pha
 - **Seam:** `lab/servers/bake-workerman.php`, with `WORKERMAN_TREE=nocache|stock` (default `nocache`) passed with
   `--env`, and `--ext pcntl --ext sockets --ext event`.
 - **Settings:** `count = 1`, `Worker::$eventLoopClass` set to the Event loop explicitly, no daemon, backlog 4,096,
-  `TCP_NODELAY` on (Workerman sets it itself when `sockets` is loaded: check it in the conformance output), `start` in
+  `TCP_NODELAY` on (Workerman sets it itself when `sockets` is loaded: the server reads it back and prints it at boot), `start` in
   argv, pid, status and log files in `/tmp`, the handler, `Content-Type: application/json`. Workerman runs a master and
   one worker: both are in the server's cgroup, so both count in the CPU and the memory.
 - **Cases:** conformance on both trees; the server's `/proc/<pid>/maps` shows `event.so` and no `swoole.so`; the loop
@@ -198,7 +202,8 @@ with sha256, no absolute `/Users/...` paths, `reference/` read-only. New for pha
 
 ## Scope 6: DIY server
 
-- **Seam:** `lab/servers/bake-diy.php`, and its connection code reusable on any stream (for the socket-pair test).
+- **Seam:** `lab/servers/bake-diy.php` with `--ext sockets --ext event` (in that order: `event` built with sockets
+  support needs `sockets` loaded first), and its connection code reusable on any stream (for the socket-pair test).
 - **What:** ext-event loop (`EventBase`, one `Event` on the listening socket, one per connection), raw non-blocking
   reads and writes, our own parser for what the 5 routes need: the request line, `Content-Length` and the body
   (`Authorization` is read in phase 4, when a route needs it). Backlog 4,096 (`socket.backlog`) and `TCP_NODELAY` on

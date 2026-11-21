@@ -1,6 +1,6 @@
 # Project manager: phase 3, runtime bake-off
 
-**State:** plan written and pushed (`4e3a8a5`), plan review running, scope 1 developer working.
+**State:** plan review settled (D21 to D24, `4249614`), delta review and scope 2 running since 16:45; scope 1 done `a0477ba`.
 
 ## Resolved config
 
@@ -27,8 +27,9 @@ Skill defaults (`autonomous-run/pipeline.yml`), no run override file. Changes fr
 
 | Scope | Agent id | State |
 |-------|----------|-------|
-| plan-reviewer | aafd6e0f78a1cc771 | running since 16:30 |
+| plan-reviewer | aafd6e0f78a1cc771 | full NOT_OK 16:42 (settled D21-D24); delta OK 16:48 |
 | 1     | a912ed904256c9783 | done `a0477ba`, pushed 16:34 (fixture SC2046: SC2086 is info level; tag v0.11.0) |
+| 2     | a989762d0cb68a567 | working since 16:45 |
 
 ## Verified
 
@@ -52,7 +53,8 @@ Rien.
 
 ## Review triage
 
-Rien.
+- Plan review (full, 16:42): 🔴 pcntl → D21; 🟠 backlog → D22; 🟠 max connections → D23; 🟠 partial write → D24; all
+  with the reviewer's own picks. 🟡 folded into phase-3.md. Predictions 7, 8 revised 16:44 (before any measurement).
 
 ## Suggested skills
 
