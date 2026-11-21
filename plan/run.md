@@ -3,7 +3,7 @@
 **Pace:** 🟢 full · 5-hour 44 % · weekly 18 % at 16:25 · 5-hour resets 18:30 · away
 
 **Status:** 🔵 Running
-**Progress:** step 1/7, scope 4 (images) since 17:15; scopes 1 to 3 pushed; plan review OK (delta) at 16:48; scope 1 done and pushed at 16:34 · started 2026-11-21 16:24
+**Progress:** step 1/7, scope 5 (Workerman) since 17:53; scopes 1 to 4 pushed; ext-event built on 8.6 too; plan review OK (delta) at 16:48; scope 1 done and pushed at 16:34 · started 2026-11-21 16:24
 **Since your last read:** scope 2 smoke numbers on a busy VM (not results): Swoole 21 µs/req on `/noop`, 31 on posts at 7k. phase 2's run is archived in [runs/phase-2/](runs/phase-2/run.md). Phase 3 is planned in
 [details/phase-3.md](details/phase-3.md), predictions written at 16:29 before any measurement; D17 to D20 taken while
 you're away.
@@ -14,7 +14,7 @@ you're away.
 | #   | Step              | State       | Start | End | Detail |
 |-----|-------------------|-------------|-------|-----|--------|
 | 0   | Plan review       | done        | 16:29 | 16:48 | full: NOT_OK (1 🔴, 3 🟠), settled as D21 to D24 at 16:44; delta: OK at 16:48, 4 🟡 folded in |
-| 1   | Scopes            | in progress | 16:31 |     | 3/7, scope 4 since 17:15 |
+| 1   | Scopes            | in progress | 16:31 |     | 4/7, scope 5 since 17:53 |
 | 2   | Questions         | to do       |       |     |     |
 | 3   | Lab suite         | to do       |       |     | `lab/check.sh` |
 | 4   | `pr-reviewer`     | to do       |       |     |     |
@@ -28,8 +28,8 @@ you're away.
 | 1   | done | 16:31 | 16:33 | +55 -3 | shellcheck ok, check.sh 18/18 (PM rerun) | `a0477ba` |       |
 | 2   | done | 16:45 | 16:55 | +837 -37 | conformance 8/8, VALID at 7k on both routes, check.sh 21/21 (PM rerun) | `0d74fda` | delta 🟡 1-3 (relaunch 16:47) |
 | 3   | done | 16:59 | 17:12 | +821 -3 | 10k held, nofile 2048 ceiling 2,035 (timeout), check.sh 24/24 (PM rerun) | `deeb8d1` |       |
-| 4   | in progress | 17:15 |     |       |        |     |       |
-| 5   | to do |       |     |       |        |     |       |
+| 4   | done | 17:15 | 17:50 | +636 -16 | php-info 8.5/8.6 event 3.2.0 + Workerman, caches 5/5, boots on both trees, check.sh 26/26 (PM rerun) | `8c8f7cc` |       |
+| 5   | in progress | 17:53 |     |       |        |     |       |
 | 6   | to do |       |     |       |        |     |       |
 | 7   | to do |       |     |       |        |     |       |
 

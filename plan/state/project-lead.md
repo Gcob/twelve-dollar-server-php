@@ -31,7 +31,8 @@ Skill defaults (`autonomous-run/pipeline.yml`), no run override file. Changes fr
 | 1     | a912ed904256c9783 | done `a0477ba`, pushed 16:34 (fixture SC2046: SC2086 is info level; tag v0.11.0) |
 | 2     | a989762d0cb68a567 | done `0d74fda`, pushed 16:59 |
 | 3     | a3803015f5e6ef81d | done `deeb8d1`, pushed 17:15 |
-| 4     | a161b1a16e1bf9f8d | working since 17:15 |
+| 4     | a161b1a16e1bf9f8d | done `8c8f7cc`, pushed 17:53 (images rebuilt from scratch: build cache was gone) |
+| 5     | a6a4a68f6415877b2 | working since 17:53 |
 
 ## Verified
 
