@@ -78,6 +78,8 @@ discovery and everything we need for all the traffic that comes in."
 
 **Verdict:** 🔶 Claude's take: no, for the reasons above. Open until you agree or bring a fact that changes it.
 
+**2026-11-21 09:35:** Jacob: "We can let go Traefik." **Verdict:** ❌ rejected.
+
 ### 2026-11-21 09:11 · 👀 Observation: containers only with the host network
 
 **Jacob:** "I would definitely use Docker or Podman with the host network. Never using the Docker network. That would
