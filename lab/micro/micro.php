@@ -47,6 +47,9 @@ function micro_ini_flags(string $jit, string $jitBufferSize): array
         'opcache.jit_buffer_size=' . $jitBufferSize,
         // The source images ship no php.ini and Ubuntu's does: pin what a bench can feel.
         'memory_limit=512M',
+        // Ubuntu's php.ini sets zend.assertions=-1, PHP's built-in default is 1: without this a bench that calls assert()
+        // would be slower on the source images than on 8.3-apt.
+        'zend.assertions=-1',
         'display_errors=stderr',
         'error_reporting=-1',
     ];
@@ -55,7 +58,7 @@ function micro_ini_flags(string $jit, string $jitBufferSize): array
 const INI_REPORTED = [
     'opcache.enable_cli', 'opcache.jit', 'opcache.jit_buffer_size', 'opcache.memory_consumption',
     'opcache.file_cache', 'opcache.validate_timestamps', 'opcache.file_update_protection', 'opcache.optimization_level',
-    'opcache.jit_hot_loop', 'opcache.jit_hot_func', 'memory_limit', 'serialize_precision',
+    'opcache.jit_hot_loop', 'opcache.jit_hot_func', 'memory_limit', 'serialize_precision', 'zend.assertions',
 ];
 
 // ---------------------------------------------------------------------------------------------------------------

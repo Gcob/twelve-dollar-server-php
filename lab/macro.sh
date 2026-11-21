@@ -153,6 +153,15 @@ done
 
 server_id="$(docker inspect -f '{{.Id}}' "$SERVER")"
 php_version="$(docker exec "$PROBE" php -r 'echo PHP_VERSION;')"
+# The ini values the server's flags give, as PHP reads them back (same flags, same image), and whether the JIT is on.
+php_ini_json="$(docker exec "$PROBE" php "${php_flags[@]}" -d display_errors=stderr -r '
+  $keys = ["opcache.enable_cli", "opcache.jit", "opcache.jit_buffer_size", "opcache.file_update_protection",
+           "zend.assertions", "memory_limit"];
+  $ini = [];
+  foreach ($keys as $k) { $ini[$k] = ini_get($k); }
+  $status = function_exists("opcache_get_status") ? opcache_get_status(false) : false;
+  $ini["jit_on"] = $status["jit"]["on"] ?? false;
+  echo json_encode($ini);' 2>/dev/null || echo '{}')"
 swoole_version="$(docker exec "$PROBE" php -d extension=swoole -r 'echo phpversion("swoole") ?: "";' 2>/dev/null || true)"
 
 # --- k6 --------------------------------------------------------------------------------------------------------------
@@ -211,7 +220,7 @@ jq -n \
   --arg arch "$(uname -m)" --arg limits "${LAB_RESOURCE_FLAGS[*]}" \
   --arg variant "$image" --arg image_id "$(docker image inspect -f '{{.Id}}' "$LAB_IMAGE:$image")" \
   --arg php_version "$php_version" --arg swoole_version "$swoole_version" \
-  --arg server_file "${server_in#/lab/}" --arg flags "${php_flags[*]}" --argjson port "$port" \
+  --arg server_file "${server_in#/lab/}" --arg flags "${php_flags[*]}" --argjson php_ini "$php_ini_json" --argjson port "$port" \
   --arg k6_image "$LAB_K6_IMAGE" --arg k6_version "$k6_version" --arg script "${script_in#/lab/}" --arg url "$target_url" \
   --argjson rate "$rate" --argjson duration "$duration" --argjson warmup "$warmup" \
   --argjson pre_vus "$pre_vus" --argjson max_vus "$max_vus" \
@@ -237,7 +246,7 @@ jq -n \
     host: {docker_desktop: $docker, engine: $engine, vm_kernel: $kernel, arch: $arch,
            cpuset_server: $cpuset_server, cpuset_k6: $cpuset_k6, cpuset_probe: $cpuset_probe, limits: $limits},
     server: {variant: $variant, image_id: $image_id, php_version: $php_version, swoole_version: $swoole_version,
-             file: $server_file, port: $port, php_flags: $flags},
+             file: $server_file, port: $port, php_flags: $flags, ini: $php_ini},
     k6: {image: $k6_image, version: $k6_version, script: $script, target_url: $url, rate: $rate, duration_s: $duration,
          warmup_s: $warmup, pre_allocated_vus: $pre_vus, max_vus: $max_vus},
     results: {

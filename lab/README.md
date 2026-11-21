@@ -111,7 +111,8 @@ return [
   `null`. It is **not subtracted** from the cases. Read a case as "this much, including about that much of loop". The
   loop costs less with JIT on, so a JIT gain on a very cheap case is partly the loop's.
 - **OPcache and JIT:** every worker runs with `opcache.enable_cli=1`, `opcache.file_update_protection=0`,
-  `opcache.memory_consumption=128` and `memory_limit=512M`, whatever the image's own ini says. JIT on is
+  `opcache.memory_consumption=128`, `memory_limit=512M` and `zend.assertions=-1` (Ubuntu's `php.ini` sets it, the source
+  images have no `php.ini`), whatever the image's own ini says. JIT on is
   `opcache.jit=tracing` with `opcache.jit_buffer_size=64M`; JIT off is `opcache.jit=disable` with the same buffer
   size (it works on 8.3 to 8.6, so that is the only setting that differs). The worker reads `opcache_get_status()['jit']`
   and exits non-zero if `on` is not what was requested (try `--jit on --jit-buffer-size 0`).
@@ -176,7 +177,11 @@ least 50: see "VUs and connections"),
 
 `lab/servers/noop-swoole.php` is the floor: a Swoole HTTP server with the settings of both Swoole entries
 (`SWOOLE_BASE`, one worker, no coroutine, POST/cookie/file parsing and compression off) that answers `200 {"status":"ok"}`
-to every request. The server runs with the PHP flags of the entries' `start.sh` (`LAB_SERVER_PHP_FLAGS` in `lib.sh`).
+to every request. The server runs with the PHP flags of the entries' `start.sh` plus two the lab pins
+(`LAB_SERVER_PHP_FLAGS` in `lib.sh`): `opcache.file_update_protection=0` (by default a file saved less than 2 s before the
+server starts is not cached, so it would run without OPcache and JIT, and the run would still look valid) and
+`zend.assertions=-1` (Ubuntu's `php.ini` sets it; the source images have none and PHP's own default is 1). The JSON
+records the ini values PHP reads back with these flags and whether the JIT is on (`server.ini`).
 
 ### Layout
 

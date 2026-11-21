@@ -49,6 +49,10 @@ lab_require_variant() {
 # arm64 here and amd64 on the bench VM). 1.8.3 is the latest 1.x release (2.x exists); to move, change both.
 LAB_K6_IMAGE=grafana/k6:1.8.3@sha256:2cd9cd09e4119340a122aaf06f30cf3009c19db23b87954909fba0d3eda58e08
 
-# PHP flags of a server in lab/macro.sh: the ones the Swoole entries' start.sh use. Source images ship no php.ini, so
-# nothing else configures PHP.
-LAB_SERVER_PHP_FLAGS=(-d extension=swoole -d memory_limit=-1 -d opcache.enable_cli=1 -d opcache.jit=tracing -d opcache.jit_buffer_size=32M)
+# PHP flags of a server in lab/macro.sh: the ones the Swoole entries' start.sh use, plus two the lab pins. Source images
+# ship no php.ini, so nothing else configures PHP.
+# - opcache.file_update_protection=0: by default a file modified less than 2 s ago is not cached, so a server file saved just
+#   before a run would run without OPcache and without JIT.
+# - zend.assertions=-1: Ubuntu's php.ini sets it, PHP's built-in default (source images) is 1; the same on every image.
+LAB_SERVER_PHP_FLAGS=(-d extension=swoole -d memory_limit=-1 -d opcache.enable_cli=1 -d opcache.jit=tracing -d opcache.jit_buffer_size=32M
+  -d opcache.file_update_protection=0 -d zend.assertions=-1)
