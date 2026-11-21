@@ -45,5 +45,5 @@ $server->on('request', function (Request $req, Response $res) {
 echo "listening on 0.0.0.0:$port\n";
 // What was asked of the sockets, as the server was given it: the images' Swoole is built without sockets support, so it cannot
 // be read back from the kernel. lab/macro.sh and lab/conformance.sh copy this line.
-echo 'socket: backlog=' . $settings['backlog'] . ' open_tcp_nodelay=' . (int) $settings['open_tcp_nodelay'] . "\n";
+echo 'socket: backlog=' . $settings['backlog'] . ' tcp_nodelay=' . (int) $settings['open_tcp_nodelay'] . "\n";
 $server->start();

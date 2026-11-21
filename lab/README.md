@@ -275,9 +275,10 @@ The runtime bake-off compares runtimes (Swoole, Workerman, ext-event, a hand-wri
   to compare runtimes.
 - **`lab/servers/bake-swoole.php`** is the Swoole server on that handler: the settings of `noop-swoole.php` plus
   `open_tcp_nodelay`, `Content-Type: application/json`, the status the handler gives. Every bake-off server uses a listen
-  backlog of 4,096 and TCP_NODELAY on. At boot it prints `socket: backlog=4096 open_tcp_nodelay=1`: the settings it asked for,
-  as the images' Swoole is not built with sockets support and cannot read them back. `macro.sh` and `conformance.sh` copy that
-  line into their output, and `macro.sh` into the JSON (`server.socket`).
+  backlog of 4,096 and TCP_NODELAY on. At boot it prints `socket: backlog=4096 tcp_nodelay=1`: the settings it asked for,
+  as the images' Swoole is not built with sockets support and cannot read them back. `macro.sh`, `conns.sh` and
+  `conformance.sh` copy that line into their output, and `macro.sh` and `conns.sh` into the JSON (`server.socket`). The three
+  bake-off servers print the same two keys, `backlog` and `tcp_nodelay`.
 - **`lab/servers/bake-workerman.php`** is the Workerman 5.2.4 server on that handler: one HTTP `Worker` (`count = 1`) on the
   Event loop, `Worker::$eventLoopClass` set to it explicitly. It reads `WORKERMAN_TREE`: `nocache` (the default, Workerman with
   its 5 request caches patched out) or `stock` (as released); any other value exits 1 with a message. It also exits 1 when
@@ -299,6 +300,56 @@ The runtime bake-off compares runtimes (Swoole, Workerman, ext-event, a hand-wri
   supervises) and its one worker. The CPU reading is the cgroup's, so it covers both; Pss and VmHWM are summed over every
   process of the cgroup; `conns.sh` reads memory the same way. The pid, status and log files are in `/tmp` (`/lab` is
   read-only), and the copy of the seed is made by the master before it forks, the SQLite handle opened by the worker.
+- **`lab/servers/bake-diy.php`** is our own server on that handler: one process, our own event loop on ext-event and our own
+  HTTP/1.1 parser, only what the challenge's routes need. Run it with `--ext sockets --ext event` (that order):
+
+  ```bash
+  bash lab/conformance.sh --image 8.5 --server lab/servers/bake-diy.php --ext sockets --ext event
+  bash lab/macro.sh --image 8.5 --server lab/servers/bake-diy.php --ext sockets --ext event --label diy --rate 7000 \
+    --duration 20 --path /posts/1 --script lab/macro/k6/posts.js
+  ```
+
+  - **The loop** (`bake-diy.php`): one `EventBase` (`epoll`); one persistent read event on the listening socket, which accepts
+    until `accept()` has nothing left, so a burst of connections is taken in one callback; one persistent read event per
+    connection; a write event only while a connection holds bytes the socket did not take. A connection's state is one small
+    object (`DiyPeer`: its parser object and its two events) allocated at accept, and nothing is allocated per request but the
+    strings of the request itself. ext-event is used because PHP's `stream_select` is capped at 1,024 descriptors.
+  - **The listening socket:** `stream_socket_server` with `backlog` 4,096 and `so_reuseport` off (one process), non-blocking;
+    `TCP_NODELAY` is set on it with `socket_import_stream` and `socket_set_option`. At boot the server prints
+    `socket: backlog=4096 tcp_nodelay=1` like the other two (the backlog is what was asked: the kernel does not give it back,
+    `tcp_nodelay` is read back). **Accepted sockets inherit `TCP_NODELAY` from the listening socket on Linux**: the server
+    reads it once from the first accepted socket and prints `accepted socket: tcp_nodelay=1` (the images show `1`).
+  - **The parser** (`diy-connection.php`, class `DiyConnection`, which knows nothing about the loop and works on any
+    non-blocking stream): on each read it appends to the connection's buffer, then, while the buffer holds a whole request,
+    finds `\r\n\r\n`, reads the request line (method, target, `HTTP/1.1` or `HTTP/1.0`), reads `Content-Length`, `Connection` and
+    `Transfer-Encoding` (names compared without case) and waits for the whole body. It calls the handler with the method, the
+    target (the handler cuts a `?query`) and the body, and appends the response to the write buffer. The answer is
+    `HTTP/1.1 <status> <reason>`, `Content-Type: application/json`, `Content-Length`, nothing else.
+  - **What it refuses with `400 {"error":"bad request"}` and a close:** a request line that does not have a method, a target and
+    `HTTP/1.1` or `HTTP/1.0`; a header line without a name and a colon; a block of request line and headers over 8 KiB (checked
+    before the blank line arrives too, so a client that never ends its headers is cut at 8 KiB); a `Content-Length` that is not
+    plain digits, appears twice, or is over 1 MiB (a bound on one connection's memory; the challenge's bodies are tiny);
+    `Transfer-Encoding` of any kind (k6 never sends a chunked body). **What it does not read:** `Authorization` (a later phase),
+    other headers (a line only has to have a name and a colon), absolute-form targets (the handler answers 404), lines ended by a
+    bare `\n`.
+  - **Keep-alive:** on by default on `HTTP/1.1`. `Connection: close` closes the connection after its response is fully written,
+    and what the client sent after that request is not answered; so does `HTTP/1.0` without `Connection: keep-alive`. An
+    `HTTP/1.0` client that asks for keep-alive keeps the connection open but the answer carries no `Connection` header, so
+    most such clients close on their own.
+  - **Writes:** `fwrite` as much as the socket takes; the rest stays in the connection's write buffer and a write event waits for
+    the socket. While the buffer holds 1 MiB or more, the connection stops reading **and stops answering requests it already
+    received** (they stay in its read buffer) until the buffer drops under the limit: a client that never reads cannot make the
+    server's memory grow past 1 MiB plus one response. A client that closes, or a write that fails, frees the connection's
+    events and its stream at once, with the bytes it did not take. At the descriptor limit `accept()` fails and the listening event
+    fires again at once: shedding there is for a later phase.
+  - **Two tests, run by `lab/check.sh`:** `lab/check/diy-parser-test.php` feeds `DiyConnection` through a socket pair and compares
+    the responses with literal expected bytes: a request complete, **cut at every byte position** (two pieces), two requests
+    pipelined (also cut everywhere), a body split from its headers, the `Connection` and `HTTP/1.0` rules, every kind of 400 above
+    and a client that leaves. `lab/check/diy-partial-write-test.php` uses a socket pair whose client end does not read: on a Linux
+    pair the kernel takes 212,992 bytes, so a 640,075-byte response is written in part, the rest waits in the buffer, and the bytes
+    then arrive whole and in order; with two 2 MB responses and a third request queued behind them, reading pauses and the third
+    request is answered only after the buffer drains. (End to end on loopback the buffers grow to megabytes, so that path would
+    never run.) Run one by hand with `bash lab/run.sh 8.5 php /lab/check/diy-parser-test.php`.
 - **`lab/conformance.sh`** proves that a server speaks HTTP/1.1 correctly with that handler:
 
   ```bash

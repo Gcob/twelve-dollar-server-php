@@ -173,7 +173,7 @@ check_conformance_bake_swoole() {
   ok="$(grep -c '^ok  ' <<<"$out")"
   [ "$ok" = 8 ] || { echo "expected 8 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
   grep -q 'FAIL' <<<"$out" && { echo "a case failed: ${out//$'\n'/ | }"; return 1; }
-  grep -qx 'socket settings the server printed at boot: backlog=4096 open_tcp_nodelay=1' <<<"$out" || { echo "the socket line is missing: ${out//$'\n'/ | }"; return 1; }
+  grep -qx 'socket settings the server printed at boot: backlog=4096 tcp_nodelay=1' <<<"$out" || { echo "the socket line is missing: ${out//$'\n'/ | }"; return 1; }
 }
 
 # A server that answers wrongly: the conformance exits 1, names the cases that fail, and removes its containers.
@@ -199,7 +199,7 @@ check_macro_bake_swoole_posts_is_valid() {
   [ -f "$json" ] || { echo "no JSON file at $json: ${out//$'\n'/ | }"; return 1; }
   jq -e '.valid == true and .results.requests > 2000 and .results.error_rate == 0
          and .label == "test" and .server.ext == ["swoole"] and .server.env == ["FOO=bar"]
-         and .server.socket == {backlog: 4096, open_tcp_nodelay: 1}
+         and .server.socket == {backlog: 4096, tcp_nodelay: 1}
          and (.other_containers.count == (.other_containers.names | length))
          and (.other_containers.names | map(startswith("lab-macro-")) | any | not)
          and .results.memory.under_load.max_pss_mib > 0 and .results.memory.under_load.max_cgroup_current_mib > 0
@@ -221,7 +221,7 @@ check_conns_holds_steps() {
   jq -e '.results.max_connections == 500 and .results.ceiling == null and (.steps | map(.target) == [200, 500])
          and .results.memory_per_connection.pss_kib_per_connection > 0
          and .results.memory_per_connection.cgroup_current_kib_per_connection > 0
-         and .server.socket == {backlog: 4096, open_tcp_nodelay: 1} and .results.baseline.pss_kb > 0
+         and .server.socket == {backlog: 4096, tcp_nodelay: 1} and .results.baseline.pss_kb > 0
          and (.steps | all(.probe.tcp_established == .held and .probe.fresh_http_code == 200))' "$json" >/dev/null \
     || { echo "the JSON does not hold a run that held 200 and 500 connections: $(jq -c '{results, steps: [.steps[] | {target, held, probe}]}' "$json")"; return 1; }
   grep -q '^  max connections (held, answered) *500 ' <<<"$out" || { echo "the table does not report 500 connections: ${out//$'\n'/ | }"; return 1; }
@@ -313,6 +313,58 @@ check_macro_bake_workerman_posts_is_valid() {
   return 1
 }
 
+# The DIY server's parser, on a socket pair: a complete request, cut at every byte position, pipelined, a body split from its
+# headers, Connection and HTTP/1.0 rules, every kind of 400, a client that leaves. Every case prints `ok`.
+check_diy_parser() {
+  local out ok rc=0
+  out="$(bash "$LAB/run.sh" 8.5 php /lab/check/diy-parser-test.php 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "diy-parser-test.php exited $rc: ${out//$'\n'/ | }"; return 1; }
+  ok="$(grep -c '^ok  ' <<<"$out")"
+  [ "$ok" = 30 ] || { echo "expected 30 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
+  grep -q 'FAIL' <<<"$out" && { echo "a case failed: ${out//$'\n'/ | }"; return 1; }
+  return 0
+}
+
+# The DIY server's write path, on a socket pair whose client end does not read: a partial write leaves the rest buffered and the
+# bytes arrive whole and in order; reading pauses over the buffer limit.
+check_diy_partial_write() {
+  local out ok rc=0
+  out="$(bash "$LAB/run.sh" 8.5 php /lab/check/diy-partial-write-test.php 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "diy-partial-write-test.php exited $rc: ${out//$'\n'/ | }"; return 1; }
+  ok="$(grep -c '^ok  ' <<<"$out")"
+  [ "$ok" = 4 ] || { echo "expected 4 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
+  grep -q 'FAIL' <<<"$out" && { echo "a case failed: ${out//$'\n'/ | }"; return 1; }
+  return 0
+}
+
+# The DIY server passes every conformance case and prints the socket settings it read back from its listening socket.
+check_conformance_bake_diy() {
+  local out ok rc=0
+  out="$(bash "$LAB/conformance.sh" --image 8.5 --server "$LAB/servers/bake-diy.php" --ext sockets --ext event 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "lab/conformance.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
+  ok="$(grep -c '^ok  ' <<<"$out")"
+  [ "$ok" = 8 ] || { echo "expected 8 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
+  grep -q 'FAIL' <<<"$out" && { echo "a case failed: ${out//$'\n'/ | }"; return 1; }
+  grep -qx 'socket settings the server printed at boot: backlog=4096 tcp_nodelay=1' <<<"$out" || { echo "the socket line is missing: ${out//$'\n'/ | }"; return 1; }
+}
+
+# The DIY server under k6 on /posts/<id>: the run is valid, and the JSON holds the extensions in their load order and the socket line.
+check_macro_bake_diy_posts_is_valid() {
+  local out rc=0 json detail
+  json="$(mktemp -d)/macro.json"
+  out="$(bash "$LAB/macro.sh" --image 8.5 --server "$LAB/servers/bake-diy.php" --ext sockets --ext event --label diy --rate 500 --duration 5 --warmup 2 \
+    --script "$LAB/macro/k6/posts.js" --path /posts/1 --out "$json" 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "lab/macro.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
+  grep -qx 'VALID' <<<"$out" || { echo "the run is not marked VALID: ${out//$'\n'/ | }"; return 1; }
+  jq -e '.valid == true and .results.requests > 2000 and .results.error_rate == 0
+         and .label == "diy" and .server.ext == ["sockets", "event"]
+         and .server.socket == {backlog: 4096, tcp_nodelay: 1}
+         and .results.memory.under_load.max_pss_mib > 0' "$json" >/dev/null && return 0
+  detail="$(jq -c '{valid, label, server: {ext: .server.ext, socket: .server.socket}, memory: .results.memory.under_load}' "$json")"
+  echo "the JSON does not hold the run's options and numbers: $detail"
+  return 1
+}
+
 # The bash scripts of the lab, one repo-relative path per line: every `*.sh` and every file whose first line is a bash or sh
 # shebang, except the fixtures (they hold deliberate warnings) and the seed data.
 lab_bash_scripts() {
@@ -379,6 +431,10 @@ CHECKS=(
   check_conformance_bake_workerman
   check_workerman_server_refuses
   check_macro_bake_workerman_posts_is_valid
+  check_diy_parser
+  check_diy_partial_write
+  check_conformance_bake_diy
+  check_macro_bake_diy_posts_is_valid
   check_shellcheck
   check_shellcheck_catches_warning
 )

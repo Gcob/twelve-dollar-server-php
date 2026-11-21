@@ -9,7 +9,7 @@
 # be done, 2 on a usage error. The cases: /noop, /posts/1 (against what sqlite3 gives for the seed), the error bodies, two
 # requests on a keep-alive connection, two pipelined requests, a request split across two writes, a POST with a body and the
 # reuse of its connection. After them: the exact bytes of the /noop response, and the socket line the server printed at
-# boot (backlog, open_tcp_nodelay). Both containers are removed at the end, whatever happens.
+# boot (backlog, tcp_nodelay). Both containers are removed at the end, whatever happens.
 set -euo pipefail
 
 LAB="$(cd "$(dirname "$0")" && pwd)"
