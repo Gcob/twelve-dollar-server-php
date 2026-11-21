@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# One line per fact about this PHP: versions, OPcache, JIT, and the extensions the entries may need.
+# A missing extension is printed as `missing`, never fatal: the caller decides if it needs it.
+set -uo pipefail
+# Why: the JIT only starts with opcache enabled in the CLI, so the probe turns it on like the server will.
+exec php -d display_errors=0 -d extension=swoole \
+  -d opcache.enable_cli=1 -d opcache.jit=tracing -d opcache.jit_buffer_size=32M -r '
+echo "php: ", PHP_VERSION, "\n";
+echo "swoole: ", extension_loaded("swoole") ? phpversion("swoole") : "missing", "\n";
+try {
+    echo "sqlite: ", (new PDO("sqlite::memory:"))->query("select sqlite_version()")->fetchColumn(), "\n";
+} catch (Throwable $e) {
+    echo "sqlite: missing\n";
+}
+echo "opcache: ", extension_loaded("Zend OPcache") ? "loaded" : "missing", "\n";
+$status = function_exists("opcache_get_status") ? opcache_get_status(false) : false;
+echo "jit: ", ($status["jit"]["on"] ?? false) ? "available" : "missing", "\n";
+foreach (["pdo_sqlite", "mbstring", "sodium", "ffi", "ctype", "iconv"] as $ext) {
+    echo "$ext: ", extension_loaded($ext) ? "present" : "missing", "\n";
+}
+'
