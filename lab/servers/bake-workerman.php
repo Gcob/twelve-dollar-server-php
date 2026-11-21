@@ -55,7 +55,7 @@ $worker->onWorkerStart = function (Worker $worker) use ($tree, $backlog): void {
 };
 
 // A Response object, as Workerman's documentation does it: it carries the status and the Content-Type, and Workerman adds
-// Server, Content-Length and Connection: keep-alive. Sending a plain string would always answer 200 text/html.
+// Content-Length and Connection: keep-alive (Workerman 5.2.4 sends no Server header with a Response object). Sending a plain string would always answer 200 text/html.
 $worker->onMessage = function ($connection, $request): void {
     [$status, $body] = handler_handle($request->method(), $request->uri(), $request->rawBody());
     $connection->send(new Response($status, ['Content-Type' => 'application/json'], $body));

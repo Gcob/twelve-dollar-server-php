@@ -1,7 +1,7 @@
 <?php
 // The client of lab/conformance.sh: raw sockets (no curl, no HTTP library), so what a server sends is what is checked.
 //
-//   php client.php wait <port>   exit 0 once something accepts connections on 127.0.0.1:<port>, 1 after 30 s
+//   php client.php poll <port>   one try: exit 0 if something accepts connections on 127.0.0.1:<port>, 1 if not
 //   php client.php run <port>    run the cases, one line each: `ok    <case>` or `FAIL  <case>: <why>`; exit 1 if any fails
 //
 // Env for `run`: EXPECTED_POST_1, the JSON object SQLite gives for post 1 (computed outside, from the seed).
@@ -235,21 +235,10 @@ function cases(): array
 $mode = $argv[1] ?? '';
 $port = (int) ($argv[2] ?? 0);
 if ($port < 1) {
-    fwrite(STDERR, "usage: php client.php wait|run <port>\n");
+    fwrite(STDERR, "usage: php client.php poll|run <port>\n");
     exit(2);
 }
 
-if ($mode === 'wait') {
-    for ($i = 0; $i < 150; $i++) {
-        $fp = @stream_socket_client("tcp://127.0.0.1:$port", $errno, $errstr, 1);
-        if ($fp !== false) {
-            fclose($fp);
-            exit(0);
-        }
-        usleep(200000);
-    }
-    exit(1);
-}
 if ($mode === 'poll') { // one try, for the readiness check that has to look at the server container between tries
     $fp = @stream_socket_client("tcp://127.0.0.1:$port", $errno, $errstr, 1);
     if ($fp === false) {
@@ -259,7 +248,7 @@ if ($mode === 'poll') { // one try, for the readiness check that has to look at 
     exit(0);
 }
 if ($mode !== 'run') {
-    fwrite(STDERR, "usage: php client.php wait|poll|run <port>\n");
+    fwrite(STDERR, "usage: php client.php poll|run <port>\n");
     exit(2);
 }
 

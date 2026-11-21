@@ -364,7 +364,8 @@ The runtime bake-off compares runtimes (Swoole, Workerman, ext-event, a hand-wri
   `keep-alive` (two requests on one connection); `pipelining` (three requests in one write, answered in order);
   `split request` (cut in the middle of the headers, 50 ms apart); `body then reuse` (a `POST /nope` with a body, then a
   `GET /noop` on the same connection); `response bytes` (prints the exact bytes of the `/noop` response: each runtime keeps
-  its own headers). It ends with the socket line the server printed at boot.
+  its own headers). It ends with the event loop the server printed at boot (`loop: ...`, when it prints one: Workerman, DIY) and
+  its socket line.
 - **`lab/macro/k6/posts.js`** is `fixed-rate.js` for `GET /posts/<id>`: the id is the iteration number times 999,983 (a prime),
   modulo 500,000, plus 1, so the sequence over the seed's post ids is the same on every run and uses no random number. It
   takes the scheme, host and port of `--path`'s URL, so `--path /posts/1` makes the readiness check read the database too.

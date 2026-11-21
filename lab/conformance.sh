@@ -8,8 +8,8 @@
 # One line per case, `ok    <case>` or `FAIL  <case>: <why>`; exit 0 when every case is ok, 1 when one fails or the run could not
 # be done, 2 on a usage error. The cases: /noop, /posts/1 (against what sqlite3 gives for the seed), the error bodies, two
 # requests on a keep-alive connection, two pipelined requests, a request split across two writes, a POST with a body and the
-# reuse of its connection. After them: the exact bytes of the /noop response, and the socket line the server printed at
-# boot (backlog, tcp_nodelay). Both containers are removed at the end, whatever happens.
+# reuse of its connection. After them: the exact bytes of the /noop response, the `loop:` line the server printed at boot
+# (when it prints one) and its socket line (backlog, tcp_nodelay). Both containers are removed at the end, whatever happens.
 set -euo pipefail
 
 LAB="$(cd "$(dirname "$0")" && pwd)"
@@ -97,6 +97,8 @@ done
 
 rc=0
 client run "$port" || rc=$?
+loop="$(docker logs "$SERVER" 2>&1 | sed -n 's/^loop: //p' | head -n 1)"
+[ -z "$loop" ] || echo "event loop the server printed at boot: $loop"
 socket="$(lab_socket_line "$SERVER")"
 echo "socket settings the server printed at boot: ${socket:-(none printed)}"
 exit "$rc"

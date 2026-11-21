@@ -276,6 +276,7 @@ check_conformance_bake_workerman() {
     ok="$(grep -c '^ok  ' <<<"$out")"
     [ "$ok" = 8 ] || { echo "$tree: expected 8 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
     grep -q 'FAIL' <<<"$out" && { echo "$tree: a case failed: ${out//$'\n'/ | }"; return 1; }
+    grep -qxF 'event loop the server printed at boot: Workerman\Events\Event' <<<"$out" || { echo "$tree: the loop is not Workerman's Event loop: ${out//$'\n'/ | }"; return 1; }
     grep -qx 'socket settings the server printed at boot: backlog=4096 tcp_nodelay=1' <<<"$out" || { echo "$tree: the socket line is missing: ${out//$'\n'/ | }"; return 1; }
   done
 }
@@ -345,6 +346,7 @@ check_conformance_bake_diy() {
   ok="$(grep -c '^ok  ' <<<"$out")"
   [ "$ok" = 8 ] || { echo "expected 8 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
   grep -q 'FAIL' <<<"$out" && { echo "a case failed: ${out//$'\n'/ | }"; return 1; }
+  grep -qx 'event loop the server printed at boot: epoll' <<<"$out" || { echo "the loop line is not epoll: ${out//$'\n'/ | }"; return 1; }
   grep -qx 'socket settings the server printed at boot: backlog=4096 tcp_nodelay=1' <<<"$out" || { echo "the socket line is missing: ${out//$'\n'/ | }"; return 1; }
 }
 
