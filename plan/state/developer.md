@@ -1,6 +1,6 @@
 # Developer: phase 3, runtime bake-off
 
-**State:** scope 4 done (`8c8f7cc`), scope 3 done (`deeb8d1`), scope 2 done (`0d74fda`), scope 1 done (`a0477ba`). Phase 2's handovers are in `plan/runs/phase-2/state/developer.md` (read its "Où regarder"
+**State:** scope 5 done (`ad52342`), scope 4 done (`8c8f7cc`), scope 3 done (`deeb8d1`), scope 2 done (`0d74fda`), scope 1 done (`a0477ba`). Phase 2's handovers are in `plan/runs/phase-2/state/developer.md` (read its "Où regarder"
 and "Impasses" if you touch `macro.sh`, `micro.sh`, `seed.sh` or the images).
 
 ## Verified
@@ -18,6 +18,10 @@ and "Impasses" if you touch `macro.sh`, `micro.sh`, `seed.sh` or the images).
 - Scope 4, patch failing, by hand, build of a copy of `lab/images/` with a broken patch (`docker build`, tag `php-lab-scratch:N`, no image left): (1) a context line changed, `patch --fuzz=0` printed `Hunk #1 FAILED at 684` and the build stopped with `BUILD FAILED: lab/images/workerman-nocache.patch does not apply cleanly to Workerman 5.2.4`, docker exit 1; (2) the `Http.php` file diff removed (applies cleanly): `BUILD FAILED: the patched Workerman tree still has a request cache static:` then `src/Protocols/Http.php:116:        static $cache = [];`, docker exit 1.
 - Scope 4, boot check: green on both trees (0.7 s for both). Red: same check with `event` not loaded (`LAB_EXT=(pcntl sockets)`): fails after 15 tries (47 s) with the worker's stack trace in the message. Before that a first version of the check hung for 2 minutes per tree: Workerman keeps an HTTP connection alive for 60 s (see Raw learnings).
 - Scope 4, builds: `php-info` on 8.3, 8.4, 8.5, 8.6: `pcntl: present`, `sockets: present`, `event: 3.2.0`, `workerman: 5.2.4 (stock, nocache)` (8.5 and 8.6 read by hand; 8.3 and 8.4 by `check_source_extras`). `event` builds on 8.6 (`EventBase::getMethod()` returns `epoll`), so there is no `lab/results/event-on-php-8.6.md`. Full `bash lab/check.sh`: 26/26 ok (87 s). `check_shellcheck` failed first on SC2034 (unused `want_event`, `i`, and the `LAB_*` arrays the helpers read), fixed.
+- Scope 5, conformance (red first): before the server existed, `lab/conformance.sh --server lab/servers/bake-workerman.php ...` printed `file not found` (exit 1). Then green on both trees, 8 cases ok each, socket line `backlog=4096 tcp_nodelay=1`, `/noop` bytes `HTTP/1.1 200 OK`, `Content-Type: application/json`, `Connection: keep-alive`, `Content-Length: 15` (no `Server` header with a `Response` object). Refusals by hand: `WORKERMAN_TREE=bogus` exit 1 with the message; without `event` exit 1 with the message (both before the 250 MB copy). The 3 new checks were written after these hand runs (no separate red run).
+- Scope 5, Done-when macro runs (8.5, 7000 req/s, 20 s, warm-up 10 s, 23 other containers running, not measurements), all VALID, 0 errors, 0 dropped: nocache `/noop` 21.69 us/req (140,005 req), nocache posts 29.89 (140,002), stock `/noop` 19.70 (139,998), stock posts 31.52 (139,991). Pss under load: 25.9 MiB (`/noop`), 134 MiB (posts), both trees. JSON of the first run: `label nocache`, `ext [pcntl,sockets,event]`, `env [WORKERMAN_TREE=nocache]`, `socket {backlog 4096, tcp_nodelay 1}`.
+- Scope 5, maps during the nocache `/noop` run (`docker exec lab-macro-server`, every `/proc/<pid>/maps`): pid 1 `WorkerMan: master process` and pid 8 `WorkerMan: worker process` each show `event.so` (4 mappings) and `swoole.so` 0. Pss of an idle server by pid: master 12.8 MB, worker 7.1 MB: the harnesses' sums see both (cgroup.procs).
+- Scope 5, `conns.sh --steps 200,500 --max 500` on nocache: exit 0, 500 held, Pss 19.4 MiB baseline (master + worker), no container left. Full `bash lab/check.sh`: 28/28 ok (26 before, minus the boot check, plus 3).
 
 ## Assumed
 
@@ -52,6 +56,14 @@ Rien.
 - **Scope 3, shared code touched:** `lab_start_server` reads `LAB_SERVER_NOFILE` (empty by default); `probe.sh` gets `memory-events <id>` and `fresh-request <port> <path>`. macro.sh and conformance.sh unchanged. `lab/conns.sh` starts its probe itself (a copy of macro.sh's `docker run`), not through a shared function.
 - **Scope 3, ports:** `conns.sh` uses port 18100 by default (macro 18080, conformance 18090).
 - **Scope 3, Swoole memory is not linear in connections:** Pss slope 69 KiB/conn from 1k to 10k, about 5.5 KiB/conn from 20k to 65k (859 to 1,099 MiB). A single slope hides it: the table matters. Scope 7 should decide what it reports (the brief's slope is over all held steps).
+- **Scope 5, Response object, not a string:** `onMessage` sends `new Response($status, ['Content-Type' => 'application/json'], $body)`: the handler gives a status and a string would always answer 200 `text/html` (`Http::encode`). A Workerman user who needs a status and a type writes this.
+- **Scope 5, boot output comes from `onWorkerStart`:** the worker holds the inherited listening socket (`getMainSocket()`), so `tree:`, `loop:` and `socket:` lines are printed once there, after the handle is opened. Port is bound by the master before that; the harnesses' readiness polls answer only once the worker serves.
+- **Scope 5, backlog is the asked value, not read back:** `socket_get_option` has no backlog option and `/proc/net/tcp` shows 0 in `tx_queue` for a listener here. `tcp_nodelay` is read back. Kernel `somaxconn` on the VM is 4096, so the 4,096 is not clamped. Workerman's own default backlog is 102,400.
+- **Scope 5, socket line key:** `tcp_nodelay` (Swoole's is `open_tcp_nodelay`): JSON `server.socket` takes the keys the server prints, so a reader joining the two runtimes must map them.
+- **Scope 5, no harness change:** macro.sh, conformance.sh and conns.sh already sum CPU (cgroup), Pss and VmHWM over every pid of the cgroup, so the master is counted. Conformance needed no close from the server (no case reads until EOF).
+- **Scope 5, throwaway boot check removed:** `check_workerman_boots` and `check/fixtures/workerman-hello.php` are gone: the conformance check on both trees proves the server boots on each tree with Event and answers. The README keeps the 60 s keep-alive trap.
+- **Scope 5, handler split:** `handler_copy_db()` runs in the master before `new Worker`, `handler_open_db()` in `onWorkerStart`.
+- **Scope 5, loop not asserted by a check:** the server refuses without `event` and sets `Worker::$eventLoopClass = Event::class`; the boot line prints the class (read it with `docker logs`). No automated check reads the `loop:` line.
 
 ## Raw learnings
 
@@ -71,6 +83,9 @@ Rien.
 - Scope 4: Workerman's master binds the listen port before its worker is forked: a worker that dies at boot (here: `Event` loop class with ext-event not loaded) leaves a port that accepts and never answers, so a readiness poll needs a short socket timeout (`default_socket_timeout=2`).
 - Scope 4: the old Docker build cache for the PHP and Swoole layers was gone (no layer reused on the first rebuild of each image), so the four rebuilds include a full PHP + Swoole build. A rebuild after a `php-info` change took under 1 s (all earlier layers reused). The extras layer alone: 11.5 to 14 s.
 - Scope 4: macOS `sed -i` with a `#` delimiter and a `"` in the pattern failed silently-ish (`extra characters at the end of l command`) and the `;` after it let a 130 s build start with the old `lib.sh`: use python3 for edits, and `&&` between an edit and a build.
+- Scope 5: Workerman's `Response` object adds no `Server` header (only `Connection: keep-alive`, `Content-Length`, the headers given); the string path adds `Content-Type: text/html;charset=utf-8` by default.
+- Scope 5: zsh again: `for run in ...; do set -- $run` and `[ $k = posts ]` parse-error; a `*.md` glob that matches nothing aborts the command in zsh. Put multi-run loops in a small bash script file. Also a `git rm --cached` after a `;` ran even though the earlier grep failed: it staged a deletion (harmless here, it was the deletion I wanted).
+- Scope 5: `/proc/net/tcp` hex port: 18120 is 0x46C8 (I first looked for 0x4960).
 
 ## Where to look
 
@@ -94,10 +109,12 @@ Rien.
 - `lab/servers/workerman-caches.php`: child per tree, `ReflectionMethod::getStaticVariables()`. `@8c8f7cc`
 - `lab/check/fixtures/workerman-hello.php`, `lab/check.sh` → `check_source_extras`, `check_workerman_caches`, `check_workerman_boots`: how a Workerman server boots under the lab (argv, `/tmp` files, `close()` after send). `@8c8f7cc`
 - `lab/lib.sh` → `lab_source_release` now prints a 4th field, `WITH_EVENT`. `@8c8f7cc`
+- `lab/servers/bake-workerman.php`: the Workerman bake-off server (trees, Event loop, backlog, boot lines). `@ad52342`
+- `lab/check.sh` → `check_conformance_bake_workerman`, `check_workerman_server_refuses`, `check_macro_bake_workerman_posts_is_valid`; `lab/README.md` "Bake-off servers". `@ad52342`
 
 ## Next steps
 
-1. Scope 5.
+1. Scope 6.
 
 ## Handover of scope 4
 
@@ -126,6 +143,16 @@ Rien.
 - Workerman and `Connection: close` (see Raw learnings), and a dead worker leaving an answering-nothing port.
 - `php-info` on `8.3-apt` prints `pcntl`/`sockets` from Ubuntu's PHP and `event: not built`, `workerman: not built`: no check reads these on that image.
 - `reference/workerman` is v5.2.4 like the image's tree; the statics sit at 687, 116, 495, 540, 567 there (the brief said 682 for the first; the patch was made against the tarball the image downloads).
+
+## Handover of scope 5
+
+**Created:** `lab/servers/bake-workerman.php` (reads `PORT`, `WORKERMAN_TREE` = `nocache` default or `stock`); three checks in `lab/check.sh`. Removed: `check_workerman_boots` and `check/fixtures/workerman-hello.php`.
+
+**How to run it:** `--ext pcntl --ext sockets --ext event` (that order) `--env WORKERMAN_TREE=<tree> --label <tree>`. Boot prints `tree: ...`, `loop: Workerman\Events\Event`, `socket: backlog=4096 tcp_nodelay=1`.
+
+**For scope 6 (DIY server):** use the same shape: `handler_copy_db()` before any fork, `handler_open_db()` per worker, boot line `socket: backlog=4096 tcp_nodelay=<n>` (key `tcp_nodelay`, read back with `socket_get_option` if `sockets` is loaded). A server file that exits before the copy (bad env) is cheap to check from `lab/run.sh 8.5 env K=V php ...`.
+
+**Pitfalls:** Workerman's master and worker both run: any measurement that reads one pid misses the other (the lab's three scripts read the cgroup). Workerman keeps a connection 60 s whatever `Connection: close` says. For scope 7: nocache vs stock noop differ by about 2 us/req on a busy VM (21.7 vs 19.7: inside the noise, nothing to conclude).
 
 ## Questions for the project manager
 
@@ -158,3 +185,9 @@ Rien.
 - **What went well:** the caches script as a reflection check read the real thing (5 statics, filled or not) instead of timing, so the patch got a clear red and green; trying two broken patches in a scratch build context proved the loud failure without touching the shared images.
 - **What cost time:** Workerman's 60 s keep-alive made my first boot check hang 2 minutes per tree (twice, because the first fix, a `Connection: close` header, did nothing); a failed `sed` followed by `;` started a 130 s build on stale input; the old build cache was gone, so each of the four rebuilds was a full one.
 - **Next time:** probe a new server's behaviour with one raw-socket request and a clock before writing a check around it; chain edit and build with `&&`; give every readiness poll a short socket timeout.
+
+### Scope 5
+
+- **What went well:** the harnesses already summed over the whole cgroup, so a forking server needed no harness change; the maps and Pss-by-pid one-offs proved it in two `docker exec`s.
+- **What cost time:** zsh again (a `set -- $run` loop and an unmatched glob), and I looked for the wrong hex port when I tried to read the backlog back (it turned out `/proc/net/tcp` does not carry it anyway).
+- **Next time:** write any multi-run loop as a bash file from the start; before promising a read-back of a kernel value, check on a running container that the file shows it.

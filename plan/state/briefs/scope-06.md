@@ -82,3 +82,11 @@ fd limit (all later phases); the measurements (scope 7).
 
 **Come back to me if:** ext-event can't drive PHP streams the way this needs, a decision is missing, or the "Done
 when" doesn't pass after 3 tries.
+
+## Notes from scope 5 (before launch)
+
+- **One socket-line format for all three servers:** Workerman prints `socket: backlog=4096 tcp_nodelay=1`, Swoole
+  prints `open_tcp_nodelay=1`. Use `tcp_nodelay` in DIY, and change `bake-swoole.php`'s boot line to the same key
+  (`backlog=… tcp_nodelay=…`), in this commit, with any check or README text that reads it. The backlog can't be read
+  back from a socket (no option for it, `/proc/net/tcp` shows 0 for a listener): print the requested value and say so
+  in the README; `TCP_NODELAY` is read back where the runtime allows it.
