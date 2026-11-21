@@ -1,12 +1,12 @@
 # Run: phase 3, runtime bake-off
 
-**Pace:** 🟢 full · 5-hour 44 % · weekly 18 % at 16:25 · 5-hour resets 18:30 · away
+**Pace:** ⏸️ paused (waiting for a quiet VM, not for quota) · 5-hour 0 % · weekly 20 % at 18:47 · away
 
 **Status:** ⏸️ Stopped, your turn
 **Progress:** stopped at 18:49: scopes 1 to 6 and both final reviews done and pushed; scope 7 (the measurements) needs a quiet Docker VM · started 2026-11-21 16:24
-**Since your last read:** scope 2 smoke numbers on a busy VM (not results): Swoole 21 µs/req on `/noop`, 31 on posts at 7k. phase 2's run is archived in [runs/phase-2/](runs/phase-2/run.md). Phase 3 is planned in
-[details/phase-3.md](details/phase-3.md), predictions written at 16:29 before any measurement; D17 to D20 taken while
-you're away.
+**Since your last read:** scopes 1 to 6 are committed and pushed; both final reviews are OK (`pr-reviewer` pass 1,
+`blind-reviewer` pass 2 after one 🟠 fix). The bake-off (scope 7) can't measure: 23 containers of other projects run
+in Docker's VM (D15). Smoke runs on the busy VM, not results: all three servers VALID at 7,000 req/s on both routes.
 **👉 Your turn:** 🔴 blocking: quiet the Docker VM (23 other containers), then say "go". See "What I need from you" in [plan.md](plan.md). Q7 still open, not blocking.
 
 ## Steps
