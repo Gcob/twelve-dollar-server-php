@@ -3,14 +3,22 @@
 The measuring lab of phases 2 to 4: scripts that build the same seed data and the same environment for every
 measurement. Nothing in `lab/data/` is committed.
 
+## Prerequisites (on the Mac)
+
+- **Docker Desktop** running (the lab was built on 4.76 with its 12-CPU VM, cgroup v2). The images are built with
+  `bash lab/build.sh all` (about 11 minutes, see `results/build-times.md`), and `lab/check.sh` fails until they are.
+- **Node 18 or later** (24 here) and **`sqlite3`**: the seed generator is Node, and `lab/check.sh` reads the seed with `sqlite3`.
+- **`jq`**: the macro harness builds and reads its JSON with it.
+- The clone of the challenge in `reference/` (see Seed), and `curl`, `git`, `shasum` (they ship with macOS).
+
 ## Seed
 
 ```bash
 bash lab/seed.sh
 ```
 
-Builds the challenge's seed database from the clone in `reference/twelve-dollar-server-challenge/` (about a minute,
-about 250 MB) into `lab/data/feed.db` and `lab/data/tokens.json`. It must end with
+Builds the challenge's seed database from the clone in `reference/twelve-dollar-server-challenge/` (about 15 seconds
+on an M3 Pro, about 250 MB) into `lab/data/feed.db` and `lab/data/tokens.json`. It must end with
 `OK: ... content sha256 matches`. The clone is not ours; if it is missing:
 
 ```bash

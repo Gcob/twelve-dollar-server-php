@@ -14,6 +14,7 @@ the ways to implement it.
 - [`plan/decisions.md`](plan/decisions.md): every decision, with a link to the question that settled it.
 - [`plan/notes.md`](plan/notes.md): every idea we challenged, and its verdict.
 - [`plan/details/`](plan/details/): use cases, UML sequences, the steps and their variants, the runtimes, prior art.
+- [`lab/`](lab/README.md): the measuring lab: seed, PHP images, micro and macro benchmarks, and the first numbers.
 - [`docs/`](docs/): the challenge rules and the leaderboard, as of 2026-11-21.
 
 The work is planned and run with Claude (Anthropic): I make the calls, the reasoning is in the plan.

@@ -115,7 +115,11 @@ above every 3k run, which is above every 6k run. In CPU per second the server co
 and 130.0 ms/s at 6k: six times the requests for 2.6 times the CPU. A straight line through the 1k and 6k points gives
 about 16 µs per extra request plus about 34 ms of CPU per second that does not depend on the rate (the 3k point lies
 about 10 % above this line, so it is only a rough fit with three points). The part that does not depend on the rate is not idle
-time (49 to 149 µs/s measured between runs); that it comes from per-wake-up work is a hypothesis, not checked here.
+time (49 to 149 µs/s measured between runs); that it comes from per-wake-up work is a hypothesis, not checked here. It is also confounded with the connection
+count in this series: the rate and the connections rise together (100, 300 and 600 connections at 1k, 3k and 6k), so a part that
+does not depend on the rate could depend on the connections instead. The 2,000 req/s runs in `lab/README.md` ("VUs and
+connections", 50, 200 and 500 connections, no visible effect on µs/req) point to connections not mattering, but they were taken
+at one rate and are not a test of this.
 
 **3. "Peak RSS under 50 MB with a few hundred connections": held.** At 300 connections (3k): **VmHWM 28.73 MiB** (about
 30.1 MB), `memory.peak` 15.25 MiB. At 600 connections (6k): 30.11 MiB and 17.84 MiB. The server's peak grew by 2.6 MiB
