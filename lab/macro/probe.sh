@@ -5,6 +5,7 @@
 #
 #   probe.sh cpu <server container id> <k6 container id>     time (us) and cpu.stat of both cgroups
 #   probe.sh memory <server container id>                    memory.* of the server's cgroup and VmHWM of its processes
+#   probe.sh connections <port>                              established connections whose local port is <port> (server side)
 #   probe.sh port-open <port>                                exit 0 if something accepts connections on 127.0.0.1:<port>
 #   probe.sh http-answers <port> <path>                      exit 0 if 127.0.0.1:<port><path> answers any HTTP status
 set -euo pipefail
@@ -35,6 +36,13 @@ case "${1:-}" in
       [ -z "$hwm" ] || echo "vmhwm_kb $pid $hwm"
     done
     ;;
+  connections)
+    # Why: the host network namespace is shared (--network host), so /proc/net/tcp lists the server's sockets. Column 2 is
+    # the local address (`0100007F:4650`), column 4 the state (01 = ESTABLISHED).
+    hex="$(printf '%04X' "$2")"
+    n="$(awk -v p=":$hex" '$4 == "01" && substr($2, index($2, ":")) == p' /proc/net/tcp /proc/net/tcp6 2>/dev/null | wc -l)"
+    echo "connections established $(( n ))"
+    ;;
   port-open)
     (exec 3<>"/dev/tcp/127.0.0.1/$2") 2>/dev/null
     ;;
@@ -43,7 +51,7 @@ case "${1:-}" in
     [ -n "$code" ] && [ "$code" != 000 ]
     ;;
   *)
-    echo "usage: probe.sh cpu|memory|port-open|http-answers ..." >&2
+    echo "usage: probe.sh cpu|memory|connections|port-open|http-answers ..." >&2
     exit 2
     ;;
 esac

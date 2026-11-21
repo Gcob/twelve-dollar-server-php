@@ -170,7 +170,8 @@ Loads a server running in a lab container with [k6](https://k6.io) at a **fixed 
 requests per second whatever the server does, so a slow server shows up as latency and dropped iterations, not as a lower
 rate), and reports what a request costs the server. Needs `jq` on the Mac. Options: `--warmup <s>` (default 10, same
 rate, not measured), `--script <k6 js under lab/>` (default `lab/macro/k6/fixed-rate.js`), `--out <path>`,
-`--port` (default 18080), `--path` (the URL path, default `/`), `--pre-vus` / `--max-vus` (default 50 / 200),
+`--port` (default 18080), `--path` (the URL path, default `/`), `--pre-vus` / `--max-vus` (default both `rate / 10`, at
+least 50: see "VUs and connections"),
 `--php-ini key=value` (added after the entries' PHP flags, repeatable).
 
 `lab/servers/noop-swoole.php` is the floor: a Swoole HTTP server with the settings of both Swoole entries
@@ -205,9 +206,9 @@ The k6 image is pinned by tag **and** digest in `lib.sh` (`LAB_K6_IMAGE`; the 1.
   (`server_idle_usec_per_s`, 45 to 290 µs per second in trial runs, against about 38 ms of CPU per second under load, so it does not move the number). The connections k6 opens
   at the start of the run are in the measure.
 - **Latency** p50, p95, p99, max, from k6's `http_req_duration` (ms, as k6 measures it; k6 is on the same machine).
-- **VUs used** = the maximum of k6's `vus` gauge. Each VU keeps its own keep-alive connection, so this is the number of
-  open connections. `--pre-vus` VUs are started before the test and `--max-vus` is the ceiling; both must be high enough
-  that nothing is dropped.
+- **Connections open** = the established connections to the server's port, counted from the probe in `/proc/net/tcp` at 1/4, 1/2
+  and 3/4 of the measured run (the table shows the largest, the JSON keeps the three). **VUs running at once** = the maximum
+  of k6's `vus` gauge: how many iterations were in flight together, which is not the number of connections (see below).
 - **Peak RSS**, two numbers, because they differ: the server cgroup's `memory.peak` (counts page cache charged to the
   cgroup) and the highest `VmHWM` of the processes in the cgroup (`/proc/<pid>/status`, counts the pages the process maps,
   shared libraries included). Both cover the whole life of the server, warm-up included. In trial runs `VmHWM` was about
@@ -218,12 +219,36 @@ The k6 image is pinned by tag **and** digest in `lib.sh` (`LAB_K6_IMAGE`; the 1.
   the rate goes up.
 - The server's `throttled_usec` over the window is in the output too (non-zero means the 1 CPU limit cut the server).
 
+### VUs and connections
+
+k6 gives each iteration to a VU that is idle at that instant, and **drops the iteration when no VU is idle** (the
+executor does a non-blocking send on an unbuffered channel, `TryRunIteration` in `lib/executor/ramping_arrival_rate.go`,
+used by `constant_arrival_rate.go`; k6 1.8.3). Idle VUs queue in first-in first-out order, so the iterations rotate over **all**
+the pre-allocated VUs: the connections open equal the pre-allocated VUs (checked: 50 VUs, 50 connections; 500 VUs, 500
+connections), even when only 4 to 8 iterations are ever in flight. The harness used to report the in-flight maximum as
+"VUs used (open connections)", which was wrong; it now reports both.
+
+Why iterations were dropped with a handful of VUs in flight: about once per 30 s run, something stalls for tens of
+ms (the largest request latency of a run is the stall: 14 to 40 ms in the trial runs, on the server or the VM; not found
+which), and at 2,000 req/s a 37 ms stall starts 74 iterations that all wait. With 50 VUs, the 24 extra are dropped (a run with a max
+latency of 36.6 ms dropped 24, one with 39.6 ms dropped 27; shorter stalls dropped 1 to 11, which this does not explain
+exactly). With enough VUs the same stall is absorbed and shows up as latency (`latency max`, p99). So the default is
+**VUs = rate / 10 (100 ms of requests), at least 50, all started before the test**: 200 at 2,000 req/s. An unplanned VU (when
+`--max-vus` is above `--pre-vus`) is initialized during the run and drops iterations while it does.
+
+Numbers behind the default (8.3-apt, noop server, 2,000 req/s, `lab/macro.sh --pre-vus N --max-vus N`):
+
+- 50 VUs, 30 s: 4 runs of 5 had drops (11, 1, 1 and 27; one had 0), and 1 run of 3 at 20 s (24).
+- 200 VUs, 20 s: 0 drops in 3 runs. 500 VUs, 30 s and 20 s: 0 drops in 8 runs (max latency 6 to 41 ms).
+- CPU per request did not follow the connection count: 34.4 to 39.9 us at 50 VUs, 34.8 to 36.2 at 200, 32.5 to 41.0 at 500 (the
+  noise is larger than any effect). If a later server is sensitive to the number of connections, set `--pre-vus`.
+
 ### Validity
 
 A run with an **error rate above 0 %** or **`dropped_iterations` above 0** is still printed and written, but is marked
 `INVALID: <reasons>` in the table and `"valid": false` in the JSON, and `lab/macro.sh` exits 3. Dropped iterations mean k6
-could not start requests at the requested rate (not enough VUs, or the server too slow to free them), so the rate that
-was measured is not the rate that was asked for. Exit 1 is any other failure (bad argument, the server did not answer, k6
+had no free VU to start requests at the requested rate (a stall longer than the VUs absorb, or a server too slow), so the rate
+that was measured is not the rate that was asked for; the message says how long a stall the VUs absorb and the largest latency of the run. Exit 1 is any other failure (bad argument, the server did not answer, k6
 failed); exit 2 is a usage error.
 
 ### Reading the output

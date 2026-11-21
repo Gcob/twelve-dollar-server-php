@@ -4,7 +4,7 @@
 #
 #   bash lab/macro.sh --image 8.4 --server lab/servers/noop-swoole.php --rate 2000 --duration 30
 #                     [--warmup 10] [--script lab/macro/k6/fixed-rate.js] [--out <path>] [--port 18080]
-#                     [--path /] [--pre-vus 50] [--max-vus 200] [--php-ini key=value]...
+#                     [--path /] [--pre-vus <n>] [--max-vus <n>] [--php-ini key=value]...
 #
 # Three containers, all on the host network of Docker's VM (never k6 from macOS: Docker Desktop forwards a port from the
 # Mac through a userspace proxy, which would pollute every number):
@@ -41,7 +41,7 @@ command_line="lab/macro.sh $*"
 command_line="${command_line//$REPO/.}"
 
 image="" server_file="" rate="" duration="" warmup=10 script="$LAB/macro/k6/fixed-rate.js" out="" port=18080 url_path=/
-pre_vus=50 max_vus=200 php_ini=()
+pre_vus= max_vus= php_ini=()
 while [ "$#" -gt 0 ]; do
   [ "$#" -ge 2 ] || { echo "missing value for $1" >&2; usage; }
   case "$1" in
@@ -62,7 +62,20 @@ while [ "$#" -gt 0 ]; do
   shift 2
 done
 [ -n "$image" ] && [ -n "$server_file" ] && [ -n "$rate" ] && [ -n "$duration" ] || usage
-for n in rate duration warmup port pre_vus max_vus; do
+for n in rate duration warmup port; do
+  [[ "${!n}" =~ ^[0-9]+$ ]] || { echo "--${n//_/-} must be a whole number, got '${!n}'" >&2; usage; }
+done
+# Why these defaults: k6 hands each iteration to a VU that is idle at that instant, and drops it when none is. A stall of the
+# host or the server (tens of ms, about once per 30 s run on this Mac) piles up rate x stall iterations; with VUs to absorb
+# them they show as latency, without they are dropped. So VUs = 100 ms worth of requests (at least 50), all started before
+# the test (an extra VU started during the run would drop iterations while it initializes). k6 spreads the iterations
+# over all of them, so this is also the number of open connections.
+if [ -z "$pre_vus" ]; then
+  pre_vus=$(( (rate + 9) / 10 ))
+  [ "$pre_vus" -ge 50 ] || pre_vus=50
+fi
+[ -n "$max_vus" ] || max_vus="$pre_vus"
+for n in pre_vus max_vus; do
   [[ "${!n}" =~ ^[0-9]+$ ]] || { echo "--${n//_/-} must be a whole number, got '${!n}'" >&2; usage; }
 done
 [ "$rate" -ge 1 ] && [ "$duration" -ge 1 ] || { echo "--rate and --duration must be at least 1" >&2; usage; }
@@ -175,7 +188,15 @@ idle_after="$(probe cpu "$server_id" "$k6_id" | lines_to_json)"
 
 echo "measured run: ${duration}s at $rate req/s" >&2
 before="$(probe cpu "$server_id" "$k6_id" | lines_to_json)"
-run_k6 measured "$duration"
+# Why in the background: the connections are counted while k6 runs (they close when it ends), at 1/4, 1/2 and 3/4 of the run.
+run_k6 measured "$duration" &
+k6_job=$!
+connections='{}'
+for quarter in 1 2 3; do
+  sleep "$(awk -v d="$duration" 'BEGIN { printf "%.2f", d / 4 }')"
+  connections="$(jq -c --argjson n "$(probe connections "$port" | lines_to_json | jq '.connections.established')" --arg q "q$quarter" '. + {($q): $n}' <<<"$connections")"
+done
+wait "$k6_job" || exit 1
 after="$(probe cpu "$server_id" "$k6_id" | lines_to_json)"
 memory="$(probe memory "$server_id" | lines_to_json)"
 server_running="$(docker inspect -f '{{.State.Running}}' "$SERVER")"
@@ -196,7 +217,7 @@ jq -n \
   --argjson pre_vus "$pre_vus" --argjson max_vus "$max_vus" \
   --arg cpuset_server "$LAB_CPUSET_SERVER" --arg cpuset_k6 "$LAB_CPUSET_K6" --arg cpuset_probe "$LAB_CPUSET_PROBE" \
   --argjson before "$before" --argjson after "$after" --argjson idle_before "$idle_before" --argjson idle_after "$idle_after" \
-  --argjson memory "$memory" --slurpfile measured "$tmp/measured.json" --slurpfile warmup_summary "$tmp/warmup.json" '
+  --argjson memory "$memory" --argjson connections "$connections" --slurpfile measured "$tmp/measured.json" --slurpfile warmup_summary "$tmp/warmup.json" '
   def mib: . / 1048576 * 100 | round / 100;
   ($measured[0].metrics) as $m
   | ($m.http_reqs.count // 0) as $requests
@@ -207,7 +228,7 @@ jq -n \
   | ($m.dropped_iterations.count // 0) as $dropped
   | ([ (if $requests == 0 then "no request was sent" else empty end),
        (if $error_rate > 0 then "error rate \($error_rate * 100)% is above 0%" else empty end),
-       (if $dropped > 0 then "\($dropped) dropped iterations: k6 could not start requests at the requested rate (VUs: \($m.vus.max // 0) used of \($max_vus) max)" else empty end) ]) as $reasons
+       (if $dropped > 0 then "\($dropped) dropped iterations: k6 had no free VU to start them (\($max_vus) VUs absorb a stall of \($max_vus * 1000 / $rate | floor) ms at \($rate) req/s; latency max was \($m.http_req_duration.max // 0 | floor) ms)" else empty end) ]) as $reasons
   | {
     date: $date,
     command: $command,
@@ -231,6 +252,8 @@ jq -n \
       error_rate: $error_rate,
       dropped_iterations: $dropped,
       vus_used: ($m.vus.max // null),
+      connections_open: ([$connections[]] | max),
+      connections_samples: $connections,
       window_s: ($window_us / 1000000),
       server_cpu_percent_of_one_cpu: ($server_usec / $window_us * 100),
       server_throttled_usec: ($after.server.throttled_usec - $before.server.throttled_usec),
@@ -250,9 +273,9 @@ jq -n \
   }' >"$out"
 
 # The table reads the JSON just written, so what is printed is what is stored.
-IFS=$'\t' read -r valid requests achieved usec p50 p95 p99 pmax err dropped vus peak hwm k6cpu srvpct idle thr window < <(
+IFS=$'\t' read -r valid requests achieved usec p50 p95 p99 pmax err dropped vus conns peak hwm k6cpu srvpct idle thr window < <(
   jq -r '.results as $r | [.valid, $r.requests, $r.achieved_req_per_s, $r.cpu_usec_per_request, $r.latency_ms.p50,
-    $r.latency_ms.p95, $r.latency_ms.p99, $r.latency_ms.max, $r.error_rate, $r.dropped_iterations, $r.vus_used,
+    $r.latency_ms.p95, $r.latency_ms.p99, $r.latency_ms.max, $r.error_rate, $r.dropped_iterations, $r.vus_used, $r.connections_open,
     $r.memory.cgroup_memory_peak_mib, $r.memory.vmhwm_mib, $r.k6_cpu_percent_of_one_cpu,
     $r.server_cpu_percent_of_one_cpu, $r.server_idle_usec_per_s, $r.server_throttled_usec, $r.window_s]
     | map(if . == null then "n/a" elif type == "number" then (. * 100 | round / 100) else . end) | @tsv' "$out")
@@ -267,7 +290,8 @@ printf '  %-28s %s\n' \
   "latency ms max" "$pmax" \
   "error rate" "$(awk -v e="$err" 'BEGIN{printf "%.2f%%", e*100}')" \
   "dropped iterations" "$dropped" \
-  "VUs used (open connections)" "$vus (of $max_vus max)" \
+  "VUs running at once (max)" "$vus (of $max_vus max)" \
+  "connections open (max of 3)" "$conns (k6 pre-allocated $pre_vus VUs)" \
   "peak RSS, cgroup memory.peak" "$peak MiB (counts page cache)" \
   "peak RSS, VmHWM" "$hwm MiB" \
   "server CPU over the window" "$srvpct % of one CPU ($window s window, idle $idle us/s, throttled $thr us)" \
