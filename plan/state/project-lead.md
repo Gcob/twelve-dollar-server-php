@@ -1,6 +1,6 @@
 # Project manager: phase 2, lab setup
 
-**State:** 6/6 scopes done; `pr-reviewer` OK at pass 2 (11:27); `blind-reviewer` pass 1 next.
+**State:** 🏁 phase 2 delivered at 11:43: 6/6 scopes, both final reviews OK at pass 2, `lab/check.sh` 16/16 on `ec0f3fa`. Stop: no phase 3 (D12).
 
 ## Resolved config
 
@@ -26,6 +26,7 @@ Skill defaults (`autonomous-run/pipeline.yml`), no run override file. Changes fr
 | 4     | ad96bd86862e37b02 | done `8151a5e` + `cad0e84`, pushed |
 | 5     | a587078e149d24e5c | done `13291fd` + `d2ff24e`, pushed |
 | 6     | a3d56f754bcf88e0c | done `c3a487b`, pushed |
+| blind-reviewer | a4e43f1a957a902ad | pass 2 OK (11:41) |
 | pr-reviewer | a8125c8756bdfff08 | pass 2 OK (11:27) |
 | 5 (fixes)   | a587078e149d24e5c | R1 R2 R4 R7 fixed: `cc2ca4f`, `f5a122c` |
 
@@ -64,6 +65,7 @@ Rien.
 - R4, R7 🟡: fix (docs, one commit).
 - R5, R6 🟡: left (no failure scenario that changes a number).
 - R8 ⚠️: Q9 in plan.md.
+- R9 🟠 blind (micro_summarize reads process 0 only), R10 🟡 MIT credit, R11 🟡 8 doc items: all to fix, one developer (scope 5's, broadest context, avoids two writers on lab/README.md), 11:35.
 
 ## Suggested skills
 
@@ -81,10 +83,19 @@ Rien.
 
 ## Next steps
 
-1. Triage the `pr-reviewer` report, fix through the scope's developer, relaunch (max 2).
-2. `blind-reviewer`: give it only the code paths (`lab/`, `.gitignore`) and its two paths; tell it not to read `plan/` (the plan is in the repo here).
-3. Delivery: `run.md` Livraison, retro, `run.yml` numbers, notify.
+1. Nothing in this run. Phase 3 starts from a new run with D14's branch and worktree, after Jacob answers Q8 and Q9.
 
 ## Retro
 
-(at delivery)
+1. **What I lacked:** the pace and push rules (`CLAUDE.local.md`) arrived mid-run; the HTTPS remote pushed as the
+   wrong account (403) until the planning session switched it to SSH.
+2. **What I guessed:** that Q7 to Q9 could skip the questions point because they touch phases 3 and 4, not phase 2's
+   code. Nobody confirmed it.
+3. **Where I lost time:** I wrote `run.md` times from memory and they ran 15 min fast (caught by the planning
+   session). Two checks I trusted from developers failed on my own rerun (scopes 4 and 5): rerunning every "Done when"
+   myself was worth it both times.
+4. **Could be deterministic:** a small script that fills run.md's time and SHA columns from `date` and `git log`;
+   the numbers quoted in Q8 were wrong against the JSON (the `pr-reviewer` caught it): quote from a summary script,
+   never from a developer's report.
+5. **What the plan should have decided:** the request rate of the method (Q9).
+6. **Blind spot:** the macro harness proves the PHP flags, not that the server's script was cached with the JIT on.

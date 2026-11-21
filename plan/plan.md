@@ -1,8 +1,8 @@
 # $12 server challenge in PHP
 
 **Status:** 🟡 Your turn: 3 questions (not blocking) · approved on 2026-11-21 · snapshot 2026-11-21-0920 · **Round:** 2
-**Since your last read:** phase 2 (lab setup) is running: 6 scopes below, progress in [run.md](run.md). New
-decisions: D13, PHP 8.3 is also built from source as a control; D14, a branch and worktree per phase from phase 3. Traefik is still 🔶 open in [notes.md](notes.md).
+**Since your last read:** phase 2 is delivered ([run.md](run.md), "Delivery"): the no-op Swoole server costs 50.2,
+30.2 and 21.7 µs CPU/req at 1k, 3k and 6k req/s. 3 open questions for phases 3 and 4, none blocking.
 **Project:** this repo, `plan/` · **Submission:**
 `submissions/php-<runtime>-Gcob/` · **Jira:** none
 
@@ -129,6 +129,10 @@ benches will tell us if 8.6 is worth the effort of B.
 worth a try.
 
 **Answer:**
+### Actions
+
+- [ ] **[run] Install `shellcheck`** (`brew install shellcheck`): 4 of 6 developers had no linter for the lab's
+  ~600 lines of bash. Phase 3 can then add a lint check to `lab/check.sh`.
 
 ## 🤝 Essentials
 
@@ -159,7 +163,7 @@ step's choice backed by a measurement.
 **Decisions:** 14 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
 is a prediction we re-measure, not an answer.
 
-### Phase 2 scopes (running)
+### Phase 2 scopes (delivered)
 
 Detail, seams and predictions in [details/phase-2.md](details/phase-2.md). One commit each, pushed on `main`.
 
