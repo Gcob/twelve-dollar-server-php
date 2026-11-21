@@ -3,7 +3,7 @@
 **Pace:** 🟢 full · 5-hour 44 % · weekly 18 % at 16:25 · 5-hour resets 18:30 · away
 
 **Status:** 🔵 Running
-**Progress:** step 1/7, scope 6 (DIY) since 18:03; scopes 1 to 5 pushed; ext-event built on 8.6 too; plan review OK (delta) at 16:48; scope 1 done and pushed at 16:34 · started 2026-11-21 16:24
+**Progress:** step 4/7, `pr-reviewer` on scopes 1 to 6 since 18:17; scope 7 waits for a quiet VM; scopes 1 to 6 pushed; ext-event built on 8.6 too; plan review OK (delta) at 16:48; scope 1 done and pushed at 16:34 · started 2026-11-21 16:24
 **Since your last read:** scope 2 smoke numbers on a busy VM (not results): Swoole 21 µs/req on `/noop`, 31 on posts at 7k. phase 2's run is archived in [runs/phase-2/](runs/phase-2/run.md). Phase 3 is planned in
 [details/phase-3.md](details/phase-3.md), predictions written at 16:29 before any measurement; D17 to D20 taken while
 you're away.
@@ -14,10 +14,10 @@ you're away.
 | #   | Step              | State       | Start | End | Detail |
 |-----|-------------------|-------------|-------|-----|--------|
 | 0   | Plan review       | done        | 16:29 | 16:48 | full: NOT_OK (1 🔴, 3 🟠), settled as D21 to D24 at 16:44; delta: OK at 16:48, 4 🟡 folded in |
-| 1   | Scopes            | in progress | 16:31 |     | 5/7, scope 6 since 18:03 |
-| 2   | Questions         | to do       |       |     |     |
-| 3   | Lab suite         | to do       |       |     | `lab/check.sh` |
-| 4   | `pr-reviewer`     | to do       |       |     |     |
+| 1   | Scopes            | in progress | 16:31 |     | 6/7; scope 7 (measuring) waits for a quiet VM |
+| 2   | Questions         | skipped     |       |     | no `run` question opened by this phase; Q7 stays open (not blocking) |
+| 3   | Lab suite         | done        | 18:17 | 18:17 | `lab/check.sh` 32/32 on `3e74d76` |
+| 4   | `pr-reviewer`     | in progress | 18:17 |     | pass 1 on scopes 1 to 6, while scope 7 waits |
 | 5   | `blind-reviewer`  | to do       |       |     |     |
 | 6   | Delivery          | to do       |       |     | branch pushed, not merged |
 
@@ -30,8 +30,8 @@ you're away.
 | 3   | done | 16:59 | 17:12 | +821 -3 | 10k held, nofile 2048 ceiling 2,035 (timeout), check.sh 24/24 (PM rerun) | `deeb8d1` |       |
 | 4   | done | 17:15 | 17:50 | +636 -16 | php-info 8.5/8.6 event 3.2.0 + Workerman, caches 5/5, boots on both trees, check.sh 26/26 (PM rerun) | `8c8f7cc` |       |
 | 5   | done | 17:53 | 18:01 | +136 -50 | conformance 8/8 on both trees, 4 macro runs VALID, check.sh 28/28 (PM rerun) | `ad52342` |       |
-| 6   | in progress | 18:03 |     |       |        |     |       |
-| 7   | to do |       |     |       |        |     |       |
+| 6   | done | 18:03 | 18:14 | +862 -8 | conformance 8/8, parser 30/30, partial write 4/4, VALID at 7k, check.sh 32/32 (PM rerun) | `3e74d76` |       |
+| 7   | blocked | | | | | | waits for a quiet VM (23 other containers at 18:17) |
 
 ## Reviews
 

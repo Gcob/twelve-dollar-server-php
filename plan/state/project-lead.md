@@ -33,7 +33,8 @@ Skill defaults (`autonomous-run/pipeline.yml`), no run override file. Changes fr
 | 3     | a3803015f5e6ef81d | done `deeb8d1`, pushed 17:15 |
 | 4     | a161b1a16e1bf9f8d | done `8c8f7cc`, pushed 17:53 (images rebuilt from scratch: build cache was gone) |
 | 5     | a6a4a68f6415877b2 | done `ad52342`, pushed 18:03 |
-| 6     | (scope 6 dev, id in the next commit) | working since 18:03 |
+| 6     | a5ac629088e976752 | done `3e74d76`, pushed 18:17 (DIY spins on accept at the fd limit: noted for the conns run) |
+| pr-reviewer | ac896543c8894bdb6 | pass 1 since 18:17, scopes 1 to 6 |
 
 ## Verified
 
@@ -74,6 +75,11 @@ Skill defaults (`autonomous-run/pipeline.yml`), no run override file. Changes fr
 ## Plan read up to
 
 `plan.md`, `decisions.md` D1 to D20, 2026-11-21 16:30.
+
+## Decisions on the way (cont.)
+
+- 18:17: scope 7 blocked by a busy VM (23 other containers since 16:43). Reviews run on scopes 1 to 6 now; after
+  scope 7, each reviewer gets a delta pass on its commit only. Questions point skipped: no new `run` question.
 
 ## Next steps
 

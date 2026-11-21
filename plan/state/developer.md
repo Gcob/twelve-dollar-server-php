@@ -1,6 +1,6 @@
 # Developer: phase 3, runtime bake-off
 
-**State:** scope 5 done (`ad52342`), scope 4 done (`8c8f7cc`), scope 3 done (`deeb8d1`), scope 2 done (`0d74fda`), scope 1 done (`a0477ba`). Phase 2's handovers are in `plan/runs/phase-2/state/developer.md` (read its "Où regarder"
+**State:** scope 6 done (`3e74d76`), scope 5 done (`ad52342`), scope 4 done (`8c8f7cc`), scope 3 done (`deeb8d1`), scope 2 done (`0d74fda`), scope 1 done (`a0477ba`). Phase 2's handovers are in `plan/runs/phase-2/state/developer.md` (read its "Où regarder"
 and "Impasses" if you touch `macro.sh`, `micro.sh`, `seed.sh` or the images).
 
 ## Verified
@@ -22,6 +22,12 @@ and "Impasses" if you touch `macro.sh`, `micro.sh`, `seed.sh` or the images).
 - Scope 5, Done-when macro runs (8.5, 7000 req/s, 20 s, warm-up 10 s, 23 other containers running, not measurements), all VALID, 0 errors, 0 dropped: nocache `/noop` 21.69 us/req (140,005 req), nocache posts 29.89 (140,002), stock `/noop` 19.70 (139,998), stock posts 31.52 (139,991). Pss under load: 25.9 MiB (`/noop`), 134 MiB (posts), both trees. JSON of the first run: `label nocache`, `ext [pcntl,sockets,event]`, `env [WORKERMAN_TREE=nocache]`, `socket {backlog 4096, tcp_nodelay 1}`.
 - Scope 5, maps during the nocache `/noop` run (`docker exec lab-macro-server`, every `/proc/<pid>/maps`): pid 1 `WorkerMan: master process` and pid 8 `WorkerMan: worker process` each show `event.so` (4 mappings) and `swoole.so` 0. Pss of an idle server by pid: master 12.8 MB, worker 7.1 MB: the harnesses' sums see both (cgroup.procs).
 - Scope 5, `conns.sh --steps 200,500 --max 500` on nocache: exit 0, 500 held, Pss 19.4 MiB baseline (master + worker), no container left. Full `bash lab/check.sh`: 28/28 ok (26 before, minus the boot check, plus 3).
+- Scope 6, red first: both tests were written before the server. Run with no `diy-connection.php`: `Failed opening required`, exit 255. Then against a stub `DiyConnection` that did nothing: the parser cases printed `FAIL` for the expected reason (`the client received ""`; I read the first 12 lines, where only "no answer before the body is whole" passed, as a stub that answers nothing should) and all 4 partial-write cases failed (`0 of 640075 bytes are still buffered`, `reading should be paused`). Real class: first run 29/30 ok, the failing one was the 8 KiB-terminated case, my fixture: `fread` takes at most 8192 bytes from a socket whatever the length asked, so one `onReadable()` had not seen the blank line yet (the event loop wakes up again; the test helper now reads until the server's end is empty with `stream_select`). Then 30/30 parser, 4/4 partial-write. On this VM a Linux `AF_UNIX` pair takes 212,992 bytes before a write is refused; the 640,075-byte response left 420,811 buffered after the first write.
+- Scope 6, conformance on `bake-diy.php`: 8 cases ok, `socket: backlog=4096 tcp_nodelay=1`, `loop: epoll`, `accepted socket: tcp_nodelay=1` (read from the first accepted socket: the option is inherited from the listener). `/noop` bytes: `HTTP/1.1 200 OK`, `Content-Type: application/json`, `Content-Length: 15`, nothing else.
+- Scope 6, Done-when macro runs (8.5, 7000 req/s, 20 s, warm-up 10 s, 23 other containers running, not measurements), both VALID, 0 errors, 0 dropped: `/noop` 18.2 us/req (140,002 requests, server 12.5 % of one CPU, Pss 22.4 MiB); posts 26.92 us/req (139,997 requests, server 18.5 %, Pss 130 MiB). For reference the same VM, same conditions, scopes 2 and 5: Swoole 21.05 and 31.22, Workerman nocache 21.69 and 29.89. Result files went to the scratchpad (`--out`), none committed.
+- Scope 6, `conns.sh --steps 200,500 --max 500` on `bake-diy.php`: exit 0, 500 held, fresh request 0.5 ms, Pss 16.8 MiB at 200 and 500 (slope 0.2 KiB/conn on 2 steps, which says nothing), memory.current slope 3.91 KiB/conn, no container left.
+- Scope 6, boot lines of the three servers (8.5): Swoole `listening on 0.0.0.0:18151` / `socket: backlog=4096 tcp_nodelay=1`; Workerman `tree: nocache` / `loop: Workerman\Events\Event` / `socket: backlog=4096 tcp_nodelay=1`; DIY `listening on 0.0.0.0:18153` / `loop: epoll` / `socket: backlog=4096 tcp_nodelay=1`.
+- Scope 6, full `bash lab/check.sh`: 32/32 ok (28 before, plus `check_diy_parser`, `check_diy_partial_write`, `check_conformance_bake_diy`, `check_macro_bake_diy_posts_is_valid`), 117 s. The 4 new checks were written after the tests and the hand runs had passed (no separate red run of the checks).
 
 ## Assumed
 
@@ -64,6 +70,15 @@ Rien.
 - **Scope 5, throwaway boot check removed:** `check_workerman_boots` and `check/fixtures/workerman-hello.php` are gone: the conformance check on both trees proves the server boots on each tree with Event and answers. The README keeps the 60 s keep-alive trap.
 - **Scope 5, handler split:** `handler_copy_db()` runs in the master before `new Worker`, `handler_open_db()` in `onWorkerStart`.
 - **Scope 5, loop not asserted by a check:** the server refuses without `event` and sets `Worker::$eventLoopClass = Event::class`; the boot line prints the class (read it with `docker logs`). No automated check reads the `loop:` line.
+- **Scope 6, one connection class, no loop inside:** `DiyConnection` (`lab/servers/diy-connection.php`) takes a non-blocking stream and offers `onReadable()` / `onWritable()` (both return false when the connection is finished), `wantsRead()` / `wantsWrite()`, `pendingBytes()`, `close()`. The loop (`bake-diy.php`, classes `DiyPeer` and `DiyServer`) only turns events on and off from those two `wants` answers. The tests drive it on a socket pair.
+- **Scope 6, state per connection is an object** (`DiyPeer`: connection, read event, write event, two booleans of what is armed) allocated at accept; a request allocates only its strings (the parsed fields are properties of the connection, not a returned array). Event callbacks are closures made once (`$this->onReadable(...)`) and the peer travels as the event's `$arg`, so no closure per connection. The peer and its events point at each other: `settle()` frees the events and nulls them before closing the stream, which breaks the cycle at once (no cycle collector run).
+- **Scope 6, `DiyConnection` calls the global `handler_handle()`,** like every adapter. The tests define a stub with the same name (`lab/check/diy-lib.php`: echoes `<method> <path> <body>`, and `/big/<n>` answers n bytes of counters) and do not load `handler.php`.
+- **Scope 6, one `fread` per readable event, 8,192 bytes:** PHP reads at most 8 KiB from a socket per `fread()` whatever length is asked. The event is level-triggered, so the next callback reads the rest.
+- **Scope 6, additions the brief did not list, all in the README:** a `Content-Length` over 1 MiB (or 8+ digits) is a 400 and a close (bounds one connection's memory); two `Content-Length` headers are a 400; the 8 KiB limit counts the blank line, and an unterminated block is cut as soon as it passes 8 KiB; a header line only has to have a name and a colon. While the write buffer is at 1 MiB or more, **already received requests are not answered either** (parsing stops, they wait in the read buffer): without that, one 64 KiB read of pipelined requests could still grow the buffer without bound.
+- **Scope 6, HTTP/1.0 with keep-alive:** stays open, answer has no `Connection` header (the brief said "nothing else"), so clients that need the header close on their own. `Connection: close` check is `str_contains` on the lowercased value, so `keep-alive, close` closes.
+- **Scope 6, EOF means free now:** a client that half-closes (sends, then shuts its write side) after a request loses an answer the socket had not taken yet; answers the socket takes at once (all of them in practice) go out in the same callback as the request.
+- **Scope 6, socket line key renamed in Swoole:** `bake-swoole.php` prints `backlog=4096 tcp_nodelay=1` (was `open_tcp_nodelay`); the Swoole checks in `check.sh`, `conformance.sh`'s comment and the README follow. JSON `server.socket` of a Swoole run is now `{backlog, tcp_nodelay}` like the other two (older result files, if any, kept `open_tcp_nodelay`: none is committed).
+- **Scope 6, no signal handling:** the server does not catch SIGTERM (pid 1 in the container ignores it); the harnesses remove containers with `docker rm -f`.
 
 ## Raw learnings
 
@@ -86,6 +101,9 @@ Rien.
 - Scope 5: Workerman's `Response` object adds no `Server` header (only `Connection: keep-alive`, `Content-Length`, the headers given); the string path adds `Content-Type: text/html;charset=utf-8` by default.
 - Scope 5: zsh again: `for run in ...; do set -- $run` and `[ $k = posts ]` parse-error; a `*.md` glob that matches nothing aborts the command in zsh. Put multi-run loops in a small bash script file. Also a `git rm --cached` after a `;` ran even though the earlier grep failed: it staged a deletion (harmless here, it was the deletion I wanted).
 - Scope 5: `/proc/net/tcp` hex port: 18120 is 0x46C8 (I first looked for 0x4960).
+- Scope 6: `fread($socket, N)` returns at most 8,192 bytes for any N; `fwrite` on a non-blocking socket that is full returns 0 (no notice) and `@fwrite` on a peer that is gone returns false; `fread` returning `''` is EAGAIN unless `feof()`.
+- Scope 6: a `stream_socket_pair` (AF_UNIX) takes 212,992 bytes on this VM before a non-blocking write is refused; ext-event takes a stream resource as the fd of an `Event` and passes it back as the callback's first argument.
+- Scope 6: `stream_socket_accept($listener, 0)` on a non-blocking listener returns false (and warns, hence `@`) when the queue is empty: that is the end of the accept loop.
 
 ## Where to look
 
@@ -111,10 +129,12 @@ Rien.
 - `lab/lib.sh` → `lab_source_release` now prints a 4th field, `WITH_EVENT`. `@8c8f7cc`
 - `lab/servers/bake-workerman.php`: the Workerman bake-off server (trees, Event loop, backlog, boot lines). `@ad52342`
 - `lab/check.sh` → `check_conformance_bake_workerman`, `check_workerman_server_refuses`, `check_macro_bake_workerman_posts_is_valid`; `lab/README.md` "Bake-off servers". `@ad52342`
+- `lab/servers/bake-diy.php`, `lab/servers/diy-connection.php`: the DIY server (loop and `DiyConnection`, parser and write buffer). `@3e74d76`
+- `lab/check/diy-lib.php`, `diy-parser-test.php`, `diy-partial-write-test.php`: the two tests, a stub handler and a socket pair helper; `lab/check.sh` → `check_diy_parser`, `check_diy_partial_write`, `check_conformance_bake_diy`, `check_macro_bake_diy_posts_is_valid`. `@3e74d76`
 
 ## Next steps
 
-1. Scope 6.
+1. Scope 7.
 
 ## Handover of scope 4
 
@@ -154,6 +174,16 @@ Rien.
 
 **Pitfalls:** Workerman's master and worker both run: any measurement that reads one pid misses the other (the lab's three scripts read the cgroup). Workerman keeps a connection 60 s whatever `Connection: close` says. For scope 7: nocache vs stock noop differ by about 2 us/req on a busy VM (21.7 vs 19.7: inside the noise, nothing to conclude).
 
+## Handover of scope 6
+
+**Created:** `lab/servers/bake-diy.php` (reads `PORT`; run with `--ext sockets --ext event`, that order), `lab/servers/diy-connection.php` (`DiyConnection`), `lab/check/diy-lib.php`, `diy-parser-test.php`, `diy-partial-write-test.php`, four checks in `lab/check.sh`. Changed: `bake-swoole.php` boot line (`tcp_nodelay`), the Swoole expectations in `check.sh`, `conformance.sh` comment, README.
+
+**How to run it:** `bash lab/macro.sh --image 8.5 --server lab/servers/bake-diy.php --ext sockets --ext event --label diy --rate 7000 --duration 20 --path /posts/1 --script lab/macro/k6/posts.js`. Boot prints `listening on ...`, `loop: epoll`, `socket: backlog=4096 tcp_nodelay=1`, then `accepted socket: tcp_nodelay=1` once, at the first connection. JSON `server.ext` is `["sockets","event"]`.
+
+**For scope 7:** one process, so the server's CPU is the whole cgroup's. Smoke numbers on a busy VM (not measurements): `/noop` 18.2 us/req, posts 26.9, against Swoole 21.1 / 31.2 and Workerman 21.7 / 29.9 under the same conditions. Memory per connection can be compared: DIY memory.current slope 3.9 KiB/conn on 200 to 500 (Pss slope 0.2 KiB/conn, too few connections to mean anything). The macro run holds 700 connections (k6 VUs).
+
+**Pitfalls:** `fread` on a socket gives at most 8 KiB, so a test that calls `onReadable()` once per write must loop until the server's end is empty. The 400 rules are strict (Content-Length twice, over 1 MiB, any Transfer-Encoding): a later phase that adds a client sending any of these needs the parser changed, not the test. At the fd limit the listening event spins (accept fails, fires again): not shed yet.
+
 ## Questions for the project manager
 
 Rien.
@@ -191,3 +221,9 @@ Rien.
 - **What went well:** the harnesses already summed over the whole cgroup, so a forking server needed no harness change; the maps and Pss-by-pid one-offs proved it in two `docker exec`s.
 - **What cost time:** zsh again (a `set -- $run` loop and an unmatched glob), and I looked for the wrong hex port when I tried to read the backlog back (it turned out `/proc/net/tcp` does not carry it anyway).
 - **Next time:** write any multi-run loop as a bash file from the start; before promising a read-back of a kernel value, check on a running container that the file shows it.
+
+### Scope 6
+
+- **What went well:** making the connection class loop-free (a stream in, `wants*` answers out) let both hard behaviours (every byte-position cut, a partial write) be tested on a socket pair in seconds, and the first end-to-end run (conformance) passed at once.
+- **What cost time:** one failing case turned out to be my fixture (`fread` returns 8 KiB at most); the 2 macro runs and the full check are the long part (about 6 minutes of waiting in all).
+- **Next time:** look up what a PHP stream call returns at its limits (read size, EAGAIN, EPIPE) in a 5-line script before writing the class around it; stub the unit first so the tests show red per case, not a missing-file fatal.
