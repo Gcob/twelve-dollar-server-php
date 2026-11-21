@@ -37,8 +37,8 @@ check_image_8_3_apt() {
 # check_source_image <variant>: the source image reports the pinned PHP version, OPcache with JIT, the same SQLite as
 # the apt image, and Swoole 6.2.6 (or "not built" when lab/lib.sh says this variant is built without it).
 check_source_image() {
-  local v="$1" php_version sha with_swoole info want_swoole apt_sqlite
-  read -r php_version sha with_swoole <<<"$(lab_source_release "$v")"
+  local v="$1" php_version with_swoole info want_swoole apt_sqlite
+  read -r php_version _ with_swoole <<<"$(lab_source_release "$v")"
   docker image inspect "php-lab:$v" >/dev/null 2>&1 || { echo "image php-lab:$v is missing (run lab/build.sh $v)"; return 1; }
   info="$(bash "$LAB/run.sh" "$v" php-info 2>&1)" || { echo "php-info failed: $info"; return 1; }
   grep -qx "php: $php_version" <<<"$info" || { echo "php-info does not report PHP $php_version: ${info//$'\n'/ | }"; return 1; }
@@ -147,6 +147,45 @@ check_macro_cleans_up_after_failure() {
   [ -z "$left" ] || { echo "containers left behind: ${left//$'\n'/ }"; return 1; }
 }
 
+# The bash scripts of the lab, one repo-relative path per line: every `*.sh` and every file whose first line is a bash or sh
+# shebang, except the fixtures (they hold deliberate warnings) and the seed data.
+lab_bash_scripts() {
+  local f
+  find "$LAB" -type f ! -path "$LAB/data/*" ! -path "$LAB/check/fixtures/*" | sort | while IFS= read -r f; do
+    if [[ "$f" == *.sh ]] || head -n 1 "$f" 2>/dev/null | grep -q -a -E '^#!.*(bash|[ /]sh)( |$)'; then
+      echo "lab/${f#"$LAB"/}"
+    fi
+  done
+}
+
+# Runs the pinned shellcheck on repo-relative paths (shellcheck_run <path>...), the repo mounted read-only, warnings and up.
+# Prints its findings (`file:line:col: severity: message [SCxxxx]`), returns shellcheck's exit code (1 = findings).
+shellcheck_run() {
+  docker run --rm -v "$LAB/..:/repo:ro" -w /repo "$LAB_SHELLCHECK_IMAGE" --severity=warning --format=gcc --external-sources "$@" 2>&1
+}
+
+# Every bash script of the lab passes shellcheck at warning level.
+check_shellcheck() {
+  local scripts=() script out rc=0
+  # Why: macOS ships bash 3.2, which has no mapfile.
+  while IFS= read -r script; do scripts+=("$script"); done < <(lab_bash_scripts)
+  [ "${#scripts[@]}" -gt 0 ] || { echo "no bash script found under lab/"; return 1; }
+  out="$(shellcheck_run "${scripts[@]}")" || rc=$?
+  [ "$rc" = 0 ] || { echo "shellcheck exited $rc: ${out//$'\n'/ | }"; return 1; }
+}
+
+# The fixture holds one known warning: shellcheck must fail on it, and the normal scan must not include it. Together they
+# prove check_shellcheck is able to fail.
+check_shellcheck_catches_warning() {
+  local out rc=0
+  out="$(shellcheck_run lab/check/fixtures/lint-warning.sh)" || rc=$?
+  [ "$rc" = 1 ] || { echo "expected exit 1 on the fixture, got $rc: ${out//$'\n'/ | }"; return 1; }
+  grep -q 'lint-warning.sh:5:.*SC2046' <<<"$out" || { echo "the fixture's SC2046 is not reported: ${out//$'\n'/ | }"; return 1; }
+  if lab_bash_scripts | grep -q 'check/fixtures'; then
+    echo "the fixture is part of the normal scan"; return 1
+  fi
+}
+
 CHECKS=(
   check_seed_files_exist
   check_seed_has_posts
@@ -164,6 +203,8 @@ CHECKS=(
   check_macro_noop_is_valid
   check_macro_marks_invalid_run
   check_macro_cleans_up_after_failure
+  check_shellcheck
+  check_shellcheck_catches_warning
 )
 
 failed=0

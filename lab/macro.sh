@@ -41,7 +41,7 @@ command_line="lab/macro.sh $*"
 command_line="${command_line//$REPO/.}"
 
 image="" server_file="" rate="" duration="" warmup=10 script="$LAB/macro/k6/fixed-rate.js" out="" port=18080 url_path=/
-pre_vus= max_vus= php_ini=()
+pre_vus="" max_vus="" php_ini=()
 while [ "$#" -gt 0 ]; do
   [ "$#" -ge 2 ] || { echo "missing value for $1" >&2; usage; }
   case "$1" in
