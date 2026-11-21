@@ -3,7 +3,7 @@
 **Pace:** 🟢 full · 5-hour 44 % · weekly 18 % at 16:25 · 5-hour resets 18:30 · away
 
 **Status:** 🔵 Running
-**Progress:** step 4/7, `pr-reviewer` on scopes 1 to 6 since 18:17; scope 7 waits for a quiet VM; scopes 1 to 6 pushed; ext-event built on 8.6 too; plan review OK (delta) at 16:48; scope 1 done and pushed at 16:34 · started 2026-11-21 16:24
+**Progress:** step 4/7, `pr-reviewer` OK at 18:23, fixing 3 🟡 before the `blind-reviewer`; scope 7 waits for a quiet VM; scopes 1 to 6 pushed; ext-event built on 8.6 too; plan review OK (delta) at 16:48; scope 1 done and pushed at 16:34 · started 2026-11-21 16:24
 **Since your last read:** scope 2 smoke numbers on a busy VM (not results): Swoole 21 µs/req on `/noop`, 31 on posts at 7k. phase 2's run is archived in [runs/phase-2/](runs/phase-2/run.md). Phase 3 is planned in
 [details/phase-3.md](details/phase-3.md), predictions written at 16:29 before any measurement; D17 to D20 taken while
 you're away.
@@ -17,7 +17,7 @@ you're away.
 | 1   | Scopes            | in progress | 16:31 |     | 6/7; scope 7 (measuring) waits for a quiet VM |
 | 2   | Questions         | skipped     |       |     | no `run` question opened by this phase; Q7 stays open (not blocking) |
 | 3   | Lab suite         | done        | 18:17 | 18:17 | `lab/check.sh` 32/32 on `3e74d76` |
-| 4   | `pr-reviewer`     | in progress | 18:17 |     | pass 1 on scopes 1 to 6, while scope 7 waits |
+| 4   | `pr-reviewer`     | done        | 18:17 | 18:23 | pass 1 OK on scopes 1 to 6 (6 🟡); a delta pass on scope 7 later |
 | 5   | `blind-reviewer`  | to do       |       |     |     |
 | 6   | Delivery          | to do       |       |     | branch pushed, not merged |
 
@@ -51,6 +51,38 @@ own pick (D21 to D24, and scope 4's Done-when now boots a Workerman); the 10 �
   locals; Workerman's `start` argv and pid files; Pss instead of VmRSS; predictions 7 and 8 against the prior art
   (revised at 16:44, still before any measurement); `micro.sh` dropped from the quiet-VM rule; the VM had 7, then
   23, other containers running (action in `plan.md`).
+
+### `pr-reviewer`, pass 1 · 18:17 to 18:23 · OK
+
+**Report:** [PR-2026-11-21-1820.md](reviews/PR-2026-11-21-1820.md). Scopes 1 to 6 match `details/phase-3.md`; the lab
+is ready for scope 7 to measure fairly (same handler, same socket settings, CPU and Pss over every process of the
+cgroup, the connection harness's max and slopes as planned). It reran the DIY parser and partial-write tests and the
+caches script.
+
+#### R1 🟡 A dead `wait` mode in the conformance client
+
+**Scopes:** 2 · **Status:** to fix (scope 6's developer)
+
+#### R2 🟡 A comment says Workerman adds a `Server` header
+
+**Scopes:** 5 · **Status:** to fix. It contradicts D19 and what scope 5 found.
+
+#### R3 🟡 Helpers and the other-containers block duplicated in `macro.sh` and `conns.sh`
+
+**Scopes:** 2, 3 · **Status:** left (no failure; a refactor for phase 4 if a third harness needs them)
+
+#### R4 🟡 "The loop is Event" is only checked by hand
+
+**Scopes:** 5 · **Status:** to fix: `conformance.sh` prints the `loop:` line, the check asserts it.
+
+#### R5 🟡 No check that `conns.sh` removes its containers after a failure
+
+**Scopes:** 3 · **Status:** left (the trap exists; scope 3's developer checked it by hand with a `docker kill`)
+
+#### R6 🟡 The backlog is the value asked for, not read back
+
+**Scopes:** 5, 6 · **Status:** left: no socket option returns it and the images have no `ss`; `somaxconn` is 4,096
+on the VM, so no clamp. Said in the README.
 
 ### `plan-reviewer`, delta · 16:46 to 16:48 · OK
 

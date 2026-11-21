@@ -34,7 +34,8 @@ Skill defaults (`autonomous-run/pipeline.yml`), no run override file. Changes fr
 | 4     | a161b1a16e1bf9f8d | done `8c8f7cc`, pushed 17:53 (images rebuilt from scratch: build cache was gone) |
 | 5     | a6a4a68f6415877b2 | done `ad52342`, pushed 18:03 |
 | 6     | a5ac629088e976752 | done `3e74d76`, pushed 18:17 (DIY spins on accept at the fd limit: noted for the conns run) |
-| pr-reviewer | ac896543c8894bdb6 | pass 1 since 18:17, scopes 1 to 6 |
+| pr-reviewer | ac896543c8894bdb6 | pass 1 OK 18:23 (6 🟡) |
+| 6 (fixes)   | a5ac629088e976752 | R1 R2 R4 since 18:23 |
 
 ## Verified
 
@@ -61,6 +62,8 @@ Skill defaults (`autonomous-run/pipeline.yml`), no run override file. Changes fr
 
 - Plan review (full, 16:42): 🔴 pcntl → D21; 🟠 backlog → D22; 🟠 max connections → D23; 🟠 partial write → D24; all
   with the reviewer's own picks. 🟡 folded into phase-3.md. Predictions 7, 8 revised 16:44 (before any measurement).
+- pr-reviewer pass 1 (OK): R1, R2, R4 fixed by scope 6's developer (broadest context, one writer); R3, R5, R6 left
+  (no failure scenario that changes a number).
 
 ## Suggested skills
 
