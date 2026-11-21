@@ -234,7 +234,7 @@ with sha256, no absolute `/Users/...` paths, `reference/` read-only. New for pha
 - **8.6 information:** if scope 4 built ext-event on 8.6, Workerman nocache and DIY once each on both routes at 7,000
   on `8.6`, marked "information, one run".
 - **The table:** runtime, µs/req median and min..max per route at 7,000, at 9,500 for the finalists, p99, peak memory
-  under load, max connections and why it stopped, both slopes per connection (least squares over every held step, as
+  under load (`Pss_Anon` and `memory.current`: the full Pss also counts SQLite's mapped pages, blind review R7), max connections and why it stopped, both slopes per connection (least squares over every held step, as
   `conns.sh` prints them: that's what prediction 8 is judged on), plus the average per connection at the max
   ((Pss at the max − baseline) / held), because scope 3's smoke runs showed Swoole's memory isn't linear in the
   connections (about 69 KiB each up to 10k, about 5.5 KiB each from 20k to 65k, on a busy VM), the backlog, `TCP_NODELAY`, and the

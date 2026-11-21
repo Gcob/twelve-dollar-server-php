@@ -1,9 +1,12 @@
 # Blind reviewer: phase-3-claude
 
-**State:** first pass done on `phase-3-claude` at e1cf918 (base b14068f). Verdict NOT_OK (one 🟠). Report:
-`plan/reviews/BLIND-2026-11-21-1831.md`.
+**State:** pass 2 done on `phase-3-claude` at 9aadddc (base b14068f). Verdict OK (no 🔴 or 🟠). Reports:
+`plan/reviews/BLIND-2026-11-21-1831.md` (pass 1), `plan/reviews/BLIND-2026-11-21-1848.md` (pass 2).
 
 ## Verified
+
+- Pass 2: the parser test now has 34 cases, as `check.sh` expects. **Proof:** `git show 9aadddc`, 3 bad cases + 1 handler case.
+- Pass 2: when `Pss_Anon` is missing, the value is 0 and the `> 0` checks fail. **Proof:** `probe.sh` awk `END {print p+0, a+0}`, `check.sh` asserts.
 
 - The DIY parser's 30 cases match the count `check.sh` expects. **Proof:** `lab/check/diy-parser-test.php` read, cases counted.
 - The seed's `posts` table has 500,000 rows, ids 1 to 500,000 (`posts.js` assumes so). **Proof:** `sqlite3` on `lab/data/feed.db`.
@@ -28,28 +31,31 @@ Nothing.
 
 | # | Sev | `file:line` | Status |
 |---|-----|-------------|--------|
-| 1 | 🟠 | `lab/servers/handler.php:52`, `lab/macro/probe.sh:42-53`, `lab/README.md:274` | open |
-| 2 | 🟡 | `lab/README.md:384` | open |
-| 3 | 🟡 | `lab/conformance.sh:10` | open |
-| 4 | 🟡 | `lab/README.md:103` | open |
-| 5 | 🟡 | `lab/images/install-extras.sh:25` | open |
-| 6 | 🟡 | `lab/servers/diy-connection.php:141-142` | open |
-| 7 | 🟡 | `lab/servers/diy-connection.php:183-187` | open |
-| 8 | 🟡 | `lab/servers/diy-connection.php:39` | open |
-| 9 | 🟡 | `lab/check.sh:49` | open |
-| 10 | 🟡 | `lab/servers/workerman-caches.php` | open |
-| 11 | 💡 | `lab/macro/k6/posts.js:5-6` | open |
+| 1 | 🟠 | `lab/servers/handler.php:52`, `lab/macro/probe.sh:42-53`, `lab/README.md:274` | fixed (9aadddc) |
+| 2 | 🟡 | `lab/README.md:384` | fixed (9aadddc) |
+| 3 | 🟡 | `lab/conformance.sh:10` | fixed (9aadddc) |
+| 4 | 🟡 | `lab/README.md:103` | fixed (9aadddc) |
+| 5 | 🟡 | `lab/images/install-extras.sh:25` | fixed (9aadddc) |
+| 6 | 🟡 | `lab/servers/diy-connection.php:141-142` | fixed (9aadddc) |
+| 7 | 🟡 | `lab/servers/diy-connection.php:183-187` | fixed (9aadddc) |
+| 8 | 🟡 | `lab/servers/diy-connection.php:39` | fixed (9aadddc) |
+| 9 | 🟡 | `lab/check.sh:49` | left |
+| 10 | 🟡 | `lab/servers/workerman-caches.php` | left |
+| 11 | 💡 | `lab/macro/k6/posts.js:5-6` | left |
+| 12 | 🟡 | `lab/README.md:424` (memory.current includes the copy's page cache) | open (pass 2) |
 
 ## Next steps
 
-1. On a rerun: reread the final branch, check each remark against the status given, and don't bring back a remark left
-   as a known choice.
+1. On another rerun: read only the new commits, check item 12, and don't bring back items 9, 10 or 11 (left).
 
 ## Questions for the project manager
 
 Nothing.
 
 ## Rétro
+
+Pass 2: the commit-only scope (one SHA) made it a 15-minute read. A rerun given the statuses without reasons was enough
+to check each fix against its item. Nothing new to add about the method.
 
 1. **What I was missing:** the repo has no `CLAUDE.md` or project skills, so the only conventions were the lab README and
    the existing scripts. I judged against those (for example, the `mktemp -d` pattern in `check.sh`).

@@ -1,8 +1,9 @@
 # $12 server challenge in PHP
 
-**Status:** 🔵 Phase 3 running (runtime bake-off) · 1 question (not blocking), 1 action · approved on 2026-11-21 · snapshot
-2026-11-21-0920 · **Round:** 2
-**Since your last read:** phase 3 is planned in [details/phase-3.md](details/phase-3.md), with its predictions
+**Status:** ⏸️ Phase 3 stopped, your turn: the bake-off needs a quiet Docker VM · 1 question (not blocking) · approved
+on 2026-11-21 · snapshot 2026-11-21-0920 · **Round:** 2
+**Since your last read:** scopes 1 to 6 and both final reviews are done; the bake-off itself waits for a quiet VM.
+Phase 3 is planned in [details/phase-3.md](details/phase-3.md), with its predictions
 written before any measurement. While you're away the project manager took D17 to D24 (PHP 8.5, ext-event, each
 runtime's own headers, two routes, then the plan review's five points: `pcntl` in the images, the same backlog, max
 connections counted by the client, DIY's partial-write test). Progress in [run.md](run.md).
@@ -50,11 +51,23 @@ one information run on 8.6 if ext-event builds there. Nothing is patched.
 
 **Answer:**
 
-### Actions
+### Phase 3 stopped at 18:49 (run)
 
-- [ ] **[run] Quiet the Docker VM before the bake-off measures** (scope 7, D15): at 16:43, 23 containers of other
-  projects were running (names left out). The project manager never stops them. Scopes 2 to 6 don't
-  need a quiet VM; scope 7 waits for one. Say "go" when they're stopped, or stop them yourself whenever it suits you.
+**What's established:**
+
+- Scopes 1 to 6 are committed and pushed on `phase-3-claude` (`a0477ba` to `9aadddc`): shellcheck, the shared
+  handler and conformance test, the connection harness, `pcntl`/`sockets`/`event` and Workerman in the images, the
+  Workerman and DIY servers. `lab/check.sh` 32/32.
+- Both final reviews are OK: `pr-reviewer` at pass 1, `blind-reviewer` at pass 2 (its 🟠 fixed). Details in
+  [run.md](run.md).
+- Smoke runs on the busy VM (not results, D15) say the three servers run VALID at 7,000 req/s on both routes.
+
+**What I need from you:**
+
+- [ ] 🔴 **Blocking: quiet the Docker VM, then say "go"** (scope 7, D15). Since 16:43, 23 containers of other
+  projects run in Docker's VM (names left out). The
+  project manager never stops them. Scope 7 then takes about an hour (about 50 runs, then the README), then a short
+  delta pass of both reviewers on its commit, then delivery.
 
 - [ ] **[run] Install `shellcheck`** (`brew install shellcheck`): 4 of 6 developers had no linter for the lab's
   ~600 lines of bash. Phase 3 can then add a lint check to `lab/check.sh`.

@@ -40,8 +40,10 @@ WORKERMAN_TREE=nocache|stock`), `lab/servers/bake-diy.php` (`--ext sockets --ext
 - **An invalid run** (dropped iterations or errors): keep its files, rerun it once at the end of its round, and report
   both. Two invalid runs of the same pair: stop the series and report to me.
 - **`summarize.sh`** in the folder builds the tables from the JSON (like phase 2's): per runtime and route at 7,000
-  the median µs/req and min..max, p99 (median of 3), peak Pss under load; the finalists at 9,500; per runtime the max
-  connections, why it stopped, the Pss slope and the `memory.current` slope (least squares over every held step, as
+  the median µs/req and min..max, p99 (median of 3), peak `Pss_Anon` and `memory.current` under load (the full Pss
+  counts SQLite's mapped database pages, so it isn't a runtime comparison: show it, don't rank on it; `memory.current`
+  also holds the 250 MB database copy in page cache, so it only compares as a difference between runtimes); the finalists at 9,500; per runtime the max
+  connections, why it stopped, the Pss slope, the `Pss_Anon` slope and the `memory.current` slope (least squares over every held step, as
   `conns.sh` prints), the average per connection at the max ((Pss at the max − baseline) / held), the baseline; the
   backlog and `TCP_NODELAY` line; the response bytes of `/noop` per runtime (from conformance, run once per server
   after the series, `--out` not needed: paste the bytes); every run in the order it ran, with its time and validity.

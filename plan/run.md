@@ -2,23 +2,23 @@
 
 **Pace:** 🟢 full · 5-hour 44 % · weekly 18 % at 16:25 · 5-hour resets 18:30 · away
 
-**Status:** 🔵 Running
-**Progress:** step 4/7, `pr-reviewer` OK at 18:23, R1 R2 R4 fixed (`e1cf918`, check.sh 32/32); `blind-reviewer` pass 2 since 18:48 (pass 1 NOT_OK, fixed in `9aadddc`); scope 7 waits for a quiet VM; scopes 1 to 6 pushed; ext-event built on 8.6 too; plan review OK (delta) at 16:48; scope 1 done and pushed at 16:34 · started 2026-11-21 16:24
+**Status:** ⏸️ Stopped, your turn
+**Progress:** stopped at 18:49: scopes 1 to 6 and both final reviews done and pushed; scope 7 (the measurements) needs a quiet Docker VM · started 2026-11-21 16:24
 **Since your last read:** scope 2 smoke numbers on a busy VM (not results): Swoole 21 µs/req on `/noop`, 31 on posts at 7k. phase 2's run is archived in [runs/phase-2/](runs/phase-2/run.md). Phase 3 is planned in
 [details/phase-3.md](details/phase-3.md), predictions written at 16:29 before any measurement; D17 to D20 taken while
 you're away.
-**👉 Your turn:** Q7 and 1 action (quiet the Docker VM before scope 7) in [plan.md](plan.md), not blocking yet. · **Branch:** `phase-3-claude` (worktree, D14)
+**👉 Your turn:** 🔴 blocking: quiet the Docker VM (23 other containers), then say "go". See "What I need from you" in [plan.md](plan.md). Q7 still open, not blocking.
 
 ## Steps
 
 | #   | Step              | State       | Start | End | Detail |
 |-----|-------------------|-------------|-------|-----|--------|
 | 0   | Plan review       | done        | 16:29 | 16:48 | full: NOT_OK (1 🔴, 3 🟠), settled as D21 to D24 at 16:44; delta: OK at 16:48, 4 🟡 folded in |
-| 1   | Scopes            | in progress | 16:31 |     | 6/7; scope 7 (measuring) waits for a quiet VM |
+| 1   | Scopes            | blocked     | 16:31 |     | 6/7; scope 7 (measuring) waits for a quiet VM |
 | 2   | Questions         | skipped     |       |     | no `run` question opened by this phase; Q7 stays open (not blocking) |
 | 3   | Lab suite         | done        | 18:17 | 18:17 | `lab/check.sh` 32/32 on `3e74d76` |
 | 4   | `pr-reviewer`     | done        | 18:17 | 18:23 | pass 1 OK on scopes 1 to 6 (6 🟡); a delta pass on scope 7 later |
-| 5   | `blind-reviewer`  | in progress | 18:31 |     | pass 1 NOT_OK (1 🟠), fixed in `9aadddc` (check.sh 32/32); pass 2 since 18:48 |
+| 5   | `blind-reviewer`  | done        | 18:31 | 18:49 | pass 1 NOT_OK (1 🟠), fixed in `9aadddc`; pass 2 OK (1 new 🟡, left); a delta pass on scope 7 later |
 | 6   | Delivery          | to do       |       |     | branch pushed, not merged |
 
 ## Scopes
@@ -115,6 +115,15 @@ Workerman's 60 s keep-alive claim, the libevent version, "allocates nothing").
 **Scopes:** 4, 6 · **Status:** left: a comment that assumes phase 2 context, `workerman-caches.php` living next to
 the servers, and the warm-up replaying the measured run's ids (the same for every runtime, so it doesn't bias a
 comparison).
+
+### `blind-reviewer`, pass 2 · 18:48 to 18:49 · OK
+
+**Report:** [BLIND-2026-11-21-1848.md](reviews/BLIND-2026-11-21-1848.md). R7 to R10 fixed; R11 left and not raised
+again.
+
+#### R12 🟡 `memory.current` holds the 250 MB database copy in page cache
+
+**Scopes:** 2 · **Status:** left in the code; scope 7's results README says it (compare runtimes on differences).
 
 ### `plan-reviewer`, delta · 16:46 to 16:48 · OK
 

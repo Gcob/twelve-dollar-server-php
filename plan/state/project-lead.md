@@ -1,6 +1,6 @@
 # Project manager: phase 3, runtime bake-off
 
-**State:** plan review settled (D21 to D24, `4249614`), delta review and scope 2 running since 16:45; scope 1 done `a0477ba`.
+**State:** ⏸️ stopped 18:49: scopes 1-6 done and pushed (HEAD `9aadddc`), both final reviews OK; scope 7 blocked by a busy VM (23 other containers). Next: on Jacob's "go", docker ps = 0, launch scope 7 (brief ready), then delta passes of pr-reviewer and blind-reviewer on its commit, then delivery.
 
 ## Resolved config
 
@@ -38,7 +38,7 @@ Skill defaults (`autonomous-run/pipeline.yml`), no run override file. Changes fr
 | 6 (fixes)   | a5ac629088e976752 | R1 R2 R4 fixed `e1cf918`, pushed 18:30 |
 | blind-reviewer | abca1a48d5f108622 | pass 1 NOT_OK 18:38 (1 🟠) |
 | 6 (fixes 2) | a5ac629088e976752 | R7 to R10 fixed `9aadddc`, pushed 18:47 |
-| blind-reviewer | abca1a48d5f108622 | pass 2 since 18:48 |
+| blind-reviewer | abca1a48d5f108622 | pass 2 OK 18:49 (R12 🟡 left) |
 
 ## Verified
 
