@@ -30,6 +30,9 @@
   in one place); one phase per run, with a stop at the end of each phase so Jacob sees its results before the next
   one. The planning session owns `plan/notes.md`; the project manager owns the rest of `plan/` (Jacob asked for the project-manager session and allowed the team to commit and push, 2026-11-21;
   working on `main` with no worktree, and one phase per run, are Claude's choices, logged in `notes.md`).
+- **D13:** PHP 8.3 is built from source too, with the same configure flags as 8.4 to 8.6, next to the apt 8.3 that
+  both Swoole entries used. Without it, "8.4 is faster than 8.3" could just mean "our build flags beat Ubuntu's"
+  (project manager, phase 2, 2026-11-21).
 
 ## History
 
