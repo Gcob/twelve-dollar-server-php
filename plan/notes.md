@@ -352,3 +352,34 @@ connections, and k6 on the Mac tops out around 20,000 req/s (D45, D46). The knee
 
 **Verdict:** 🔶 Claude's take: no remote VM for phase 4; a short x86 calibration after its baseline (one server VM,
 one generator), and the full-size check with several generators in phase 7. Open until Jacob decides.
+
+### 2026-11-22 17:57 · ❓ Question: is there still room for improvement?
+
+**Jacob:** "Do you think there is still place for improvement somewhere, or we should finish next steps before asking
+that?"
+
+**Context:** the realistic baseline (phase 4, Mac arm64): 27.15 µs of CPU per request, at least 23,386 req/s held
+with 60,000 idle connections. The profile: SQLite 52 % (`GET /feed` alone 48 % of the CPU, about 28 µs per feed
+against 4 per post), the response write 20 %, JSON 10 %, parsing 8 %, the kernel 30 % of the CPU throughout.
+
+**Challenge:** yes, and the profile says where, but in an order set by the walls, not by the CPU shares:
+
+1. **The fd wall first.** With one process the server holds about 65,500 connections, so the bench caps it near
+   71,000 users whatever the CPU. Every CPU gain is worth zero users until S1-d (`Connection: close` near the limit)
+   or S1-b (several processes) works. Its cost is the question: a reconnect per request past the limit (accept, close,
+   a TCP handshake), against S1-b's context switches (tzimpel measured +27 % per request with 2 workers).
+2. **The x86 factor, alongside:** it says which wall binds on the bench's hardware. If a request costs 2 to 4 times
+   more there, the CPU work below decides the score; if not, the connections do.
+3. **Then the CPU, in the profile's order:**
+   - **The feed query:** halving the feed handler (28 to 14 µs) would take the average from about 27 to 21 µs, about
+     30 % more requests. Variants already in S6: a `LEFT JOIN ... GROUP BY`, or two statements (the 20 posts, then the
+     counts with `IN (...)`). Within one request that `IN` is fine: rule 5 forbids a read shared between requests, not
+     a request's own two statements.
+   - **Syscalls per request (new):** 30 % of the CPU is the kernel. Count the syscalls of one request (`strace -c`
+     under load): an `epoll_ctl` per request to arm a write event, or a read that returns `EAGAIN`, is pure overhead
+     the loop could skip.
+   - **The write, JSON and parsing (S8, S7, S2):** together about 10 µs, each with its variants in steps.md.
+   - **Not worth it:** the JWT, routing and validation are under 2 % together.
+
+**Verdict:** 🔶 Claude's take: phase 5 starts with the fd wall, the x86 calibration runs beside it once Jacob picks a
+VM, then the feed query and the syscall count. Open until Jacob plans phase 5.
