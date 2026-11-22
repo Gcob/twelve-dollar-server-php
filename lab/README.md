@@ -387,9 +387,10 @@ bash lab/macro.sh --image 8.5 --server lab/servers/bake-swoole.php --rate 7000 -
 ### Quiet VM
 
 A measurement next to other work is not comparable with one on a quiet VM. Just before the measured run, `macro.sh` lists the
-running containers that are not its own three (whoever started them, another checkout's lab run included) and writes them in
-the JSON (`other_containers`: `count` and `names`). Above 0, it prints `WARNING: N other containers running (...)` when it
-reads them and again before the verdict. The run completes and its validity does not change: a smoke run is not a measurement,
+running containers that are not its own three (whoever started them, another checkout's lab run included) and writes how
+many in the JSON (`other_containers`: `count`, never the names: they belong to other projects and the results are committed).
+Above 0, it prints `WARNING: N other containers running: see docker ps` when it reads them and again before the verdict.
+The run completes and its validity does not change: a smoke run is not a measurement,
 and whether the VM is quiet enough is for whoever reads the results to judge. `macro.sh` and `conns.sh` do the same; `micro.sh` does not.
 
 ### Layout

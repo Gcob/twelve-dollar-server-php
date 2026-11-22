@@ -501,12 +501,12 @@ run_measured() {
 # Stops k6 the way ctrl-C does: it wraps up and writes its summary.
 stop_k6() { docker exec "$K6C" sh -c 'kill -INT $(pidof k6)' >/dev/null 2>&1 || true; }
 
-other_names=()
-while IFS= read -r name; do [ -z "$name" ] || other_names+=("$name"); done < <(lab_other_containers "$SERVER" "$K6C" "$PROBE" "$AGG" "$IDLEC")
-other_json="$(jq -nc --argjson names "$(json_array "${other_names[@]+"${other_names[@]}"}")" '{count: ($names | length), names: $names}')"
+# Only the count leaves the harness: other projects' container names do not belong in a committed JSON or log.
+other_count="$(lab_other_containers_count "$SERVER" "$K6C" "$PROBE" "$AGG" "$IDLEC")"
+other_json="$(jq -nc --argjson count "$other_count" '{count: $count}')"
 other_warning=""
-if [ "${#other_names[@]}" -gt 0 ]; then
-  other_warning="WARNING: ${#other_names[@]} other containers running (${other_names[*]})"
+if [ "$other_count" -gt 0 ]; then
+  other_warning="WARNING: $other_count other containers running: see docker ps"
   echo "$other_warning" >&2
 fi
 cpu_before="$(probe cpu "$server_id" "$k6_id" | lines_to_json)"

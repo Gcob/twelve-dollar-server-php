@@ -192,12 +192,39 @@ check_conformance_fails_on_wrong_server() {
   [ -z "$left" ] || { echo "containers left behind: ${left//$'\n'/ }"; return 1; }
 }
 
+# The count of other containers, with a fixture container that is not the run's own: a harness's JSON records only
+# `other_containers.count` (never names: they would be other projects' and the results are committed), the fixture is counted,
+# and the run's own containers (4 or 5) are not: the count stays within a margin of what ran before the run.
+other_fixture_name=lab-check-other-fixture
+other_fixture_start() {
+  docker rm -f "$other_fixture_name" >/dev/null 2>&1 || true
+  docker run -d --name "$other_fixture_name" "$LAB_IMAGE:8.5" sleep 600 >/dev/null
+  docker ps -q | wc -l | tr -d ' '
+}
+other_fixture_stop() { docker rm -f "$other_fixture_name" >/dev/null 2>&1 || true; }
+# other_containers_jq <running before the run, the fixture included>: a jq test on a run's JSON.
+other_containers_jq() {
+  echo ".other_containers | keys == [\"count\"] and .count >= 1 and .count <= $1 + 2"
+}
+
+# Other projects' container names must not reach a committed result: a run JSON holds only the count, and the results already
+# committed list no name (an empty `names` from the first phases is fine).
+check_results_hold_no_container_names() {
+  local json named=""
+  while IFS= read -r json; do
+    jq -e '(.other_containers.names // []) | length == 0' "$json" >/dev/null 2>&1 || named="$named $json"
+  done < <(find "$LAB/results" -name '*.json')
+  [ -z "$named" ] || { echo "container names in:$named"; return 1; }
+}
+
 # The bake-off server under k6 on /posts/<id>, with --env, --label and the default file name: the run is valid, the JSON holds
 # what the options said (extension, env, label, the server's socket line), the other containers and the memory under load.
 check_macro_bake_swoole_posts_is_valid() {
-  local out rc=0 json holds="" detail=""
+  local out rc=0 json holds="" detail="" running
+  running="$(other_fixture_start)"
   out="$(bash "$LAB/macro.sh" --image 8.5 --server "$LAB/servers/bake-swoole.php" --rate 500 --duration 5 --warmup 2 \
     --script "$LAB/macro/k6/posts.js" --path /posts/1 --env FOO=bar --label test 2>&1)" || rc=$?
+  other_fixture_stop
   [ "$rc" = 0 ] || { echo "lab/macro.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
   grep -qx 'VALID' <<<"$out" || { echo "the run is not marked VALID: ${out//$'\n'/ | }"; return 1; }
   json="$REPO/$(sed -n 's/^wrote //p' <<<"$out")"
@@ -205,8 +232,7 @@ check_macro_bake_swoole_posts_is_valid() {
   jq -e '.valid == true and .results.requests > 2000 and .results.error_rate == 0
          and .label == "test" and .server.ext == ["swoole"] and .server.env == ["FOO=bar"]
          and .server.socket == {backlog: 4096, tcp_nodelay: 1}
-         and (.other_containers.count == (.other_containers.names | length))
-         and (.other_containers.names | map(startswith("lab-macro-")) | any | not)
+         and ('"$(other_containers_jq "$running")"')
          and .results.memory.under_load.max_pss_anon_mib > 0 and .results.memory.under_load.max_pss_anon_mib < .results.memory.under_load.max_pss_mib and .results.memory.under_load.max_cgroup_current_mib > 0
          and (.results.memory.under_load.samples | keys == ["q1", "q2", "q3"])' "$json" >/dev/null && holds=yes
   detail="$(jq -c '{valid, label, other_containers, server: {ext: .server.ext, env: .server.env, socket: .server.socket}, memory: .results.memory.under_load}' "$json")"
@@ -227,6 +253,7 @@ check_conns_holds_steps() {
          and .results.memory_per_connection.pss_kib_per_connection > 0
          and .results.memory_per_connection.cgroup_current_kib_per_connection > 0
          and .server.socket == {backlog: 4096, tcp_nodelay: 1} and .results.baseline.pss_kb > 0 and .results.baseline.pss_anon_kb > 0
+         and (.other_containers | keys == ["count"])
          and (.steps | all(.probe.pss_anon_kb > 0 and .probe.pss_anon_kb < .probe.pss_kb))
          and (.steps | all(.probe.tcp_established == .held and .probe.fresh_http_code == 200))' "$json" >/dev/null \
     || { echo "the JSON does not hold a run that held 200 and 500 connections: $(jq -c '{results, steps: [.steps[] | {target, held, probe}]}' "$json")"; return 1; }
@@ -461,9 +488,11 @@ check_realistic_script_is_the_benchs() {
 # achieved, users from the achieved rate, CPU per request, percentiles per endpoint) and the run's JSON, and the aggregator's
 # request counts and percentiles are the ones of k6's own summary (within the histogram's error). No container is left behind.
 check_realistic_staircase_passes() {
-  local out rc=0 json detail left
+  local out rc=0 json detail left running
   json="$(mktemp -d)/realistic.json"
+  running="$(other_fixture_start)"
   out="$(bash "$LAB/realistic.sh" --image 8.5 --think-scale 0.1 --staircase 50,50,150,8 --label test --out "$json" 2>&1)" || rc=$?
+  other_fixture_stop
   [ "$rc" = 0 ] || { echo "lab/realistic.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
   grep -qx 'VALID' <<<"$out" || { echo "the run is not marked VALID: ${out//$'\n'/ | }"; return 1; }
   [ "$(grep -c -E '^ +[123] +[0-9]+ +[0-9.]+ +[0-9.]+ +[0-9]+ +[0-9.]+ +[0-9.]+ +[0-9.]+ +[0-9.]+% +pass$' <<<"$out")" = 3 ] \
@@ -477,8 +506,7 @@ check_realistic_staircase_passes() {
          and (.results.steps | map(.latency_ms.endpoints | keys | (index("GET /feed") != null and index("GET /posts/:id") != null
               and (. - ["GET /feed", "GET /posts/:id", "POST /posts", "POST /posts/:id/like"] == []))) | all)
          and .k6.peak_memory_mib > 0 and .k6.local_ips == "127.0.1.1-127.0.1.4" and (.k6.client_ips_seen | keys | length) > 1
-         and (.other_containers.count == (.other_containers.names | length))
-         and (.other_containers.names | map(startswith("lab-realistic-")) | any | not)
+         and ('"$(other_containers_jq "$running")"')
          and .aggregator.unparsed == 0 and .aggregator.max_lag_s < .aggregator.lag_gate_s
          and (.results.per_second | length) > 20' "$json" >/dev/null \
     || { detail="$(jq -c '{valid, load, k6, aggregator, steps: [.results.steps[] | {step, vus, pass, reasons, achieved_rps, offered_rps, cpu_usec_per_request, endpoints: (.latency_ms.endpoints | keys)}]}' "$json")"; echo "the JSON does not hold the run's numbers: $detail"; return 1; }
@@ -1087,6 +1115,7 @@ CHECKS=(
   check_macro_cleans_up_after_failure
   check_conformance_bake_swoole
   check_conformance_fails_on_wrong_server
+  check_results_hold_no_container_names
   check_macro_bake_swoole_posts_is_valid
   check_conns_holds_steps
   check_conns_finds_ceiling

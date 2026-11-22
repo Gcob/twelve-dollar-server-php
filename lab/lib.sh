@@ -167,6 +167,12 @@ lab_other_containers() {
   docker ps --format '{{.Names}}' | grep -v -x -F -e "$own" || true
 }
 
+# lab_other_containers_count <name>...: how many there are. This is all a result file or a log may keep: the names belong
+# to other projects and the results are committed.
+lab_other_containers_count() {
+  lab_other_containers "$@" | grep -c . || true
+}
+
 # lab_socket_line <container>: the `socket: key=value ...` line a bake-off server prints at boot (the settings it asked
 # for: the images' Swoole cannot read them back), as the text after `socket: `. Empty when the server prints none.
 lab_socket_line() {

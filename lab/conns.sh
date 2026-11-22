@@ -235,12 +235,12 @@ baseline="$(read_probe)" || fail "the probe could not read the server before the
 
 echo "conns: the baseline is read, steps: ${steps[*]}" >&2
 # Every running container that is not one of this run's three, whoever started it (another checkout's lab run included).
-other_names=()
-while IFS= read -r name; do [ -z "$name" ] || other_names+=("$name"); done < <(lab_other_containers "$SERVER" "$CLIENT" "$PROBE")
-other_json="$(jq -nc --argjson names "$(json_array "${other_names[@]+"${other_names[@]}"}")" '{count: ($names | length), names: $names}')"
+# Only the count leaves the harness: other projects' container names do not belong in a committed JSON or log.
+other_count="$(lab_other_containers_count "$SERVER" "$CLIENT" "$PROBE")"
+other_json="$(jq -nc --argjson count "$other_count" '{count: $count}')"
 other_warning=""
-if [ "${#other_names[@]}" -gt 0 ]; then
-  other_warning="WARNING: ${#other_names[@]} other containers running (${other_names[*]})"
+if [ "$other_count" -gt 0 ]; then
+  other_warning="WARNING: $other_count other containers running: see docker ps"
   echo "$other_warning" >&2
 fi
 
