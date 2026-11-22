@@ -40,7 +40,9 @@ Skill defaults (`autonomous-run/pipeline.yml`), no run override file. Changes fr
 | 6 (fixes 2) | a5ac629088e976752 | R7 to R10 fixed `9aadddc`, pushed 18:47 |
 | blind-reviewer | abca1a48d5f108622 | pass 2 OK 18:49 (R12 🟡 left) |
 | 7     | aa198fd9407d71d19 | first try stopped 21:28 (D25); done `e062f0b` 22:09, pushed 22:11 |
-| pr-reviewer | ac896543c8894bdb6 | delta on `e062f0b` launched 22:12 |
+| pr-reviewer | ac896543c8894bdb6 | delta on `e062f0b` NOT_OK 22:15 (1 🟠, 5 🟡, all fixed `793d503` `d0bf2bc`); delta 2 OK |
+| blind-reviewer | abca1a48d5f108622 | delta on `e062f0b..d0bf2bc` NOT_OK 22:20 (D1 🟠 second finalist a tie; D2-D6 🟡) |
+| 7 (fixes 3) | aa198fd9407d71d19 | D1: Workerman nocache through series B + tie wording; D2-D6; launched 22:22 |
 
 ## Verified
 

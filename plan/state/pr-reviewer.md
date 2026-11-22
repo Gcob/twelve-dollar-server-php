@@ -1,6 +1,6 @@
 # PR reviewer: phase 3, runtime bake-off
 
-**State:** pass 1 done (scopes 1 to 6, `3e74d76`, verdict OK). Delta on scope 7 (`e062f0b`) done: verdict NOT_OK, one 🟠 (item 7, README attributes the invalid runs to host stalls as a fact), five 🟡 (8 to 12). Report: `reviews/PR-2026-11-21-1820.md`, section "Delta : scope 7".
+**State:** Delta 2 done (`793d503`, `d0bf2bc`): items 7 to 12 all landed, verdict OK. Before that: pass 1 done (scopes 1 to 6, `3e74d76`, verdict OK). Delta on scope 7 (`e062f0b`) done: verdict NOT_OK, one 🟠 (item 7, README attributes the invalid runs to host stalls as a fact), five 🟡 (8 to 12). Report: `reviews/PR-2026-11-21-1820.md`, section "Delta : scope 7".
 
 ## Verified
 
@@ -33,6 +33,12 @@
 - 12. 🟡 README arm64 line: differences under about 5 % are inside the repeats. Open.
 - ⚠️ D25 and Swoole's memory under load (a k6 VU is a connection): question for Jacob.
 
+## Delta 2 (793d503, d0bf2bc)
+
+- Items 7 to 12: all corrected (README wording in 4 places, D25, `summarize.sh` header, Swoole ceiling, slope regimes, 9,500 explanation, 5 % limit). Checked by reading the diff and recomputing the quoted numbers (9.9 %, 16.3 %, 27/21/10 %).
+- `summarize.sh` after `793d503`: exit 0, every printed line is in the README, shellcheck (pinned image) exit 0.
+- ⚠️ D25 and Swoole's memory: now Q10 / D25, phase 4, not blocking.
+
 ## Rétro
 
 1. **Ce qui m'a manqué:** nothing blocking. The developer's `Verified` section answered most of what I would have rerun. Impression: a short list of "what the project manager already checked by hand" in my brief would save a pass of re-reading.
@@ -52,3 +58,7 @@
 5. **Ce qui aurait pu être déterministe:** a README that says "host stalls" while another line says "not separated" is a contradiction a script could not catch; no wiring proposed.
 6. **Ce que le plan aurait dû trancher:** whether the k6 VU count (hence the connection count) is a fixed parameter of a memory comparison; D25 changed it for the whole bake-off without saying so for memory.
 7. **Un angle mort:** nobody separates "the Mac stalls" from "the server stalls" on posts runs; a `/noop` run under the same VUs and a posts run with a preloaded database would tell them apart.
+
+### Delta 2
+
+Rien de nouveau : même rétro que le delta. Une chose concrète : le chargé a corrigé les six items en deux commits que j'ai pu vérifier en un `git show`, parce qu'il avait cité les items par numéro.

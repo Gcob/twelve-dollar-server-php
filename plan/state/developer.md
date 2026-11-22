@@ -215,6 +215,10 @@ Three fixes from the pr-reviewer in one commit: (1) the dead `wait` mode of `lab
 
 **Invalid runs:** first try 4 (see Verified); counted series 3, each rerun once and valid (`run-1-swoole-posts-7000`, `run-1-swoole-posts-9500`, `run-1-diy-posts-9500`). No pair invalid twice in the counted series. No VM-not-quiet stop. Nothing impossible (lowest µs/req 15.91, highest connections held 65,523).
 
+**Lint fix:** `check_shellcheck` failed on `summarize.sh` (SC2046 in `median_us`, SC2154 on the `eval`-set medians). Now one plain assignment per median and a targeted `disable=SC2046` with its reason; output byte for byte unchanged (diffed), shellcheck v0.11.0 pinned image exit 0 on the file. `@` see the fix commit.
+
+**Review fixes (delta on `e062f0b`, items 7 to 12):** README reworded, no verdict changed: the cause of the 100 to 450 ms stalls is now "not separated (host, or the server's database reads)" in all places (all 7 invalid runs are posts runs, 0 of 28 noop; 6 of 7 cost more µs/req than their pair's valid run); series C column renamed "Last step held" in `summarize.sh` (tables regenerated, shellcheck exit 0); Swoole's stop is "65,535 `nofile` or its own `max_connection`, the run cannot tell"; Swoole's 14.29 KiB slope flagged as two regimes; the 9,500 `/noop` drop marked not explained with the repeats' spread; differences under about 5 % flagged as inside the repeats, prediction 5's margin given as 9.9 to 16.3 %.
+
 **Pitfalls:** the README's predictions section keeps its plan tags (D5, D15) on purpose (the plan manager's instruction): they go before the merge if anyone wants a clean public README. The 8.6 posts DIY run (33.16) is one run: do not read it as a regression.
 
 ## Questions for the project manager

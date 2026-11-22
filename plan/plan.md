@@ -54,9 +54,10 @@ one information run on 8.6 if ext-event builds there. Nothing is patched.
 ### Q10 [run, stalls] : the posts route stalls 100 to 450 ms: what causes it, and does phase 4 measure it first?
 
 In the bake-off, 7 runs dropped iterations, **all on `posts.js`**, none of 28 on `/noop`, and 6 of the 7 cost more
-server CPU per request than the valid run of their pair (39.36 against 31.62 µs, for one). A paused host vCPU doesn't
-add CPU to the server's cgroup, so this looks like a **server-side** stall: SQLite reading from a cold page cache, the
-mmap of the 250 MB seed, or a GC pause. D25 doubled k6's VUs, which absorbs the stall: the bake-off's µs/req stays
+server CPU per request than the valid run of their pair (39.36 against 31.62 µs, for one). It may be a
+**server-side** stall (SQLite reading from a cold page cache, the mmap of the 250 MB seed, a GC pause) or the host:
+without steal accounting a host stall can be charged to the server, and posts runs touch about 108 MiB more guest
+memory than `/noop`, so a host under memory pressure could also hit posts only. D25 doubled k6's VUs, which absorbs the stall: the bake-off's µs/req stays
 comparable, but **the real bench would see the stall in its p99**. Not blocking: the bake-off's ranking doesn't depend
 on it. No measurement tonight.
 
@@ -77,7 +78,8 @@ on it. No measurement tonight.
 **Flips if:** the stall doesn't reproduce at rate / 10 on a quiet VM with a quiet Mac: then it was the host, and B.
 
 **Trail:** 2026-11-21 22:16, raised by the pr-reviewer's delta on scope 7 (item 7) and the planning session; phase 3
-codes A as the hypothesis for phase 4's plan. D25 now says the cause isn't separated.
+codes A as the hypothesis for phase 4's plan. D25 now says the cause isn't separated. 22:21, the blind reviewer's
+D2: the cgroup argument against a host cause doesn't hold without steal accounting; the question now names both causes.
 
 **Answer:**
 

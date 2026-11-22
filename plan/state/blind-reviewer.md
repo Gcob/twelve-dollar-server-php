@@ -1,9 +1,14 @@
 # Blind reviewer: phase-3-claude
 
-**State:** pass 2 done on `phase-3-claude` at 9aadddc (base b14068f). Verdict OK (no 🔴 or 🟠). Reports:
-`plan/reviews/BLIND-2026-11-21-1831.md` (pass 1), `plan/reviews/BLIND-2026-11-21-1848.md` (pass 2).
+**State:** delta pass done on `phase-3-claude` at d0bf2bc (commits after 9aadddc: the bake-off results). Verdict NOT_OK
+(one 🟠, D1). Reports: `plan/reviews/BLIND-2026-11-21-1831.md` (pass 1), `BLIND-2026-11-21-1848.md` (pass 2),
+`BLIND-2026-11-21-2217.md` (delta, results).
 
 ## Verified
+
+- Delta: `summarize.sh` at d0bf2bc regenerates `lab/results/2026-11-21-bake-off/README.md:105-330` byte for byte. **Proof:** `diff` of its output against those lines, no difference.
+- Delta: no `/Users/`, `/home/` or email in the 134 committed files. **Proof:** grep over `git diff --name-only 9aadddc..d0bf2bc`.
+- Delta: the counting rule is valid and `other_containers == 0`, 3 counted runs per group, and the invalid originals are left out. **Proof:** `summarize.sh:17`, the "every run" table.
 
 - Pass 2: the parser test now has 34 cases, as `check.sh` expects. **Proof:** `git show 9aadddc`, 3 bad cases + 1 handler case.
 - Pass 2: when `Pss_Anon` is missing, the value is 0 and the `> 0` checks fail. **Proof:** `probe.sh` awk `END {print p+0, a+0}`, `check.sh` asserts.
@@ -14,6 +19,9 @@
 - Workerman 5.2.4 (the reference clone) has no idle keep-alive timer. **Proof:** grep of `TcpConnection.php` and `Http.php`.
 
 ## Assumed
+
+- Delta: no steal-time accounting in Docker Desktop's arm64 VM, so host stalls get charged to the server's cgroup (D2). Not checked.
+- Delta: the predictions match commit 4e3a8a5. Not checked (it is under `plan/`, closed to me).
 
 - Pss in `smaps_rollup` includes the SQLite mmap pages, so Pss under load grows with the DB pages touched (item 1). Not
   measured under k6.
@@ -43,16 +51,28 @@ Nothing.
 | 10 | 🟡 | `lab/servers/workerman-caches.php` | left |
 | 11 | 💡 | `lab/macro/k6/posts.js:5-6` | left |
 | 12 | 🟡 | `lab/README.md:424` (memory.current includes the copy's page cache) | open (pass 2) |
+| D1 | 🟠 | `lab/results/2026-11-21-bake-off/README.md:132-134`, `:379-383`, `:446-447` (2nd finalist on a 1.5 % gap) | open (delta) |
+| D2 | 🟡 | `lab/results/2026-11-21-bake-off/README.md:354-357`, `:459-462` (paused vCPU argument) | open (delta) |
+| D3 | 🟡 | `lab/results/2026-11-21-bake-off/README.md:376-378` (prediction 4, judged on medians only) | open (delta) |
+| D4 | 🟡 | `lab/results/2026-11-21-bake-off/README.md:465-466` (spread "4 to 9 %") | open (delta) |
+| D5 | 🟡 | `lab/results/2026-11-21-bake-off/summarize.sh:34` and the other `jq -n ... inputs` calls (hang on stdin) | open (delta) |
+| D6 | 🟡 | `lab/results/2026-11-21-bake-off/README.md:29` (`runtimes.md` without its path) | open (delta) |
 
 ## Next steps
 
-1. On another rerun: read only the new commits, check item 12, and don't bring back items 9, 10 or 11 (left).
+1. On a delta rerun: read only the new commits, rerun `summarize.sh` and diff its output against the README's tables,
+   then check D1 to D6. Don't bring back items left as known choices.
 
 ## Questions for the project manager
 
 Nothing.
 
 ## Rétro
+
+Delta (results): the fastest check was mechanical. I ran `summarize.sh` and diffed its output against the README
+(identical), which proves every table in one step. A `check.sh` case could do the same, so a README table can never drift
+from its data (where: `lab/check.sh`, a check that runs every `lab/results/*/summarize.sh` and diffs). The judgment items
+(D1, D2) came from reading the claims against the README's own 5 % rule, which no tool can see.
 
 Pass 2: the commit-only scope (one SHA) made it a 15-minute read. A rerun given the statuses without reasons was enough
 to check each fix against its item. Nothing new to add about the method.
