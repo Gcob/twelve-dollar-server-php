@@ -1,6 +1,6 @@
 # Project manager: phase 3, runtime bake-off
 
-**State:** 🔄 scope 7 done and pushed (`e062f0b`, 22:11). pr-reviewer delta running; check.sh running in the background. Next: blind-reviewer delta (abca1a48d5f108622), retro, run.yml counts, 🏁, push plan.
+**State:** 🏁 delivered 22:36: 7/7 scopes, both final reviews OK (delta 2 each), check.sh 32/32 on `b216364` (`01e1ad5` README only), branch pushed at `01e1ad5`, not merged. Retro sorted into run.md; 4 inbox entries in ~/.claude/inbox.md. Nothing in flight. Phase 4 not started (D12).
 
 ## Resolved config
 
@@ -42,7 +42,9 @@ Skill defaults (`autonomous-run/pipeline.yml`), no run override file. Changes fr
 | 7     | aa198fd9407d71d19 | first try stopped 21:28 (D25); done `e062f0b` 22:09, pushed 22:11 |
 | pr-reviewer | ac896543c8894bdb6 | delta on `e062f0b` NOT_OK 22:15 (1 🟠, 5 🟡, all fixed `793d503` `d0bf2bc`); delta 2 OK |
 | blind-reviewer | abca1a48d5f108622 | delta on `e062f0b..d0bf2bc` NOT_OK 22:20 (D1 🟠 second finalist a tie; D2-D6 🟡) |
-| 7 (fixes 3) | aa198fd9407d71d19 | D1: Workerman nocache through series B + tie wording; D2-D6; launched 22:22 |
+| 7 (fixes 3) | aa198fd9407d71d19 | D1 (`2b54788`, 6 runs) and D2-D6 (`b216364`), pushed |
+| blind-reviewer | abca1a48d5f108622 | delta 2 OK 22:29 (D7-D9 🟡 wording) |
+| 7 (fixes 4) | aa198fd9407d71d19 | D7-D9 wording `01e1ad5`, pushed 22:31 |
 
 ## Verified
 
@@ -102,4 +104,15 @@ Skill defaults (`autonomous-run/pipeline.yml`), no run override file. Changes fr
 
 ## Retro
 
-(at the end)
+1. **What I was missing:** a way to see the Mac's load from inside the run; D15 covers Docker's VM only. Proof: the
+   first try stopped at 21:28 on posts-only stalls.
+2. **What I guessed:** that the stalls came from the host (D25's first wording, 21:30); both reviewers showed the
+   data doesn't separate it. Reworded at 22:16 and 22:21.
+3. **Where I lost time:** five rounds on scope 7's README (check.sh, pr delta, blind delta, blind delta 2), each
+   small; a one-minute sanity run and a noise-band finalist rule in the brief would have saved two.
+4. **A useless or contradictory instruction:** Rien.
+5. **What could have been deterministic:** the "summarize.sh output is in the README" diff, run by hand at 5 commits:
+   a check in `lab/check.sh` (question in plan.md).
+6. **What the plan should have decided:** the finalist rule's noise band; a fixed k6 connection count for memory.
+7. **A blind spot:** nobody checked the 8.6 information runs beyond "one run each"; DIY's 8.6 posts run is 13.8 %
+   above its 8.5 median, unexplained.

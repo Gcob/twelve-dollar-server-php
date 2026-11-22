@@ -1,12 +1,12 @@
 # $12 server challenge in PHP
 
-**Status:** 🔄 Phase 3 running: the bake-off (scope 7) · 2 questions (not blocking) · approved
+**Status:** 🏁 Phase 3 delivered, your review · 2 questions (not blocking) · approved
 on 2026-11-21 · snapshot 2026-11-21-0920 · **Round:** 2
-**Since your last read:** scopes 1 to 6 and both final reviews are done; the bake-off itself waits for a quiet VM.
-Phase 3 is planned in [details/phase-3.md](details/phase-3.md), with its predictions
-written before any measurement. While you're away the project manager took D17 to D24 (PHP 8.5, ext-event, each
-runtime's own headers, two routes, then the plan review's five points: `pcntl` in the images, the same backlog, max
-connections counted by the client, DIY's partial-write test). Progress in [run.md](run.md).
+**Since your last read:** phase 3 is delivered on `phase-3-claude` (pushed, not merged). Per request at 7,000
+req/s on posts: DIY 29.14 µs, Swoole 32.83, Workerman nocache 33.32 (Swoole and Workerman tie within the noise; at
+9,500 Workerman passes Swoole on posts). All three stop at the fd limit, none on memory. D25 doubled k6's VUs after
+posts-only stalls; Q10 asks phase 4 to find their cause. Delivery, review commands and the PR description in
+[run.md](run.md#livraison).
 **Project:** this repo, `plan/` · **Submission:**
 `submissions/php-<runtime>-Gcob/` · **Jira:** none
 
@@ -83,23 +83,27 @@ D2: the cgroup argument against a host cause doesn't hold without steal accounti
 
 **Answer:**
 
-### Phase 3 stopped at 18:49 (run)
+### Phase 3 delivered at 22:36 (run)
 
 **What's established:**
 
-- Scopes 1 to 6 are committed and pushed on `phase-3-claude` (`a0477ba` to `9aadddc`): shellcheck, the shared
-  handler and conformance test, the connection harness, `pcntl`/`sockets`/`event` and Workerman in the images, the
-  Workerman and DIY servers. `lab/check.sh` 32/32.
-- Both final reviews are OK: `pr-reviewer` at pass 1, `blind-reviewer` at pass 2 (its 🟠 fixed). Details in
-  [run.md](run.md).
-- Smoke runs on the busy VM (not results, D15) say the three servers run VALID at 7,000 req/s on both routes.
+- 13 commits on `phase-3-claude`, pushed: the lab (shared handler, three servers, conformance, connection harness,
+  extensions and Workerman in the images) and the bake-off results in `lab/results/2026-11-21-bake-off/`.
+  `lab/check.sh` 32/32.
+- Both final reviews OK: `pr-reviewer` (delta 2), `blind-reviewer` (delta 2). Every 🟠 fixed.
+- The bake-off ran on a quiet Docker VM; the first try (700 VUs) is kept, not counted (D25).
 
 **What I need from you:**
 
-- [x] 🔴 **Blocking: quiet the Docker VM, then say "go"** (scope 7, D15). Done at 21:12: 0 other containers, resumed. Since 16:43, 23 containers of other
-  projects run in Docker's VM (names left out). The
-  project manager never stops them. Scope 7 then takes about an hour (about 50 runs, then the README), then a short
-  delta pass of both reviewers on its commit, then delivery.
+- [ ] **Review and merge `phase-3-claude`** (or ask for its PR): the 3 places to look, the commands and the PR
+  description are in [run.md](run.md#livraison).
+- [ ] **[run] A check that each results folder regenerates its tables** (from the retro): `lab/check.sh` runs every
+  `lab/results/*/summarize.sh` and checks each printed line is in that folder's README. I diffed it by hand at 5
+  commits in scope 7. `ok` and phase 4 adds it.
+
+  **Answer:**
+
+- [x] 🔴 **Blocking: quiet the Docker VM, then say "go"** (scope 7, D15). Done at 21:12: 0 other containers, resumed.
 
 - [ ] **[run] Install `shellcheck`** (`brew install shellcheck`): 4 of 6 developers had no linter for the lab's
   ~600 lines of bash. Phase 3 can then add a lint check to `lab/check.sh`.
@@ -131,10 +135,10 @@ step's choice backed by a measurement.
 | 6 | Score           | `bench/load.js` ramps, x86 calibration                      | More than 71,000 held for 5 minutes                     |
 | 7 | Submit          | The PR to the challenge repo                                | CI green                                                |
 
-**Decisions:** 24 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
+**Decisions:** 25 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
 is a prediction we re-measure, not an answer.
 
-### Phase 3 scopes (running)
+### Phase 3 scopes (delivered)
 
 Detail, seams, cases and the predictions in [details/phase-3.md](details/phase-3.md). One commit each, on branch
 `phase-3-claude` (D14).

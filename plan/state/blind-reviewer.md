@@ -1,10 +1,12 @@
 # Blind reviewer: phase-3-claude
 
-**State:** delta pass done on `phase-3-claude` at d0bf2bc (commits after 9aadddc: the bake-off results). Verdict NOT_OK
-(one 🟠, D1). Reports: `plan/reviews/BLIND-2026-11-21-1831.md` (pass 1), `BLIND-2026-11-21-1848.md` (pass 2),
-`BLIND-2026-11-21-2217.md` (delta, results).
+**State:** delta pass 2 done on `phase-3-claude` at b216364 (d0bf2bc..b216364). Verdict OK (D1 to D6 fixed, 3 new 🟡).
+Reports: `plan/reviews/BLIND-2026-11-21-1831.md` (pass 1), `-1848` (pass 2), `-2217` (delta), `-2229` (delta pass 2).
 
 ## Verified
+
+- Delta 2: `summarize.sh` at b216364 regenerates `README.md:109-350` byte for byte. **Proof:** `diff`, no difference.
+- Delta 2: with no input and a stdin that never closes, `summarize.sh` exits 5 with a `jq` error and doesn't hang. **Proof:** run in an empty scratch folder with a FIFO as stdin.
 
 - Delta: `summarize.sh` at d0bf2bc regenerates `lab/results/2026-11-21-bake-off/README.md:105-330` byte for byte. **Proof:** `diff` of its output against those lines, no difference.
 - Delta: no `/Users/`, `/home/` or email in the 134 committed files. **Proof:** grep over `git diff --name-only 9aadddc..d0bf2bc`.
@@ -51,23 +53,30 @@ Nothing.
 | 10 | 🟡 | `lab/servers/workerman-caches.php` | left |
 | 11 | 💡 | `lab/macro/k6/posts.js:5-6` | left |
 | 12 | 🟡 | `lab/README.md:424` (memory.current includes the copy's page cache) | open (pass 2) |
-| D1 | 🟠 | `lab/results/2026-11-21-bake-off/README.md:132-134`, `:379-383`, `:446-447` (2nd finalist on a 1.5 % gap) | open (delta) |
-| D2 | 🟡 | `lab/results/2026-11-21-bake-off/README.md:354-357`, `:459-462` (paused vCPU argument) | open (delta) |
-| D3 | 🟡 | `lab/results/2026-11-21-bake-off/README.md:376-378` (prediction 4, judged on medians only) | open (delta) |
-| D4 | 🟡 | `lab/results/2026-11-21-bake-off/README.md:465-466` (spread "4 to 9 %") | open (delta) |
-| D5 | 🟡 | `lab/results/2026-11-21-bake-off/summarize.sh:34` and the other `jq -n ... inputs` calls (hang on stdin) | open (delta) |
-| D6 | 🟡 | `lab/results/2026-11-21-bake-off/README.md:29` (`runtimes.md` without its path) | open (delta) |
+| D1 | 🟠 | `lab/results/2026-11-21-bake-off/README.md:132-134`, `:379-383`, `:446-447` (2nd finalist on a 1.5 % gap) | fixed (2b54788/b216364) |
+| D2 | 🟡 | `lab/results/2026-11-21-bake-off/README.md:354-357`, `:459-462` (paused vCPU argument) | fixed (2b54788/b216364) |
+| D3 | 🟡 | `lab/results/2026-11-21-bake-off/README.md:376-378` (prediction 4, judged on medians only) | fixed (2b54788/b216364) |
+| D4 | 🟡 | `lab/results/2026-11-21-bake-off/README.md:465-466` (spread "4 to 9 %") | fixed (2b54788/b216364) |
+| D5 | 🟡 | `lab/results/2026-11-21-bake-off/summarize.sh:34` and the other `jq -n ... inputs` calls (hang on stdin) | fixed (2b54788/b216364) |
+| D6 | 🟡 | `lab/results/2026-11-21-bake-off/README.md:29` (`runtimes.md` without its path) | fixed (2b54788/b216364) |
+| D7 | 🟡 | `lab/results/2026-11-21-bake-off/README.md:492`, `:453` (stalls "100 to 450 ms, 700 and 1,400 VUs", stale) | open (delta 2) |
+| D8 | 🟡 | `lab/results/2026-11-21-bake-off/README.md:497-499` ("depends on the route and the rate") | open (delta 2) |
+| D9 | 🟡 | `lab/results/2026-11-21-bake-off/README.md:408`, `:499` ("the brief's rule") | open (delta 2) |
 
 ## Next steps
 
-1. On a delta rerun: read only the new commits, rerun `summarize.sh` and diff its output against the README's tables,
-   then check D1 to D6. Don't bring back items left as known choices.
+1. On another delta: read only the new commits, rerun `summarize.sh` and diff it against the README, check D7 to D9.
 
 ## Questions for the project manager
 
 Nothing.
 
 ## Rétro
+
+Delta 2: in the d0bf2bc pass I missed that "at 700 VUs and at 1,400" was already wrong (the invalid 9,500 runs were at
+1,900). I checked the counts and the latencies but not the VUs of that sentence. Lesson: check every number of a
+sentence against the table, the units and conditions included. Running the script with no input in a scratch folder
+(a FIFO as stdin) proved D5 in 20 s.
 
 Delta (results): the fastest check was mechanical. I ran `summarize.sh` and diffed its output against the README
 (identical), which proves every table in one step. A `check.sh` case could do the same, so a README table can never drift
