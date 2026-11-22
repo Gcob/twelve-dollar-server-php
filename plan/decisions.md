@@ -175,6 +175,14 @@
   gate:** k6's CSV flush lags 2.4 to 3.9 s at 18,000 req/s (the replay reads 480,000 rows/s in 1 s, so the reader isn't
   the cause), so D44's gate is the lag calibrated at the top rate plus 2 s: 6 s. A lag that keeps growing is what the
   gate is for, not a steady one (project manager, phase 4, 2026-11-22, scope 3's questions).
+- **D47:** the baseline's held rate depends on the think scale, so the step lab carries the **µs of CPU per request**
+  (27.15, median of 3 holds) and the profile, not the held rate. At `s = 0.02` the skeleton holds 23,386 req/s
+  (221,002 users at 9.45) with its CPU 63 % busy: the 97 % rule fails on k6's own loop overhead plus a 2.2 ms mean
+  latency, not on the server, and a smaller `s` hits k6's overhead sooner. The held rate is reported as "at least
+  23,386 req/s at `s = 0.02`", never as the server's capacity. The baseline stays at 24,000 offered (the hold one step
+  above passes too: a conservative reading), with no new holds. Three 60 s cost runs that missed the 97 % rule by 0.1
+  to 0.3 points count for their µs per request, which the rule doesn't measure (project manager, phase 4, 2026-11-22,
+  scope 5's questions).
 
 ## History
 

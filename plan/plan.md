@@ -2,11 +2,11 @@
 
 **Status:** 🔵 Phase 4 running (realistic baseline) · 0 questions open · approved on 2026-11-21 · snapshot
 2026-11-21-0920 · **Round:** 3
-**Since your last read:** Q7 and Q10 are answered (D26, D28), and your `ok` for the results check is D37 (scope 6).
-Phase 4 is "realistic first" (D27): a walking skeleton of the 5 endpoints, a realistic mode of the lab, the baseline
-it holds and a profile; the step lab is now phase 5. The plan review (full, 2 deltas, OK at 11:17) added D38 to D44.
-**One correction to know:** a steady load is 9.45 users per req/s, not the leaderboard's 10.8 (its rate includes the
-ramps), so 7,000 req/s is about 66,000 users and the 71,000 record about 7,500 steady req/s (D40). Progress in
+**Since your last read:** the baseline is measured (scope 5): the skeleton holds **23,386 req/s, about 221,000
+users at 9.45**, with 60,000 idle connections, at **27.15 µs of CPU per request** (median of 3 five-minute holds, p99
+28 ms, arm64 on the Mac, not a score). That rate is a floor set by the harness, not the server (its CPU is 63 % busy
+there, D47). SQLite is 52 % of the CPU, the response write 20 %, JSON 10 %. 6 of 12 predictions held: the server is
+2 to 3 times cheaper than predicted. The measuring is over: your containers can come back. Progress in
 [run.md](run.md).
 **Project:** this repo, `plan/` · **Submission:**
 `submissions/php-<runtime>-Gcob/` · **Jira:** none
@@ -53,7 +53,7 @@ step's choice backed by a measurement.
 | 7 | Score           | `bench/load.js` ramps, x86 calibration                      | More than 71,000 held for 5 minutes                     |
 | 8 | Submit          | The PR to the challenge repo                                | CI green                                                |
 
-**Decisions:** 46 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
+**Decisions:** 47 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
 is a prediction we re-measure, not an answer.
 
 ### Phase 4 scopes (running)

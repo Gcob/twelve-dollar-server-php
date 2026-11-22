@@ -35,6 +35,7 @@ Skill defaults (`autonomous-run/pipeline.yml`), no run override file. Changes fr
 | 3     | a1365daa1d690ecf0 | done `b47adcf` 13:12 (60k idle + 5,377 VUs, 19,565 req/s smoke; idle client 257 MiB; lag up to 3.9 s → D46) |
 | 4     | ac6145c4f718748e3 | done `4775db8` 13:53 (excimer 1.2.6, not on 8.6; calibration: C time goes to the caller, step functions carry it) |
 | 3 (fix) | a1365daa1d690ecf0 | `fc73cee` (edge rows of the series check), `b18af33` (failing-step check's request count), pushed 14:50 |
+| 5     | a0693a2b219c3cb46 | done 17:30 |
 
 ## Verified
 
@@ -77,6 +78,18 @@ Rien.
   `diy-server.php`, so `bake-diy.php` changed too: conformance and parser checks pass; the bake-off's numbers stay
   reproducible at their commit (D32). Kept; to mention in the PR description.
 - S9 has no frame (autocommit commits inside `execute`): it counts in S6, noted in the README; phase 5 splits it.
+
+## Scope 5's questions, settled 17:40
+
+- Three 60 s cost runs missed the 97 % rule by 0.1 to 0.3 points: they count for µs per request, which the rule
+  doesn't touch. No rerun (D47).
+- The baseline stays 24,000 offered at `s = 0.02` (23,386 achieved): a harness floor, the server 63 % busy; the step
+  lab carries µs/req and the profile (D47). No new holds.
+- Verified by the PM: predictions block identical to the brief; all 26 counted JSONs `other_containers: 0`
+  (`q10-warm-1` and `-3` are `valid: false` for dropped iterations, which is Q10's subject, shown in its table);
+  `summarize.sh` 266 lines all in the README; no private path or email in the new files; fixes `38fc153`, `fcf104f` read.
+- For the PR description: the final `max_lag_s` printed can pass the gate in a valid run (tail after k6 stops), noted
+  in the README; not changed.
 
 ## Review triage
 
