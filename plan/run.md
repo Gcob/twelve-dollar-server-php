@@ -3,7 +3,7 @@
 **Pace:** 🟢 full · 5-hour 3 % · weekly 23 % at 10:52 · 5-hour resets 15:19 · away
 
 **Status:** 🔵 Running
-**Progress:** step 0/7, `plan-reviewer` delta running since 11:14 · started 2026-11-22 10:50
+**Progress:** step 0/7, `plan-reviewer` delta 2 running since 11:18 · started 2026-11-22 10:50
 **Since your last read:** phase 4 planned in [details/phase-4.md](details/phase-4.md): 5 scopes, predictions written
 before any measurement. Q7 and Q10 recorded (D26, D28), D27 to D43 added. D40 corrects the users per req/s: 9.45 on a steady load, not the leaderboard's 10.8 (its rate includes the ramps), so 7,000 req/s is about 66,000 users. Phase 3's run archived in
 [runs/phase-3/](runs/phase-3/run.md).
@@ -13,7 +13,7 @@ before any measurement. Q7 and Q10 recorded (D26, D28), D27 to D43 added. D40 co
 
 | #   | Step              | State   | Start | End | Detail |
 |-----|-------------------|---------|-------|-----|--------|
-| 0   | Plan review       | running | 10:59 |     | full NOT_OK at 11:10 (1 🔴, 5 🟠), settled as D38 to D43; delta running |
+| 0   | Plan review       | running | 10:59 |     | full NOT_OK at 11:10 (1 🔴, 5 🟠), settled as D38 to D43; delta NOT_OK at 11:16 (1 🟠), settled as D44; delta 2 running |
 | 1   | Scopes            | to do   |       |     | 0/6    |
 | 2   | Questions         | to do   |       |     |        |
 | 3   | Lab suite         | to do   |       |     |        |
@@ -57,6 +57,19 @@ before any measurement.
   Excimer in its own layer with a switch; statuses 201, 401, 503; `/health`'s `db` and auth before id; where `test.sh`
   runs; the idle client's path and body; k6's exit 99.
 
-### `plan-reviewer`, delta · since 11:14
+### `plan-reviewer`, delta · 11:14 to 11:16 · NOT_OK
+
+**Report:** [PLAN-2026-11-22-1116-delta.md](reviews/PLAN-2026-11-22-1116-delta.md). D38 to D43 hold; the 🟡 are folded
+in correctly.
+
+- **🟠 k6's live stream has no backpressure:** k6 buffers samples in memory when the reader falls behind, so a slow
+  aggregator ends in k6 killed by its memory limit mid-staircase, and the plan watched the wrong sign. Settled: D44,
+  calibrate with the stream on, a replay case at 40,000 req/s worth of rows, and a lag and memory gate on every
+  measured run.
+- **🟡** the VU cap also bounded by the server's free fds (about 5,400); one function per step in the skeleton (D43);
+  `macro.sh --fresh-db` so the bake-off servers don't get a second copy; a slow fixture server for scope 2's
+  above-capacity case; a missing period in D16.
+
+### `plan-reviewer`, delta 2 (and final full pass) · since 11:18
 
 Running.

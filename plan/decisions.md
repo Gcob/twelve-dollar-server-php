@@ -41,7 +41,7 @@
   during a measurement. Rerun that way, the micro sample's two levels went away (1 UNSTABLE row of 40 instead of 28),
   so numbers from a busy VM are remeasured before any comparison ([Q8](questions/2026-11-21-1411.ronde-2.md)).
 - **D16:** phases 3 and 4 compare variants at about 7,000 req/s (a 75,000-user score), and the finalists also at
-  9,500 req/s (100,000 users) ([Q9](questions/2026-11-21-1411.ronde-2.md)) D40 corrects the users: a
+  9,500 req/s (100,000 users) ([Q9](questions/2026-11-21-1411.ronde-2.md)). D40 corrects the users: a
   steady 7,000 req/s is about 66,000 users, 9,500 about 90,000; the rates stay.
 - **D17:** the phase 3 bake-off runs on PHP 8.5: the newest version all three runtimes build on (Swoole stops at 8.5,
   Q7), from source with the lab's flags (D13). Workerman and DIY also get one information run on 8.6 if ext-event
@@ -123,8 +123,9 @@
   by every unbound `connect()`: with 60,000 held, k6 from 127.0.0.1 would get about 500 ports. If k6 1.8.3 refuses
   loopback local IPs, the idle client sets `IP_BIND_ADDRESS_NO_PORT` instead. Never a VM-wide `ip_local_port_range`
   change (plan review, settled by the project manager, phase 4, 2026-11-22, [PLAN-2026-11-22-1110](reviews/PLAN-2026-11-22-1110.md) item 1).
-- **D39:** the VU cap and the think scale come from calibration: k6's MiB per VU sets the cap at (VM memory − 2 GiB for
-  the server − the idle client − 1 GiB of margin) / MiB per VU; the scale `s` is then picked so 20,000 req/s fits under
+- **D39:** the VU cap and the think scale come from calibration: k6's MiB per VU (measured with D41's stream running,
+  D44) sets the cap at (VM memory − 2 GiB for the server − the idle client − 1 GiB of margin) / MiB per VU, and never
+  above the server's free fds (65,535 − the idle connections − the server's own, about 5,400 with 60,000 idle); the scale `s` is then picked so 20,000 req/s fits under
   the cap, so the staircase always reaches a failing step. The k6 container gets a `--memory` limit, so an overrun fails
   k6 cleanly instead of making the VM swap. The calibration also records achieved against offered at low load and k6's
   CPU, so the 97 % rule's margin (about `0.29 × s` s of mean latency per request) is known next to `s` (plan review,
@@ -143,13 +144,22 @@
 - **D42:** one seed-copy function in `lab/lib.sh`, used by `challenge-test.sh`, `realistic.sh` and `macro.sh`: it copies
   the seed with `cp` inside the server container (so its page cache is charged to the server's cgroup, like the
   bake-off's), `fsync`s it, and with `--cold` evicts its pages (`POSIX_FADV_DONTNEED` skips dirty pages, hence the
-  `fsync`). Scope 1 builds the copy, scope 3 adds `--cold` and wires `macro.sh`, so Q10's `posts.js` reruns run the
-  skeleton (plan review, settled by the project manager, phase 4, 2026-11-22, [PLAN-2026-11-22-1110](reviews/PLAN-2026-11-22-1110.md) items 5, 11 and 12).
+  `fsync`). Scope 1 builds the copy, scope 3 adds `--cold` and wires `macro.sh` behind a named switch (`--fresh-db`), so
+  Q10's `posts.js` reruns run the skeleton and the bake-off servers, which copy their own seed, don't get a second one (plan review, settled by the project manager, phase 4, 2026-11-22, [PLAN-2026-11-22-1110](reviews/PLAN-2026-11-22-1110.md) items 5, 11 and 12).
 - **D43:** before the profile ranks the steps, a calibration fixture proves where Excimer puts a C function's samples:
   a route that spends a known share of CPU in one internal function (`hash('sha256', ...)` in a loop) against a PHP
   loop, profiled with the JIT on and off; its share must land on the internal frame within a stated tolerance. The
-  README says where libevent's and `epoll_wait`'s time lands (plan review, settled by the project manager, phase 4,
-  2026-11-22, [PLAN-2026-11-22-1110](reviews/PLAN-2026-11-22-1110.md) item 6).
+  README says where libevent's and `epoll_wait`'s time lands. So that "attributed to the caller" still means "attributed
+  to the step", the skeleton keeps each step's work in its own function (the JWT check, the validation, each query, the
+  JSON building, the response), named by what it does, and the fold's rules map those functions (plan review, settled
+  by the project manager, phase 4, 2026-11-22, [PLAN-2026-11-22-1110](reviews/PLAN-2026-11-22-1110.md) item 6, and
+  {R}).
+- **D44:** D41's stream is guarded, because k6 buffers samples in memory when the reader falls behind instead of
+  slowing its VUs: k6's MiB per VU is calibrated with the stream on; a scope 2 case replays a recorded CSV at the rows of
+  40,000 req/s through the aggregator; and every measured run is invalid, with that reason, when the aggregator's lag
+  (newest sample time against the clock) passes 2 s or k6's memory passes its budget. If the replay is too slow, the
+  reader skips every line but `http_req_duration` and `http_reqs` before parsing (plan review delta, settled by the
+  project manager, phase 4, 2026-11-22, {R}).
 
 ## History
 

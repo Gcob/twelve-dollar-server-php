@@ -11,7 +11,9 @@ Then the run stops: the step lab is phase 5 (D12, D27).
 
 **Plan review:** [PLAN-2026-11-22-1110.md](../reviews/PLAN-2026-11-22-1110.md), NOT_OK (1 🔴, 5 🟠, 12 🟡). Its six
 questions were settled by the project manager with the reviewer's own picks (D38 to D43; D41 keeps one scenario and
-merges per-second histograms instead of one scenario per step), and its minor points are folded in below.
+merges per-second histograms instead of one scenario per step), and its minor points are folded in below. Delta:
+[PLAN-2026-11-22-1116-delta.md](../reviews/PLAN-2026-11-22-1116-delta.md), NOT_OK (1 🟠: no backpressure on k6's
+stream), settled as D44 with the reviewer's pick; its 5 🟡 folded in.
 
 **Why this shape (D27):** the lab ranked runtimes at a fixed rate on one route at a time. It is blind to the bench's
 mix (`/feed` is 46 % of the requests and isn't measured yet), its connections (most of them idle), its time (5 minutes
@@ -43,7 +45,10 @@ From Jacob (D26 to D30, D37) and the project manager (D31 to D36, D38 to D43 fro
   nothing raw on disk; the harness stops k6 at the first failing step.
 - **D42, one seed-copy function:** `cp` inside the server container, `fsync`, optional eviction (`--cold`), used by
   every harness that runs the skeleton, `macro.sh` included.
-- **D43, Excimer calibrated:** a fixture proves a C function's samples land on its frame, JIT on and off.
+- **D43, Excimer calibrated:** a fixture proves a C function's samples land on its frame, JIT on and off; each step's
+  work lives in its own function in the skeleton, so even time attributed to the caller lands on its step.
+- **D44, the stream guarded:** k6's memory calibrated with the stream on, a replay case proves the aggregator's speed,
+  and a measured run is invalid when the aggregator lags over 2 s or k6 passes its memory budget.
 
 ## Scopes
 
@@ -94,6 +99,8 @@ layout in `lab/lib.sh`, pinned versions with sha256, no absolute `/Users/...` pa
   - **S2:** the DIY parser, extended to read `Authorization` and pass it to the app with the method, the path and the
     body; `Content-Type` isn't checked (the spec doesn't ask).
   - **S3:** a route match on the method and the path, in the app.
+  - **One function per step (D43):** the JWT check, the validation, each query, the JSON building and the response
+    each live in their own function, named by what they do, so the profile's fold can map them to steps.
   - **S4:** a hand-written HS256 check: split on `.`, base64url decode (`strtr` and `base64_decode`), `json_decode` of
     the header (exactly `alg` `HS256`) and the payload, `hash_hmac('sha256', ...)` compared with `hash_equals`, `exp`
     required and in the future. Then the payload: `sub` a positive integer string, `username` a string, else
@@ -139,7 +146,8 @@ layout in `lab/lib.sh`, pinned versions with sha256, no absolute `/Users/...` pa
   `2.17 / (20.5 × s)` req/s (5.3 at `s = 0.02`).
 - **Calibration first** (Arjay's step, D39): 50 VUs for 60 s, then a few hundred, to read k6's MiB per VU and its CPU,
   and achieved against offered at low load (k6's own loop overhead eats into the 97 % margin). The VU cap is (VM memory
-  − 2 GiB for the server − the idle client − 1 GiB of margin) / MiB per VU; `s` is picked so 20,000 req/s fits under
+  − 2 GiB for the server − the idle client − 1 GiB of margin) / MiB per VU, and at most the server's free fds (about
+  5,400 with 60,000 idle); k6's MiB per VU is measured with the stream of D41 running (D44); `s` is picked so 20,000 req/s fits under
   the cap; the margin left by the 97 % rule (about `0.29 × s` seconds of mean latency per request) is printed next to
   `s`. The k6 container gets a `--memory` limit at the cap's budget, so an overrun fails k6, never the VM. The harness
   refuses more VUs than the cap (exit 2). Results in the README.
@@ -155,11 +163,16 @@ layout in `lab/lib.sh`, pinned versions with sha256, no absolute `/Users/...` pa
   latency histogram per second and endpoint (log buckets, under 1 % error) plus counts and errors; a step's p95 and p99
   merge its seconds' histograms. Nothing raw is written to disk during a measured run. The harness judges each step as
   it ends and stops k6 at the first failing one; k6's exit 99 (its thresholds failed) is a result, not a harness error.
-  If the aggregator can't keep up (k6 blocks on the FIFO, seen as a lower achieved rate at low load), fall back to one
-  scenario per step and say so.
+  **The guard (D44):** k6 doesn't slow down when the reader falls behind, it buffers samples in memory. So the
+  aggregator reports its lag (the newest sample's time against the clock) and the harness reads k6's memory; a run
+  whose lag passes 2 s or whose k6 passes its memory budget is invalid with that reason. A replay case feeds a
+  recorded CSV through the aggregator at the rows of 40,000 req/s (about 12 rows per request); if it's too slow, the
+  reader skips every line but `http_req_duration` and `http_reqs` before parsing.
 - **Output:** the table, and a JSON with every step, the think scale, the per-VU rate, k6's peak memory and CPU, the
   server's peak `Pss_Anon` and `memory.current`, `other_containers`, the exact command, and k6's raw summary.
-- **Cases:** a passing smoke staircase; a step above capacity fails on the 97 % rule and the run stops there; more VUs
+- **Cases:** a passing smoke staircase; a step above capacity fails on the 97 % rule and the run stops there (at low
+  load, against a fixture server under `lab/check/fixtures/` that spends a few ms per request, so its capacity is a few
+  hundred req/s); the replay case and the lag gate (D44); more VUs
   than the cap is refused (exit 2); the aggregator's percentiles match k6's own summary on a short run (within its
   bucket error); the containers are removed after any failure; the k6 script's diff against `bench/load.js` contains only
   the scaling and the options (a check greps it).
@@ -192,8 +205,8 @@ layout in `lab/lib.sh`, pinned versions with sha256, no absolute `/Users/...` pa
   page isn't evicted) and before the server opens it (`posix_fadvise(DONTNEED)` on the copy only, for example
   `dd iflag=nocache`); never a VM-wide `drop_caches`. Without
   it, the copy's pages are warm. `fincore` on the copy, before the first request, proves which.
-- **`macro.sh` on the skeleton (D42):** it uses the same seed-copy function (so `SQLITE_PATH` and a fresh copy), takes
-  `--cold`, and `--per-second` gives the same latency series for a fixed-rate run, so Q10's rerun of the bake-off's
+- **`macro.sh` on the skeleton (D42):** behind a named switch, `--fresh-db`, it uses the same seed-copy function (so
+  `SQLITE_PATH` and a fresh copy), takes `--cold`, and `--per-second` gives the same latency series for a fixed-rate run, so Q10's rerun of the bake-off's
   `posts.js` is read the same way. The bake-off servers keep their own copy and work as before.
 - **Cases:** idle held equals asked at start and end, 60,000 with k6 at its VU cap and no k6 connection error (by hand,
   the Done-when; `check.sh` runs a small one); a fixture that closes an idle connection fails the run with the reason; the per-second rows cover the whole run with no gap; cold and warm `fincore` readings differ as expected.
@@ -236,6 +249,8 @@ layout in `lab/lib.sh`, pinned versions with sha256, no absolute `/Users/...` pa
 - **Staircase:** a fresh run, 60,000 idle connections, warm-up at about 10 % of the expected capacity for 60 s, then
   steps of 1,000 req/s from 3,000 req/s, 60 s plateaus, stopping at the first failing step; then a second staircase of
   250 req/s steps from the last passing step to the failing one.
+- **Every measured run** passes D44's gate (aggregator lag under 2 s, k6 under its memory budget) or is invalid and
+  rerun.
 - **Holds:** 3 holds of 5 minutes at the highest passing rate of the fine staircase, each a fresh run (new seed copy,
   new server, new idle connections); the median of the 3 is the baseline; 1 hold one fine step above. If a hold fails,
   the 3 holds move one fine step down (like the bench's 250-user step down).

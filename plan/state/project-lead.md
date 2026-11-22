@@ -1,6 +1,6 @@
 # Project manager: phase 4, realistic baseline
 
-**State:** plan review full NOT_OK (11:10), settled D38 to D43; delta running. Scope 1 brief drafted, not launched.
+**State:** plan review full NOT_OK (11:10) → D38-D43; delta NOT_OK (11:16) → D44; delta 2 with a final full pass running. Scope 1 brief drafted, not launched.
 
 ## Resolved config
 
@@ -61,6 +61,8 @@ Rien.
 - Plan review (full, 11:10): 🔴 ports → D38; 🟠 VU budget → D39; 🟠 10.8 → D40 (9.45); 🟠 k6 per-step/per-second → D41
   (one scenario + live histograms, not one scenario per step: no connection churn between steps); 🟠 macro.sh on the
   skeleton → D42; 🟠 Excimer attribution → D43. 12 🟡 folded into phase-4.md. Predictions 3 and 7 revised 11:12.
+- Delta (11:16): 🟠 no backpressure on k6's stream → D44 (reviewer's pick A). 5 🟡 folded (fd cap, per-step functions,
+  `--fresh-db`, slow fixture, D16 period).
 
 ## Suggested skills
 
