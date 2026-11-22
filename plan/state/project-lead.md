@@ -1,6 +1,6 @@
 # Project manager: phase 3, runtime bake-off
 
-**State:** 🔄 resumed 21:12 on Jacob's "go" (docker ps = 0, pace 🟢 5-hour 4 %, weekly 20 %): scope 7 developer launched. Next: verify results README, delta passes of pr-reviewer (ac896543c8894bdb6) and blind-reviewer (abca1a48d5f108622) on its commit, check.sh, retro, 🏁, push.
+**State:** 🔄 scope 7 done and pushed (`e062f0b`, 22:11). pr-reviewer delta running; check.sh running in the background. Next: blind-reviewer delta (abca1a48d5f108622), retro, run.yml counts, 🏁, push plan.
 
 ## Resolved config
 
@@ -39,7 +39,8 @@ Skill defaults (`autonomous-run/pipeline.yml`), no run override file. Changes fr
 | blind-reviewer | abca1a48d5f108622 | pass 1 NOT_OK 18:38 (1 🟠) |
 | 6 (fixes 2) | a5ac629088e976752 | R7 to R10 fixed `9aadddc`, pushed 18:47 |
 | blind-reviewer | abca1a48d5f108622 | pass 2 OK 18:49 (R12 🟡 left) |
-| 7     | aa198fd9407d71d19 | launched 21:14, bake-off |
+| 7     | aa198fd9407d71d19 | first try stopped 21:28 (D25); done `e062f0b` 22:09, pushed 22:11 |
+| pr-reviewer | ac896543c8894bdb6 | delta on `e062f0b` launched 22:12 |
 
 ## Verified
 

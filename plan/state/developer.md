@@ -1,6 +1,6 @@
 # Developer: phase 3, runtime bake-off
 
-**State:** scope 6 done (`3e74d76`, review fixes `e1cf918`, `9aadddc`), scope 5 done (`ad52342`), scope 4 done (`8c8f7cc`), scope 3 done (`deeb8d1`), scope 2 done (`0d74fda`), scope 1 done (`a0477ba`). Phase 2's handovers are in `plan/runs/phase-2/state/developer.md` (read its "Où regarder"
+**State:** scope 7 done (`e062f0b`), scope 6 done (`3e74d76`, review fixes `e1cf918`, `9aadddc`), scope 5 done (`ad52342`), scope 4 done (`8c8f7cc`), scope 3 done (`deeb8d1`), scope 2 done (`0d74fda`), scope 1 done (`a0477ba`). Phase 2's handovers are in `plan/runs/phase-2/state/developer.md` (read its "Où regarder"
 and "Impasses" if you touch `macro.sh`, `micro.sh`, `seed.sh` or the images).
 
 ## Verified
@@ -28,6 +28,8 @@ and "Impasses" if you touch `macro.sh`, `micro.sh`, `seed.sh` or the images).
 - Scope 6, `conns.sh --steps 200,500 --max 500` on `bake-diy.php`: exit 0, 500 held, fresh request 0.5 ms, Pss 16.8 MiB at 200 and 500 (slope 0.2 KiB/conn on 2 steps, which says nothing), memory.current slope 3.91 KiB/conn, no container left.
 - Scope 6, boot lines of the three servers (8.5): Swoole `listening on 0.0.0.0:18151` / `socket: backlog=4096 tcp_nodelay=1`; Workerman `tree: nocache` / `loop: Workerman\Events\Event` / `socket: backlog=4096 tcp_nodelay=1`; DIY `listening on 0.0.0.0:18153` / `loop: epoll` / `socket: backlog=4096 tcp_nodelay=1`.
 - Scope 6, full `bash lab/check.sh`: 32/32 ok (28 before, plus `check_diy_parser`, `check_diy_partial_write`, `check_conformance_bake_diy`, `check_macro_bake_diy_posts_is_valid`), 117 s. The 4 new checks were written after the tests and the hand runs had passed (no separate red run of the checks).
+- Scope 7, the bake-off (`e062f0b`), all on a quiet VM (`docker ps` empty before each series, `other_containers: 0` in every counted JSON): series A 24 counted runs plus 1 rerun (swoole posts round 1), B 12 counted plus 2 reruns, C 3 conns runs, D 4 runs, 4 conformance runs (8 cases ok each, 8.5). Predictions copied unchanged into the README and diffed identical to the brief before any run. `summarize.sh` regenerated the README tables: diff of the README's tables against its output is empty. Finalists: DIY (posts 29.14 us/req) and Swoole (32.83), Workerman nocache third (33.32).
+- Scope 7, first try (rate / 10 VUs): 18 runs, stopped after round 2 (workerman-nocache posts invalid twice). Moved to `first-try-700-vus/`, committed, not counted. Rerun at rate / 5 (D25) from round 1.
 
 ## Assumed
 
@@ -105,6 +107,10 @@ Rien.
 - Scope 6: a `stream_socket_pair` (AF_UNIX) takes 212,992 bytes on this VM before a non-blocking write is refused; ext-event takes a stream resource as the fd of an `Event` and passes it back as the callback's first argument.
 - Scope 6: `stream_socket_accept($listener, 0)` on a non-blocking listener returns false (and warns, hence `@`) when the queue is empty: that is the end of the accept loop.
 
+- Scope 7: `jq -n ... --args a b $(files)`: every file after `--args` becomes a positional argument, jq then reads stdin (hang). Use `--arg` for named values and put the files last. A jq call with `-n` and no file at all also waits on stdin.
+- Scope 7: invalid runs came only on `posts.js` and only in round 1 of the counted series (3 of 36 runs: swoole posts 7,000, swoole posts 9,500, DIY posts 9,500), with 1,400 and 1,900 VUs; max latency 280 to 450 ms. Cause not separated (host stall vs first reads of a fresh container's seed copy).
+- Scope 7: Swoole's memory per connection is not linear: about 69 KiB from 1k to 10k, about 5 KiB from 20k to 65k.
+
 ## Where to look
 
 - `lab/check.sh` → `lab_bash_scripts`, `shellcheck_run`, `check_shellcheck*`: what is scanned (every `*.sh` and every bash/sh shebang under `lab/`, minus `lab/data` and `lab/check/fixtures`). A new script is picked up on its own. `@a0477ba`
@@ -132,9 +138,11 @@ Rien.
 - `lab/servers/bake-diy.php`, `lab/servers/diy-connection.php`: the DIY server (loop and `DiyConnection`, parser and write buffer). `@3e74d76`
 - `lab/check/diy-lib.php`, `diy-parser-test.php`, `diy-partial-write-test.php`: the two tests, a stub handler and a socket pair helper; `lab/check.sh` → `check_diy_parser`, `check_diy_partial_write`, `check_conformance_bake_diy`, `check_macro_bake_diy_posts_is_valid`. `@3e74d76`
 
+- `lab/results/2026-11-21-bake-off/`: README (predictions, tables, judgments), `summarize.sh`, `first-try-700-vus/` (not counted), `conformance-*.txt`. `@e062f0b`
+
 ## Next steps
 
-1. Scope 7.
+1. Phase 3 reviews and delivery (all 7 scopes are committed).
 
 ## Handover of scope 4
 
@@ -197,6 +205,18 @@ Three fixes from the pr-reviewer in one commit: (1) the dead `wait` mode of `lab
 - **Workerman 60 s claim was wrong** (scope 4's "Raw learnings" entry too): a raw socket that sent `Connection: close` got its answer (`Connection: keep-alive`) at once, then 100 s of silence with no close from the server; the 60 s was PHP's `default_socket_timeout` on the client. README corrected: Workerman ignores `Connection: close` and keeps the connection open.
 - Left alone as asked: items 9, 10, 11. Full `bash lab/check.sh`: 32/32 ok.
 
+## Handover of scope 7
+
+**Created:** `lab/results/2026-11-21-bake-off/` (`README.md`, `summarize.sh`, `run-<round>-<server>-<route>-<rate>[-rerun].json/.txt` for series A and B, `info-8.6-*` for D, `conns-<server>-8.5.json/.txt`, `conformance-<server>.txt`, `first-try-700-vus/`). No lab script changed. Drivers were scratch scripts (not committed), listed in the README as commands.
+
+**Numbers (median µs/req at 7,000, 8.5):** Swoole 25.47 noop / 32.83 posts; Workerman nocache 26.24 / 33.32; Workerman stock 23.39 / 34.05; DIY 21.88 / 29.14. Finalists at 9,500: DIY 17.37 / 27.66, Swoole 18.53 / 31.01. All three runtimes held 65,000 connections, stopped at 65,522-65,523 on the fd limit (`request timeout`), no OOM. Pss slope (Pss_Anon the same) Swoole 14.29, nocache 2.37, DIY 1.48 KiB/conn; memory.current 18.13, 6.07, 5.19.
+
+**Predictions:** held 1, 2 (three runtimes, caveat with stock 3.58), 4 (10.9 %, narrow), 5 (14.1 %, narrow); held in part 7 (Workerman and DIY on the fd limit; Swoole did not OOM) and 8 (memory.current above Pss on all three, DIY slope in range; Swoole and Workerman slopes 0.7 and 0.6 KiB under); did not hold 3 (3.0 %, not 30-70 %), 6 (posts 5.1 and 5.6 %, noop 20.6 and 27.3 %), 9 (posts p99 5.38, 7.18, 3.03 ms). Flip rule: Workerman nocache is within 3.0 % of Swoole on noop, no flip.
+
+**Invalid runs:** first try 4 (see Verified); counted series 3, each rerun once and valid (`run-1-swoole-posts-7000`, `run-1-swoole-posts-9500`, `run-1-diy-posts-9500`). No pair invalid twice in the counted series. No VM-not-quiet stop. Nothing impossible (lowest µs/req 15.91, highest connections held 65,523).
+
+**Pitfalls:** the README's predictions section keeps its plan tags (D5, D15) on purpose (the plan manager's instruction): they go before the merge if anyone wants a clean public README. The 8.6 posts DIY run (33.16) is one run: do not read it as a regression.
+
 ## Questions for the project manager
 
 Rien.
@@ -241,10 +261,8 @@ Rien.
 - **What cost time:** one failing case turned out to be my fixture (`fread` returns 8 KiB at most); the 2 macro runs and the full check are the long part (about 6 minutes of waiting in all).
 - **Next time:** look up what a PHP stream call returns at its limits (read size, EAGAIN, EPIPE) in a 5-line script before writing the class around it; stub the unit first so the tests show red per case, not a missing-file fatal.
 
-## Handover of scope 7 (interim: series A stopped after round 2, nothing committed)
+### Scope 7
 
-**State at 21:28 local:** `lab/results/2026-11-21-bake-off/` in the worktree holds `README.md` (Predictions copied unchanged from the brief, diffed identical, and the plan of the runs), `summarize.sh` (written, not yet run against a full series), and 19 run JSON and `.txt` files of series A (round 1 complete, round 2 up to `diy-posts`). Nothing committed. VM quiet at every run (`docker ps` empty, every JSON `other_containers: 0`). The driver is a scratch script (`drive.sh A|B <f1> <f2>|D`, outside the repo) that checks `docker ps` before every run, reruns an invalid pair at the end of its round (file name suffix `-rerun`) and writes a STOP file when a pair is invalid twice.
-
-**Why it stopped:** `workerman-nocache` posts in round 2 is invalid twice (2,244 dropped, then 1,114 dropped; p99 66 ms and 34 ms, max latency 290 and 311 ms). `workerman-stock` posts round 2 is also invalid (494 dropped, max 150 ms) and was not rerun yet. Round 1 had one invalid run (swoole posts, 124 dropped, max 140 ms), its rerun is valid. Every invalid run is on `posts.js`; all 11 `/noop` runs so far are valid with p99 2 to 4.7 ms. Server CPU never throttled; the stalls are 100 to 300 ms pauses that 700 VUs (rate / 10) can't absorb on the posts route (k6 at 130 to 180 % of one CPU there). The Mac is under memory pressure (35 GB used, 16 GB compressor, 104 MB unused, load average 6 to 7 on 12 CPUs, Chrome running), a candidate cause I did not test.
-
-**Numbers so far (µs/req, valid runs only):** swoole noop 22.94, 22.92; posts 34.55 (rerun of round 1), 36.06. workerman-nocache noop 24.21, 23.68; posts 33.78. workerman-stock noop 21.93, 21.11; posts 36.56. diy noop 19.92, 19.70; posts 30.75, 27.35.
+- **What went well:** the drivers (a `docker ps` check before every run, an automatic rerun at the end of the round, a STOP file) turned 60 runs into five background commands, and the stop rule fired exactly where the brief said it would, so the first try was caught after 14 minutes, not at the end.
+- **What cost time:** jq's `--args` swallowed the file list (stdin hang, twice), the first try's 700 VUs could not absorb the host's stalls on `posts.js`, and the round 1 posts runs still dropped iterations at 1,400 and 1,900 VUs.
+- **Next time:** put a sanity run of the VU count on the posts route, a minute, before planning 60 runs; write summarize jq programs with `--arg` and test them on two files before the series ends; ask the planning session for a first-try folder rule up front.
