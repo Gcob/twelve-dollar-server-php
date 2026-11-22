@@ -21,7 +21,11 @@
 # connection): one client opens them one at a time, each with one GET /health, and at the end sweeps them for a close by the server. The
 # count held at the start and at the end is in the table and the JSON; a connection the server closed makes the run INVALID. --cold starts
 # the server on a copy of the seed whose pages were evicted from the page cache (what the page cache holds of it is read before the
-# server opens it: `cold` in the JSON). The server runs with APP_TELEMETRY=1 unless --env sets it, and every run has its per-second series.
+# server opens it: `cold` in the JSON). The server runs with APP_TELEMETRY=1 unless --env sets it, and a run has its per-second series
+# unless --no-series: then there is no sampler, the poll reads only k6's memory and the aggregator's status (no read of the server's
+# `smaps_rollup`, no listing of its fds, no look at /proc/net/tcp), `results.series` is null and the server's memory peaks are null. The
+# per-step results and `results.per_second` (the aggregator's latency per second) stay, so a hold's p99 and stalled seconds can be
+# compared with a run that has the probes. The server's own telemetry line stays on unless `--env APP_TELEMETRY=0` turns it off too.
 #
 # --profile <file> runs the server with the Excimer profiler (CPU time, one sample every APP_PROFILE_PERIOD seconds, default 0.001: pass
 # `--env APP_PROFILE_PERIOD=<s>` to change it; telemetry off unless --env sets it), copies the collapsed stacks to <file> when the load is over
@@ -37,7 +41,7 @@
 #           and k6's cgroups on every whole second;
 #   probe   on CPUs 0-1: reads memory and /proc from outside, and the aggregator's status file, once a second; one sampler loop
 #           (lab/macro/sampler.php) takes the server's per-second readings (CPU, Pss_Anon, memory.current, WAL size and frames, fds,
-#           page faults) for the series.
+#           page faults) for the series (not with --no-series).
 # Exit codes: 0 a valid run (a failing step is a result, not an error), 3 printed but INVALID (the aggregator fell behind, k6 reached
 # its memory budget, a row could not be parsed), 2 usage (a VU count above the cap included), 1 any other failure.
 set -euo pipefail
@@ -79,7 +83,8 @@ usage() {
 usage: lab/realistic.sh --image <variant> (--staircase <from>,<step>,<to>,<s> | --hold <rate>,<s> | --calibrate) [--think-scale <s>]
                         [--server <php file under lab/>] [--ext <name>]... [--env K=V]... [--label <text>] [--warmup <rate>,<s>]
                         [--vu-cap <n>] [--ramp <s>] [--out <path>] [--port <n>] [--local-ips <range>] [--lag-gate <s>] [--k6-memory <MiB>]
-                        [--calibrate-vus <a>,<b>] [--calibrate-seconds <s>] [--idle <n>] [--cold] [--profile <collapsed stacks file>]
+                        [--calibrate-vus <a>,<b>] [--calibrate-seconds <s>] [--idle <n>] [--cold] [--no-series]
+                        [--profile <collapsed stacks file>]
 rates are in req/s, <s> is the seconds of one plateau; --think-scale is the share of the bench's think time (default 1)
 EOF
   exit 2
@@ -92,10 +97,12 @@ command_line="${command_line//$REPO/.}"
 image=8.5 server_file="$LAB/app/server.php" label="" think_scale=1 warmup="" staircase="" hold="" calibrate="" vu_cap=""
 profile_out=""
 ramp="" out="" port=18120 local_ips="127.0.1.1-127.0.1.4" lag_gate=6 k6_memory="" calibrate_vus="50,300" calibrate_seconds=60 idle="" cold=""
+series=1
 LAB_EXT=() LAB_ENV=()
 while [ "$#" -gt 0 ]; do
   if [ "$1" = --calibrate ]; then calibrate=1; shift; continue; fi
   if [ "$1" = --cold ]; then cold=1; shift; continue; fi
+  if [ "$1" = --no-series ]; then series=""; shift; continue; fi
   [ "$#" -ge 2 ] || { echo "missing value for $1" >&2; usage; }
   case "$1" in
     --image) image="$2" ;;
@@ -411,13 +418,13 @@ run_measured() {
   local run_invalid="" run_stopped=0 run_k6_rc=0 run_k6_peak=0 run_pss_peak_kb=0 run_cur_peak=0 run_clients='{}' polls=0
   : >"$tmp/$name.polls"
   local limit_bytes=$(( k6_budget_mib * 1048576 ))
-  sampler_start "$name" "$LAB_APP_DB"
+  [ -z "$series" ] || sampler_start "$name" "$LAB_APP_DB"
   k6_run "$name" "$options" csv &
   k6_job=$!
   local poll line g k v k6_cur k6_peak k6_oom pss cur status_json failed_step failed_why lag_max vus_now unparsed
   while kill -0 "$k6_job" 2>/dev/null; do
     sleep 1
-    poll="$(probe poll "$server_id" "$k6_id" /run/rt/status.json 2>/dev/null || true)"
+    poll="$(probe poll "$server_id" "$k6_id" /run/rt/status.json "${series:-light}" 2>/dev/null || true)"
     k6_cur=0 k6_peak=0 k6_oom=0 pss=0 cur=0 status_json='{}'
     while IFS= read -r line; do
       g="${line%% *}"
@@ -437,7 +444,7 @@ run_measured() {
     IFS=$'\t' read -r failed_step failed_why lag_max vus_now unparsed < <(jq -r '[(.failed.step // 0), ((.failed.reasons // ["-"]) | join("; ")), (.lag_max_s // 0), (.vus_now // 0), (.unparsed // 0)] | @tsv' <<<"${status_json:-{\}}" 2>/dev/null || echo "")
     echo "${vus_now:-0} $k6_cur $pss $cur" >>"$tmp/$name.polls"
     polls=$(( polls + 1 ))
-    if [ "$polls" -ge 4 ] && [ "${vus_now:-0}" -gt 0 ]; then
+    if [ -n "$series" ] && [ "$polls" -ge 4 ] && [ "${vus_now:-0}" -gt 0 ]; then
       run_clients="$(probe client-ips "$port" | lines_to_json | jq -c --argjson old "$run_clients" '(.clients // {}) as $now | if ($now | length) >= ($old | length) then $now else $old end')"
     fi
     if [ "$(docker inspect -f '{{.State.Running}}' "$SERVER" 2>/dev/null)" != true ]; then
@@ -468,7 +475,7 @@ run_measured() {
   done
   wait "$k6_job" || run_k6_rc=$?
   k6_job=""
-  sampler_stop "$name"
+  [ -z "$series" ] || sampler_stop "$name"
   # 99: k6's thresholds failed (a result). 105: k6 stopped by a signal, which the harness sent on purpose.
   # A k6 killed for its memory before the poll saw it reach the budget is the same finding.
   if [ "$run_k6_rc" -ne 0 ] && [ -z "$run_invalid" ] && [ "$(probe memory-events "$k6_id" | awk '$2 == "oom_kill" {print $3}')" -gt 0 ]; then
@@ -491,11 +498,13 @@ run_measured() {
     exit 1
   }
   docker exec "$K6C" cat "/tmp/$name.json" >"$tmp/$name.k6.json" 2>/dev/null || echo 'null' >"$tmp/$name.k6.json"
+  # Without the series nothing read the server's memory: its peaks are null, not 0.
+  [ -n "$series" ] || { run_pss_peak_kb=null run_cur_peak=null; }
   jq -nc --arg invalid "$run_invalid" --argjson stopped "$run_stopped" --argjson rc "$run_k6_rc" --argjson peak "$run_k6_peak" \
     --argjson pss "$run_pss_peak_kb" --argjson cur "$run_cur_peak" --argjson clients "$run_clients" \
     '{invalid: $invalid, stopped_by_harness: ($stopped == 1), k6_exit: $rc, k6_peak_bytes: $peak, server_pss_anon_peak_kb: $pss,
       server_memory_peak_bytes: $cur, clients: $clients}' >"$tmp/$name.meta.json"
-  series_build "$name" "$tmp/$name.agg.json"
+  if [ -n "$series" ]; then series_build "$name" "$tmp/$name.agg.json"; else echo null >"$tmp/$name.series.json"; fi
 }
 
 # Stops k6 the way ctrl-C does: it wraps up and writes its summary.
@@ -578,8 +587,8 @@ run_json() {
                  else "" end),
        stopped_by_harness: $m.stopped_by_harness, k6_exit: $m.k6_exit,
        k6_peak_memory_mib: ($m.k6_peak_bytes | mib), client_ips_seen: $m.clients,
-       server_pss_anon_peak_mib: ($m.server_pss_anon_peak_kb / 1024 * 100 | round / 100),
-       server_memory_current_peak_mib: ($m.server_memory_peak_bytes | mib),
+       server_pss_anon_peak_mib: (if $m.server_pss_anon_peak_kb == null then null else $m.server_pss_anon_peak_kb / 1024 * 100 | round / 100 end),
+       server_memory_current_peak_mib: (if $m.server_memory_peak_bytes == null then null else $m.server_memory_peak_bytes | mib end),
        aggregator: {max_lag_s: $a.lag_max_s, rows: $a.rows, requests: $a.requests, unparsed: $a.unparsed, bytes: $a.bytes,
                     connection_errors: $a.connection_errors, error_codes: ($a.error_codes | if type == "array" then {} else . end)},
        per_second: $a.per_second, series: $series[0], run_total: $a.run_total, k6_summary: $k6[0]}'
@@ -638,7 +647,7 @@ jq -n \
   --argjson steps_vus "$(jq -nc '$ARGS.positional | map(tonumber)' --args "${steps_vus[@]}")" \
   --arg k6_image "$LAB_K6_IMAGE" --arg k6_version "$k6_version" --arg local_ips "$local_ips" --argjson k6_budget "$k6_budget_mib" \
   --argjson lag_gate "$lag_gate" --argjson before "$cpu_before" --argjson after "$cpu_after" --argjson idle "$idle_json" --argjson cold "$cold_json" \
-  --slurpfile runs_file "$tmp/runs.json" --argjson calibration "$calibration_json" --argjson profile "$profile_json" --arg invalid "$invalid_all" '
+  --slurpfile runs_file "$tmp/runs.json" --argjson calibration "$calibration_json" --argjson profile "$profile_json" --argjson per_second_probes "$([ -n "$series" ] && echo true || echo false)" --arg invalid "$invalid_all" '
   def mib: . / 1048576 * 100 | round / 100;
   ($after.time.us - $before.time.us) as $window_us
   | ($runs_file[0]) as $runs
@@ -647,7 +656,7 @@ jq -n \
     date: $date, command: $command, mode: $mode, label: (if $label == "" then null else $label end),
     other_containers: $other_containers,
     valid: ($invalid == ""), invalid_reasons: (if $invalid == "" then [] else [$invalid] end),
-    idle: $idle, cold: $cold, profile: $profile,
+    idle: $idle, cold: $cold, profile: $profile, per_second_probes: $per_second_probes,
     host: {docker_desktop: $docker, engine: $engine, vm_kernel: $kernel, arch: $arch, limits: $limits},
     server: {variant: $variant, image_id: $image_id, php_version: $php_version, file: $server_file, port: $port, php_flags: $flags,
              ext: $ext, env: $env, fds_open_at_boot: $server_fds,
@@ -700,12 +709,16 @@ jq -r '"k6 connection errors: \(.k6_connection_errors)" + (if (.k6_error_codes |
 jq -r '.cold | "database copy in the page cache when the server opened it (fincore): \(.resident_bytes) of \(.size_bytes) bytes, \(.resident_share * 100 | round) %, --cold \(if .requested then "on" else "off" end)"' "$out"
 jq -r 'select(.idle != null) | .idle | "idle connections: \(.requested) requested, \(.held_at_start) held at the start and \(.held_at_end) at the end, \(.closed_by_server_at_end) closed by the server; the server counted \(.server_established_at_start) and \(.server_established_at_end) established, \(.server_fds_open_with_idle) file descriptors open with them",
   "idle client memory: \(.client.memory_current_mib_at_end) MiB memory.current at the end (peak \(.client.memory_peak_mib), anon \(.client.anon_mib), kernel \(.client.kernel_mib), socket buffers \(.client.socket_buffers_mib)), the process RSS \(.client.rss_mib) MiB after opening them, opened in \(.seconds_to_open) s from \(.source_addresses | length) source addresses"' "$out"
-jq -r '"k6 peak memory \(.k6.peak_memory_mib) MiB of its \(.k6.memory_budget_mib) MiB budget, k6 CPU \(.k6.cpu_percent_of_one_cpu) % of one CPU, aggregator max lag \(.aggregator.max_lag_s) s (gate \(.aggregator.lag_gate_s) s), server Pss_Anon peak \(.server_memory.pss_anon_peak_mib) MiB, memory.current peak \(.server_memory.memory_current_peak_mib) MiB"' "$out"
+jq -r '"k6 peak memory \(.k6.peak_memory_mib) MiB of its \(.k6.memory_budget_mib) MiB budget, k6 CPU \(.k6.cpu_percent_of_one_cpu) % of one CPU, aggregator max lag \(.aggregator.max_lag_s) s (gate \(.aggregator.lag_gate_s) s), server Pss_Anon peak \(if .server_memory.pss_anon_peak_mib == null then "not read (--no-series)" else "\(.server_memory.pss_anon_peak_mib) MiB" end), memory.current peak \(if .server_memory.memory_current_peak_mib == null then "not read" else "\(.server_memory.memory_current_peak_mib) MiB" end)"' "$out"
 [ -z "$other_warning" ] || echo "$other_warning"
 if [ -z "$calibrate" ]; then
   echo
-  jq '.results.series' "$out" >"$tmp/series.json"
-  series_print "$tmp/series.json"
+  if [ -n "$series" ]; then
+    jq '.results.series' "$out" >"$tmp/series.json"
+    series_print "$tmp/series.json"
+  else
+    echo "per second: off (--no-series: no sampler, the poll read only k6's memory and the aggregator's status; the latency of each second is in results.per_second)"
+  fi
   echo
 fi
 profile_print

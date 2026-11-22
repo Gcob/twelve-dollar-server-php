@@ -87,12 +87,13 @@ case "${1:-}" in
     ;;
   poll)
     # One call a second during lab/realistic.sh: k6's memory (current, peak, OOM kills), the server's memory now (as memory-now), and
-    # the aggregator's status file (written in the volume the probe shares with it), as the last line.
+    # the aggregator's status file (written in the volume the probe shares with it), as the last line. With a 5th argument `light`
+    # (lab/realistic.sh --no-series) the server is not read at all: no `smaps_rollup`, which walks its page tables once a second.
     k="$(cgroup_dir "$3")"
     echo "k6 memory_current $(cat "$k/memory.current")"
     echo "k6 memory_peak $(cat "$k/memory.peak")"
     echo "k6 oom_kill $(awk '$1 == "oom_kill" {print $2}' "$k/memory.events")"
-    bash "$0" memory-now "$2" | sed 's/^memory_now /server /'
+    [ "${5:-}" = light ] || bash "$0" memory-now "$2" | sed 's/^memory_now /server /'
     echo "status $(cat "$4" 2>/dev/null || echo '{}')"
     ;;
   fds)

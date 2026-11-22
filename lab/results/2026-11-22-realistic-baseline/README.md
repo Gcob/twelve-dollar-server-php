@@ -117,6 +117,9 @@ build and no `lab/check.sh` during the series. A run that is invalid keeps its f
 
 What follows is the output of `bash summarize.sh`, unedited: running it again must print the same text (`bash summarize.sh | diff - <(sed -n '/^<!-- BEGIN summarize -->$/,/^<!-- END summarize -->$/p' README.md | sed '1d;$d')`
 prints nothing). The fold table in it runs `php-lab:8.5` in Docker; every other table is `jq` on the JSON files.
+**Every run here had the per-second probes on** (the sampler and the poll's reads of the server's memory): the p99 and the stall counts
+below are the figures of runs with them. A run that tells how much of them the probes cause is a hold with `--no-series`, left for the
+next phase.
 
 <!-- BEGIN summarize -->
 ### Calibration (quiet VM, stream on, think scale 0.0286)
@@ -399,12 +402,12 @@ No step failed.
   96.7 %, never on a latency threshold. Mean latency at the baseline is 2.2 ms against a p95 of 11 to 13 ms.
 - **The baseline (median of 3 holds at 24,000), to be read as at least 23,386 req/s at `s = 0.02`** (a floor set by the harness, not the
   server's capacity: its CPU is 63 % busy): **23,386 req/s achieved, 221,002 users at 9.45 per req/s, 27.15 µs of CPU per request,
-  p95 11.93 ms, p99 28.29 ms**, 0 errors, 60,000 idle connections held at the start and the end of each. The hold above (24,250) passes with
+  p95 11.93 ms, p99 28.29 ms** (with the per-second probes on), 0 errors, 60,000 idle connections held at the start and the end of each. The hold above (24,250) passes with
   23,625 req/s, 223,259 users, 26.96 µs, p95 11.58 ms, p99 27.87 ms: the baseline is a conservative reading of the rule at `s = 0.02`.
   Per endpoint (median p95 / p99 ms): `GET /feed` 12.66 / 29.58, `GET /posts/:id` 11.41 / 27.46, `POST /posts/:id/like` 11.75 / 27.87,
   `POST /posts` 11.07 / 27.05.
-- **Latency second by second:** the median per-second p99 of `GET /feed` is 20 to 22 ms, but **every hold has 16 to 21 seconds (of 298)
-  whose max latency is over 100 ms**, up to 303 ms. In none of the 53 stalled seconds of the three holds was a callback as long as the stall
+- **Latency second by second (with the per-second probes on):** the median per-second p99 of `GET /feed` is 20 to 22 ms, but **every hold
+  has 16 to 21 seconds (of 298) whose max latency is over 100 ms**, up to 303 ms. In none of the 53 stalled seconds of the three holds was a callback as long as the stall
   (44 of them have a longest callback under 20 ms, 9 between 20 and 49 ms), and the server's cgroup was throttled once or not at all (0 to 9 ms).
   No `gc_status()` run in any hold, no major fault. **The longest callback of a second is high every second:** its median is 11.2 to 11.4 ms
   in the holds, and all 298 seconds of each hold are over 5 ms (a callback normally takes tens of µs), against 0.5 ms at 7,000 req/s (`q10-*`).
@@ -436,7 +439,8 @@ No step failed.
 - **Q10, are the bake-off's stalls the server's?** Mostly not. In the three holds 0 of 53 stalled seconds had a callback as long as the stall
   (44 under 20 ms), so the time is not spent running PHP code. "Outside the PHP code" is a list of suspects, not separated by these runs: the per-second sampler
   (it reads `smaps_rollup` and about 64,000 `fd` entries of the server's process every second), the telemetry, k6, and the VM's vCPU.
-  Separating them needs a run without the sampler: left for the next phase. The exception is one `posts.js` run at 700 VUs
+  Separating them needs a hold with `--no-series` (no sampler, and a poll that reads only k6's memory and the aggregator's status), then
+  the same hold with the probes on: left for the next phase. The exception is one `posts.js` run at 700 VUs
   (`q10-warm-1`, 877 ms): its cgroup was CFS-throttled for 325 ms in 6 periods, with two callbacks of 181 ms: the server was stopped by
   its own 1-CPU quota, not slowed by its code. The other two warm runs stalled once (139 and 147 ms, callbacks 4 and 14 ms), and two of the three
   warm `posts.js` runs dropped iterations like the bake-off's (9,193 and 39), against none of the three cold ones.
@@ -454,13 +458,13 @@ One line each, by the rule written with them (a range holds if the measured valu
 3. **Not held.** At least 23,386 req/s at `s = 0.02` (a floor set by the harness, the server 63 % busy) and at least 221,002 mapped users, against 10,000 to 18,000 and 94,500 to 170,000.
 4. **Held.** The first failing step (24,000, coarse run 2) has p95 13.84 ms (under 500) and fails on its achieved rate (96.7 %); without the rule the staircase
    would have gone on (24,250 and the three holds pass, and no latency threshold is near).
-5. **Not held.** p99 is under 50 ms on every endpoint (27.05 to 29.58 ms, the worst single hold 34.33), but the writes do not have the highest p99: `POST /posts`
+5. **Not held.** p99 is under 50 ms on every endpoint (27.05 to 29.58 ms, the worst single hold 34.33; with the per-second probes on), but the writes do not have the highest p99: `POST /posts`
    has the lowest (27.05) and `POST /posts/:id/like` is second (27.87), under `GET /feed` (29.58).
 6. **Not held.** `memory.current` is 594 to 697 MiB (inside 500 to 800), but `Pss_Anon` peaks at 158 to 161 MiB (over 150).
 7. **Held.** The WAL's frames peak at 1,004 to 1,009 (under 2,000), a sawtooth with 93 to 112 checkpoints a hold, and the file stays at 4,056 to 4,080 KiB.
 8. **Not held.** S6 is the largest, 51.7 % (inside 35 to 55), then S8 20.2 % (10 to 20: 0.2 over), S7 9.7 % (10 to 20: 0.3 under), S2 8.0 % (inside 5 to 10),
    S4 1.7 % and S3, S5, S9 under 2 % (inside), and the kernel is 30.3 % of the CPU (inside 25 to 40): the order and five ranges hold, two ranges miss by under a point.
-9. **Not held.** Warm, 16 to 21 seconds of each hold have a max latency over 100 ms (the prediction was none). Of the stalls, 0 of 53 had a callback as long as the stall,
+9. **Not held.** Warm, 16 to 21 seconds of each hold have a max latency over 100 ms with the per-second probes on (the prediction was none). Of the stalls, 0 of 53 had a callback as long as the stall,
    but one `posts.js` run (181 ms callbacks, 325 ms of CFS throttling) was not under 20 ms. Cold, the major faults rise in the first seconds and the `posts.js` p99
    comes back within 20 s, but the realistic runs show no higher p99.
 10. **Held.** No `gc_status()` run in any of the four 5-minute holds (under 5), so none in a stalled second.

@@ -524,6 +524,28 @@ check_realistic_staircase_passes() {
   return 0
 }
 
+# --no-series: a small staircase passes with no sampler and a poll that reads only k6 and the aggregator. The per-step results are
+# there, the per-second rows hold the aggregator's latency and no reading of the server, the JSON says the probes were off and holds
+# no memory peak of the server (nothing read it), and the table says the per-second part is off. At 100 req/s (about 1,200 requests a
+# step), like the failing-step check, so the 97 % rule does not fail a step by chance. No container is left behind.
+check_realistic_no_series() {
+  local out rc=0 json left
+  json="$(mktemp -d)/realistic.json"
+  out="$(bash "$LAB/realistic.sh" --image 8.5 --think-scale 0.2 --staircase 100,100,200,12 --no-series --out "$json" 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "lab/realistic.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
+  grep -qx 'VALID' <<<"$out" || { echo "the run is not marked VALID: ${out//$'\n'/ | }"; return 1; }
+  grep -q '^per second: off (--no-series' <<<"$out" || { echo "the table does not say the per-second part is off: ${out//$'\n'/ | }"; return 1; }
+  jq -e '.valid == true and .per_second_probes == false and (.results.steps | length == 2) and (.results.steps | map(.pass) | all)
+         and (.results.steps | map(.cpu_usec_per_request > 0 and .latency_ms.overall.p99 > 0) | all)
+         and .results.series == null and (.results.per_second | length) > 20
+         and (.results.per_second | map(has("server") or has("telemetry")) | any | not)
+         and .server_memory.pss_anon_peak_mib == null and .server_memory.memory_current_peak_mib == null
+         and .k6.peak_memory_mib > 0 and .aggregator.unparsed == 0' "$json" >/dev/null \
+    || { echo "the JSON does not hold a run without the per-second probes: $(jq -c '{valid, per_second_probes, steps: [.results.steps[] | {step, pass, reasons}], series: (.results.series | type), per_second: (.results.per_second | length), server_memory}' "$json")"; return 1; }
+  left="$(docker ps -a --format '{{.Names}}' | grep '^lab-realistic-' || true)"
+  [ -z "$left" ] || { echo "containers left behind: ${left//$'\n'/ }"; return 1; }
+}
+
 # A step above the capacity of the server fails on the 97 % rule, and the staircase stops there: against a server that spends 4 ms per
 # request (about 190 to 250 req/s at most), 100 req/s passes and 300 req/s does not. The first step has room on purpose, and it is in the
 # count, not in the latency: at 40 to 60 req/s a plateau of 8 to 12 s holds 300 to 500 requests, whose count alone varies by 2 or 3 %
@@ -1137,6 +1159,7 @@ CHECKS=(
   check_realistic_script_is_the_benchs
   check_replay_keeps_up
   check_realistic_staircase_passes
+  check_realistic_no_series
   check_realistic_stops_at_a_failing_step
   check_realistic_refuses_vus_above_the_cap
   check_realistic_marks_invalid_run

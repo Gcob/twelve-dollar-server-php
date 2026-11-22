@@ -765,6 +765,12 @@ Ubuntu 24.04), so `fincore.php` is the same `mincore(2)` through FFI (`php -d ff
 resident pages. A warm-up warms the copy again: a cold start has none (`--warmup 0` in `macro.sh`, whose default is 10 s; `realistic.sh` has none by default). The first requests then show as major faults in the
 series (20 to 27 a second at 400 req/s in the smoke run) and `memory.current` growing as the page cache refills.
 
+**`--no-series`** (`realistic.sh`): no sampler and no server reads while k6 runs, for a run whose p99 or stalls the probes might disturb
+(the sampler reads the server's `smaps_rollup` and lists its fds every second). The poll keeps only k6's memory and the aggregator's status;
+`results.series` is null, the server's memory peaks are null, `per_second_probes` is false and the table says the per-second part is off. The
+per-step results and `results.per_second` (the aggregator's latency, and the server's CPU from its cgroup) stay. The telemetry line stays too
+unless `--env APP_TELEMETRY=0` turns it off.
+
 ### The challenge app on `macro.sh`
 
 `lab/macro.sh --fresh-db` starts its server the way `lab/realistic.sh` does: `lab_start_app` (a fresh copy of the seed, `SQLITE_PATH`,
