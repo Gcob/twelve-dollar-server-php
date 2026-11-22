@@ -300,6 +300,30 @@ Commits: `38fc153` (fix: the run's own idle client counted as another container)
 - `lab/realistic.sh` -> the `runs.json` block before the final `jq` (the argv fix), the `lab_other_containers` call (the idle fix). `@fcf104f`, `@38fc153`
 - `lab/README.md` "The guard: lag and memory" (two new bullets). `@671d87b`
 
+## Handover of scope 6 (every results folder regenerates its tables, commit 55c9d2e)
+
+### Verified (scope 6)
+
+- **What the check found:** nothing to fix. `2026-11-21-bake-off` (210 non-empty lines printed), `2026-11-21-noop-swoole` (18) and `2026-11-22-realistic-baseline` (216) each hold every line their `summarize.sh` prints, byte for byte; `2026-11-22-realistic-calibration` has no script and is named as skipped. No README, script or number was changed. The phase 2 folder needed no regeneration.
+- **The check bites, by mutation (both restored):** one digit changed in `noop-swoole/README.md` (`3000` to `3001` in the 3000 req/s row) makes `check_results_regenerate` fail and name `| 3000 | 30.16 | 29.9 .. 30.44 | ... |`; the awk's `print; exit` replaced by `next` makes `check_results_check_catches_drift` fail (`expected exit 1 ... got 0`). The checks were written after the function (the fixture and the real folders passed at once), so the mutations are the red.
+- **Full suite:** `bash lab/check.sh` 59/59 ok (57 before, 2 new: `check_results_check_catches_drift`, `check_results_regenerate`), no FAIL. shellcheck clean (`check_shellcheck` in the run).
+
+### Decisions on the way (scope 6)
+
+- **`results_check <root>`** (in `lab/check.sh`) takes the results root as its parameter; `check_results_regenerate` gives it `lab/results`, `check_results_check_catches_drift` gives it `lab/check/fixtures/results-drift/`. Per-folder lines (`ok`, `skip`, `FAIL`) go to stderr (a check's stdout is its failure reason), so they show in the terminal during the run.
+- **Byte for byte = awk set lookup of whole lines** (README lines first, then the script's output, empty lines ignored). `grep -x` would have taken `|` and `.` as pattern characters (or needed `-F` per line, 266 forks).
+- **Extra failures beyond the brief:** a script that exits non-zero, prints nothing, a folder with a script and no README, and a root with no `summarize.sh` at all (a vacuous pass). The summary runs with stdin from `/dev/null` and its stderr dropped.
+- **Fixture:** `drifted/` (script prints `| a | 1 |`, an empty line and `| b | 2 | µs |`; its README holds the second line with one more space, so the near copy must not count, and `µ` checks the non-ASCII bytes) and `hand-written/` (README only: must be skipped, not fail). A third case builds a good folder in a temp dir: the passing path is tested too.
+- **Needs:** the host's `jq` and Docker (the baseline's summary runs `bash ../../run.sh 8.5 php fold.php`), like the other checks. About 3 s in all.
+
+### Follow-up commit (fd wall note)
+
+- **A paragraph on the fd wall** (221,002 users are CPU-equivalent, about 71,000 on the real bench, S1-d or S1-b first, churn cost first) sits at the top of the baseline README's "The step lab's order", right under the heading and before the ranking intro and table, outside the summarize block. `check_results_regenerate` still ok for the baseline folder (216 lines). Commit 1acc81a.
+
+### Where to look (scope 6)
+
+- `lab/check.sh` -> `results_check`, `check_results_regenerate`, `check_results_check_catches_drift`; `lab/check/fixtures/results-drift/`; `lab/README.md` last paragraph of "Checks". `@55c9d2e`
+
 ## Next steps (from scope 5)
 
 1. Decide whether the three 60 s runs that failed the 97 % rule (they are counted for cost) must be rerun, and whether 24,000 req/s at `s = 0.02` is the baseline to carry into the step lab (it is on the rule's edge: 4 of 17 runs failed).
@@ -365,3 +389,13 @@ Commits: `38fc153` (fix: the run's own idle client counted as another container)
 - **Deterministic:** a smoke run of 15 to 20 minutes at the real shape (4,000 VUs, 60 s plateaus, idle on) before the measuring scope would have found both limits: put it in scope 3's Done-when for any phase that ends in a long run. Also `realistic.sh` could print k6's memory per step (it has the poll) so a staircase says it is near its budget before the kill, and refuse a staircase whose request count would pass it.
 - **Plan should have decided:** how far `s` may be lowered and who accepts that the baseline is then "the rate held at that s" (a knee that depends on `s` is a property of the 97 % rule, not of the server: 63 % CPU busy at the baseline); and whether 24,000 req/s, on the rule's edge (4 of 17 runs failed), is a baseline or an interval.
 - **Blind spot:** nothing measures the stalls' cause outside the server (16 to 21 seconds over 100 ms per 5 minutes at 24,000 req/s, callbacks under 50 ms, no throttling): the sampler cannot tell k6 from the VM. Also the per-second series has no CFS throttling column (only the totals in `cpu.stat`), which is what explained the one stall that has a cause.
+
+### Scope 6
+
+- **Missing:** nothing. The brief's guess that the phase 2 README might have drifted was wrong: all three READMEs matched at once (the project manager had checked by hand).
+- **Guessed:** that per-folder lines on stderr satisfy "print `ok` per folder" (a check's stdout is only its failure reason in `check.sh`); that a root with no script at all must fail (not in the brief).
+- **Lost time:** about 5 minutes on the stale `full.done` file from an earlier session in the scratchpad (my wait loop ended at once and I read an old log), and I again launched the suite with a `&` inside `run_in_background`, which scope 5's own note warns against (the task "completed" at once; I polled the log instead).
+- **Useless or contradictory instruction:** "see it fail first": the check passed on the real folders from its first run, so its red is a mutation of a README line, stated in "Verified".
+- **Deterministic:** `lab/check.sh` could write its log to a fixed file plus a `done` marker that it deletes at start, so a waiter never mistakes an old run for the current one; and the ok-count floors in `check.sh` already need an edit per case (impression, as scopes 1 to 4).
+- **Plan should have decided:** nothing for this scope.
+- **Blind spot:** the check proves a README holds the script's lines, not that the prose around the tables (verdicts, predictions) still agrees with them: a number written in a sentence can drift unseen.

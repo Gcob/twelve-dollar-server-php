@@ -36,6 +36,7 @@ Skill defaults (`autonomous-run/pipeline.yml`), no run override file. Changes fr
 | 4     | ac6145c4f718748e3 | done `4775db8` 13:53 (excimer 1.2.6, not on 8.6; calibration: C time goes to the caller, step functions carry it) |
 | 3 (fix) | a1365daa1d690ecf0 | `fc73cee` (edge rows of the series check), `b18af33` (failing-step check's request count), pushed 14:50 |
 | 5     | a0693a2b219c3cb46 | done 17:30 |
+| 6     | aabebc28f7dcaaba7 | done 17:46; fd-wall note sent 17:48 |
 
 ## Verified
 
@@ -90,6 +91,15 @@ Rien.
   `summarize.sh` 266 lines all in the README; no private path or email in the new files; fixes `38fc153`, `fcf104f` read.
 - For the PR description: the final `max_lag_s` printed can pass the gate in a valid run (tail after k6 stops), noted
   in the README; not changed.
+
+## To do before the delivery
+
+- DONE (`1acc81a`) 17:50, from the planning session: the baseline README's "The step lab's order" and run.md's delivery must say
+  that the 221,002 users are CPU-equivalent: one process holds at most about 65,500 connections, so the real bench
+  caps it near 71,000 users whatever the CPU. S1's fd wall (S1-d or S1-b, phase-4.md "Out of scope") is a gate that
+  goes first in phase 5, before the CPU ranking; its cost under churn (an accept and a close per request past the
+  limit) is the first thing to measure there. Give it to scope 6's developer after its hand-back, as its own commit
+  `docs(lab): ...` (it is editing the worktree now).
 
 ## Review triage
 

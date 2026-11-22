@@ -3,7 +3,7 @@
 **Pace:** 🟢 full · 5-hour 10 % · weekly 29 % at 17:35 · 5-hour resets 20:20 · away
 
 **Status:** 🔵 Running
-**Progress:** step 1/7, scope 6 (the results check) since 17:40 · started 2026-11-22 10:50
+**Progress:** step 3/7, the full lab suite, since 17:47 · started 2026-11-22 10:50
 **Since your last read:** scope 5 done: the baseline holds 23,386 req/s (about 221,000 users at 9.45) at 27.15 µs
 of CPU per request, p99 28 ms, 60,000 idle held (median of 3 holds; arm64, not a score). The rate is a harness floor at
 `s = 0.02`, the server 63 % busy (D47). Profile: SQLite 52 %, write 20 %, JSON 10 %. 6 of 12 predictions held.
@@ -16,8 +16,8 @@ Q10: the stalls are outside the PHP code. Two harness fixes (`38fc153`, `fcf104f
 | #   | Step              | State   | Start | End | Detail |
 |-----|-------------------|---------|-------|-----|--------|
 | 0   | Plan review       | done    | 10:59 | 11:17 |     | full NOT_OK at 11:10 (1 🔴, 5 🟠), settled as D38 to D43; delta NOT_OK at 11:14 (1 🟠), settled as D44; delta 2 and final full OK at 11:17 |
-| 1   | Scopes            | running | 11:19 |     | 5/6    |
-| 2   | Questions         | to do   |       |     |        |
+| 1   | Scopes            | done    | 11:19 | 17:46 | 6/6    |
+| 2   | Questions         | done    | 17:40 | 17:40 | none open: scope 5's two settled as D47 |
 | 3   | Lab suite         | to do   |       |     |        |
 | 4   | `pr-reviewer`     | to do   |       |     |        |
 | 5   | `blind-reviewer`  | to do   |       |     |        |
@@ -32,7 +32,7 @@ Q10: the stalls are outside the PHP code. Two harness fixes (`38fc153`, `fcf104f
 | 3   | done | 12:33 | 13:12 | +1632 -80 | 60,000 idle held start to end with 5,377 VUs (19,565 req/s, smoke), cold `fincore` 0 % vs 100 %, macro `--fresh-db --cold --per-second`, check.sh 53/53 (PM rerun) | `b47adcf` |       |
 | 4   | done | 13:22 | 13:53 | +1232 -38 | excimer 1.2.6 (not 8.6), fold 0 % unclassified, calibration 0.1 / 0.4 points off (JIT on / off), check.sh 56/57 (PM rerun: `check_realistic_idle_run` flaky, passes alone 3/3) | `4775db8` | scope 3's flaky checks fixed: `fc73cee`, `b18af33` (10/10 alone each, check.sh 57/57) |
 | 5   | done | 14:52 | 17:30 | +443864 -5 (raw JSON) | 3 holds pass, 26 counted runs `other_containers: 0`, `summarize.sh` = README (PM check), predictions copied unchanged | `671d87b`, `374c75c` | harness: `38fc153`, `fcf104f` |
-| 6   | running | 17:40 |     |       |        |     |       |
+| 6   | done | 17:40 | 17:46 | +87 -0 | 4 folders: 3 `ok`, calibration skipped (no script); drift fixture fails and names the line; check.sh 59/59 (developer) | `55c9d2e` | fd-wall note in the baseline README (planning session): `1acc81a`, results check `ok` |
 
 ## Reviews
 
