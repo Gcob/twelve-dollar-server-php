@@ -33,7 +33,8 @@ Skill defaults (`autonomous-run/pipeline.yml`), no run override file. Changes fr
 | 1     | afe8ff70047c6f1a9 | done `64af809`, pushed 11:38 (tools image built locally: no pull allowed; handler gets a 4th arg) |
 | 2     | a075911b200113f1b | done `47e4728`, pushed 12:31 (k6 ~300 µs CPU/req with the stream → D45) |
 | 3     | a1365daa1d690ecf0 | done `b47adcf` 13:12 (60k idle + 5,377 VUs, 19,565 req/s smoke; idle client 257 MiB; lag up to 3.9 s → D46) |
-| 4     | ac6145c4f718748e3 | running since 13:22 |
+| 4     | ac6145c4f718748e3 | done `4775db8` 13:53 (excimer 1.2.6, not on 8.6; calibration: C time goes to the caller, step functions carry it) |
+| 3 (fix) | a1365daa1d690ecf0 | flaky `check_realistic_idle_run` (failed once in a full run on `4775db8`, 3/3 alone), since 14:05 |
 
 ## Verified
 
@@ -68,6 +69,14 @@ Rien.
 - 10:56: Q7 and Q10 moved to `questions/2026-11-22-1049.ronde-3.md`; Round 3.
 - 10:57: D31 (the 97 % rule) comes from the arithmetic of a closed model with scaled think time: the number of VUs
   for a 500 ms mean latency over the knee is `1 + 2.17 × 0.5 / (20.5 × s)`: 3.6 at `s = 0.02`, 1.05 at `s = 1`.
+
+## Scope 4's questions, settled 13:56
+
+- Two blocks in the fold (all samples, then each endpoint's own): keep both.
+- The DIY loop's callbacks became `[$this, 'onReadable']` (named frames in the profile) in the shared
+  `diy-server.php`, so `bake-diy.php` changed too: conformance and parser checks pass; the bake-off's numbers stay
+  reproducible at their commit (D32). Kept; to mention in the PR description.
+- S9 has no frame (autocommit commits inside `execute`): it counts in S6, noted in the README; phase 5 splits it.
 
 ## Review triage
 

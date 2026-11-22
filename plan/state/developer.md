@@ -1,6 +1,6 @@
 # Developer: phase 4, the realistic baseline
 
-**State:** scope 3 done (commit b47adcf, on top of scope 2's `47e4728`): `--idle` and `--cold` in `lab/realistic.sh`, the per-second series and the sampler, `APP_TELEMETRY`, `macro.sh --fresh-db --cold --per-second`, the client's hold mode, 9 new checks (full `bash lab/check.sh` **53/53 ok**, shellcheck clean). Scopes 1 and 2 stay as they were.
+**State:** scope 4 done (commit 4775db8, on top of scope 3's `b47adcf`): Excimer 1.2.6 in the 8.3, 8.4 and 8.5 images (8.6 does not build it), `APP_PROFILE` in the app, `--profile` in `lab/realistic.sh` and `lab/macro.sh`, `lab/profile/fold.php` with `steps.rules`, the calibration, 4 new checks (full `bash lab/check.sh` 57/57 ok: 56 in the full run, and `check_realistic_staircase_passes`, which failed in it because I ran a lab container at the same time, ok alone, shellcheck clean). Scopes 1 to 3 stay as they were.
 
 ## Verified
 
@@ -51,9 +51,10 @@
 
 ## Next steps
 
-1. Scope 4 (the profiler) can start its server with `lab_start_app` (it takes `LAB_COLD=1`, prints a `fincore:` line) and read the per-second pieces from `lab/series.sh` (`sampler_start`, `sampler_stop`, `series_build`, `series_print`).
-2. Before any measurement that counts: re-run `--calibrate` on a quiet VM (it now reserves 512 MiB for the idle client, not 1 GiB), set `--lag-gate`, `--vu-cap` and the scale from it, and **read the aggregator's lag at the top steps**: at 18,000 req/s it peaked at 3.3 to 3.9 s against the gate of 4 (see "Raw learnings (scope 3)").
-3. The telemetry's cost (on against off) is not measured: `--env APP_TELEMETRY=0` turns it off in `realistic.sh` and in `macro.sh --fresh-db`.
+1. Scope 5 (the measurement) can profile any run with `--profile <file>` (realistic.sh, or macro.sh with `--fresh-db`): the profiled run is for the SHAPE of the cost per step, never for a baseline (Excimer costs CPU: a smoke at 1,000 req/s measured 117.5 us/req unprofiled and 118.4 profiled, inside the noise, but nothing more precise). The unprofiled run comes from the same command without `--profile` and with `--env APP_TELEMETRY=0` if the telemetry's cost must not be in it.
+2. Scopes 3's list still stands: re-run `--calibrate` on a quiet VM, set `--lag-gate`, `--vu-cap` and the scale, and read the aggregator's lag at the top steps (3.3 to 3.9 s of 4 s at 18,000 req/s).
+3. The telemetry's cost (on against off) is still not measured: `--env APP_TELEMETRY=0` turns it off in `realistic.sh` and in `macro.sh --fresh-db`.
+4. What the table cannot say (see "Raw learnings (scope 4)"): S9 is inside S6, `parse` holds the response head's concatenation, and a sample cannot tell `read` from `epoll_wait`.
 
 ## Handover of scope 2 (the realistic mode, commit 47e4728)
 
@@ -180,11 +181,69 @@
 - `lab/lib.sh` -> `lab_start_app` (`LAB_COLD`, the `fincore:` line), `lab_fincore_line`; `lab/conns/client.php` (hold mode); `lab/macro.sh` (`--fresh-db`, `--cold`, `--per-second`). `@b47adcf`
 - `lab/check/fixtures/idle-timeout-app.php` (a select-loop server that closes connections idle for 2 s). README sections "Idle connections, the per-second series, telemetry and a cold start" and "The challenge app on `macro.sh`". `@b47adcf`
 
+## Handover of scope 4 (the profile, commit 4775db8)
+
+### Verified (scope 4)
+
+- **The image:** `php-lab:8.5` (and 8.3, 8.4) report `excimer: 1.2.6`; the new layer was built after the `install-extras.sh` layer, which stayed `CACHED` in the build log (so libevent did not move). The tarball's sha256 `7b5fe1f6...d034` is pinned and was checked by the build. **Proof:** `bash lab/run.sh 8.5 php-info | grep excimer`, `bash lab/check.sh check_image_8_5`.
+- **8.6 does not build Excimer** (two names PHP 8.6 removed: `XtOffsetOf`, `INI_INT`): the error is in `lab/results/excimer-on-php-8.6.md`, the 8.6 image is built with `WITH_EXCIMER=0` (`excimer: not built`), and `--profile --image 8.6` exits 1 with `this image has no Excimer` before any server starts (in `check_realistic_profile_smoke`).
+- **Fold, red then green by mutation:** the 24 cases of `lab/check/fold-test.php` were written after the code (I had the design in my head), and bite: with the innermost-frame loop turned outermost-first 9 of them fail (`{"loop":995,"unclassified":5}`). The shares are counted by hand from `lab/check/fixtures/profile-collapsed.txt` (1,000 samples). **Proof:** `bash lab/run.sh 8.5 php /lab/check/fold-test.php`.
+- **Calibration** (`lab/profile/calibrate.php`, run by `check_excimer_calibration`): see the README section "Where Excimer's samples land". Numbers: the hash is 28.3 % of the CPU with the JIT on and 33.4 % off (hrtime, no profiler), `calib_hash_step` holds 28.2 % and 33.8 % of the samples (0.1 and 0.4 points), no frame named `hash` exists. libevent spinning: 97.9 % of the samples on the callback's own frame, 2.1 % on the caller of `dispatch()`. Samples add up to the CPU used by the process (0.99 to 1.00), 39 to 70 % of it in the kernel. **Excimer attributes an internal function to its caller**, so the rules map the step functions (the Done-when's second branch).
+- **The profiled smoke** (8.5, realistic, `--think-scale 0.1 --warmup 100,5 --hold 300,20 --ramp 3`, 24 other containers running): unclassified 0.0 %, 1,883 samples, cgroup user 1,324 ms and system 625 ms (32 % in the kernel), the samples cover 97 % of that CPU. Shares of all samples: S6 41.5 %, S8 23.6 %, event loop 14.6 %, S2 9.5 %, S7 5.9 %, S1 2.4 %, S4 1.2 %, S3 1.0 %, S5 0.3 %, S9 0. A second one at 1,000 req/s (3,174 samples, 34 % kernel): S6 47.1 %, S8 20.7 %, loop 13.3 %, S2 8.0 %, S7 6.6 %, S1 2.6 %, S4 1.2 %, S3 0.4 %; within `GET /feed`: S6 85.1 %, S7 14.9 %.
+- **Excimer's cost, a first smoke** (hold 1,000 req/s, 20 s plateau, 945 VUs, warm-up 100,5, telemetry off in both, two runs each, other containers running): profiled 121.1 and 115.7 us/req, unprofiled 119.0 and 115.9: **+0.9 % on average, inside the noise** (the two runs of the same kind differ by 5 us). Not a measurement.
+- **Checks:** `check_fold_cases`, `check_excimer_calibration`, `check_realistic_profile_smoke` (JSON holds the profile, unclassified under 5 %, the table has the five endpoints, shared and all, every journey endpoint has samples, S9 is 0, no container or volume left, 8.6 refused), `check_macro_profile` (and `--profile` without `--fresh-db` is exit 2). The smoke check bites: removing the `route route_like` rule from `steps.rules` makes it fail on the missing column. `check_source_extras` also checks `excimer: 1.2.6` or `not built`.
+
+### Assumed (scope 4)
+
+- **That a samples-over-CPU ratio of 0.97 is Excimer's overhead of timer interrupts and my wait window,** not lost samples: the calibration's loop gives 0.99 to 1.00 on a busy loop, the server's window includes idle seconds where the CPU timer does not tick.
+- **That the warm-up and the ramps belong in the profile:** the window is the server's whole life after its first answer. A later phase that wants the plateau alone needs the profiler to reset at the plateau's start (a signal or a second timer file), not done.
+- **That two runs of each kind are enough for a first idea of Excimer's cost:** the brief says a smoke.
+
+### Dead ends (scope 4)
+
+- **`{closure:file(line)}` frames:** the first version of the profile named the loop's callbacks `{closure:/lab/servers/diy-server.php(97)}`, the line of the method. I changed `DiyServer` to pass `[$this, 'onReadable']` instead of `$this->onReadable(...)` (see decisions).
+- **Editing `lab/realistic.sh` while a run of it was going** (two runs of `cost.sh` were in flight): bash reads a script as it runs. Both runs finished normally (checked their output), but do not do it.
+- **`docker run --rm` without `-i` for stdin:** my first fold smoke got an empty stdin and `fold: the profile holds no sample`; the harness uses `docker exec -i`.
+
+### Decisions on the way (scope 4)
+
+- **Named method callables for the loop's callbacks (a change in `lab/servers/diy-server.php`, shared with `bake-diy.php`):** the brief says each step has its own function; the loop's callbacks were first-class closures, which a profile names with the method's line number. `[$this, 'onAccept']` (a private method, called by ext-event from C: it works) gives `DiyServer::onAccept`. With telemetry on, the closure is still wrapped (`$telemetry->timed($this->onReadable(...))`). Behaviour is the same; its cost per call was not measured (ext-event keeps the resolved callable either way). `bake-diy`'s conformance and parser checks pass.
+- **S9 has no frame and the row stays at 0:** SQLite commits inside `PDOStatement::execute` (autocommit), so a write's commit and its checkpoint are in `post_insert` / `like_insert`, S6; Excimer cannot split a C call. To measure S9 the app would need an explicit transaction around the write (a change to what the app does, out of scope): the README says so and the table prints a note.
+- **Each cell is a share of ALL samples** (the table sums to 100 %, a column total is the endpoint's weight); with `--us-per-req` the cell also gives the microseconds it adds to the average request. A second block gives each column's own shares (the answer to "which step costs the most for `GET /feed`"): I added it because the first block cannot answer that without arithmetic. The brief said "one table": there are two blocks, one command.
+- **`--us-per-req` is computed by the harness** = cgroup (user + system) over the window / requests of the window (warm-up + run + one `/health` per idle connection, from k6's summary and the aggregator's count): so it is the profiled server's CPU per request over a window that includes the ramps, the idle second and the warm-up (133 us in the 1,000 req/s smoke against 116 us on its plateau). The fold prints it as an average, never as a baseline.
+- **`DiyConnection::close` is S1**, with `onAccept` (accept and close are the connection's lifecycle); the brief's S1 says "accept connections".
+- **`DiyConnection::advance` is S8 and `::parse` is S2:** `advance`'s own samples are `fwrite`, `parse`'s own samples are `strpos`/`substr` and the concatenation of the response head and body (S8 work, kept in S2: splitting it needs a function of its own in `diy-connection.php`, which the brief keeps out of scope).
+- **`route_health` is S6** (it runs its query inline); the route functions' own samples are S3; `response_error`'s own `json_encode` is S8 (the app's own comment says S8).
+- **`--profile` turns the telemetry off** unless `--env APP_TELEMETRY=..` is given, and adds `excimer` to `--ext`; it needs `--fresh-db` on `macro.sh`; `--profile` with `--calibrate` is refused. `--env APP_PROFILE_PERIOD=<s>` changes the period (the JSON records it).
+- **One shared script, `lab/profile.sh`** (sourced like `series.sh`): `profile_prepare`, `profile_check_image`, `profile_begin`, `profile_collect`, `profile_print`. The `profile_json` variable is initialised by each harness (`shellcheck` from the repo root does not follow `source`).
+- **The fold runs in the probe container** (`docker exec -i probe php fold.php -`): no PHP on the Mac.
+- **`lab_source_release` has a 5th field, `WITH_EXCIMER`:** every `read -r ... <<<"$(lab_source_release ..)"` that took the last field had to ignore it (`check.sh`'s two reads, `build.sh`).
+- **`lab/results/build-times.md`:** I kept the three rows of the real new-layer builds (14 to 16 s, the other layers cached) and dropped the five rebuilds that only changed `php-info` (0 to 1 s).
+
+### Raw learnings (scope 4)
+
+- **Excimer shows no internal frame, ever.** `fread`, `fwrite`, `PDOStatement::execute`, `hash` are always the calling PHP function's time: the sample is taken at the next VM interrupt check, after the internal call returns. Proof: `calibrate.php hash`, JIT on and off. With the JIT on, a hot loop's samples still land in the function that holds the loop.
+- **libevent and `epoll_wait` land on the next callback's own frame.** In the app that is `DiyServer::onReadable` self (118 of 396 samples in my first curl smoke). A callback with a heavy PHP body would hide the loop's share in its own: only a callback that does almost nothing, like `DiyServer::onReadable`, gives a clean loop figure.
+- **Samples are conserved:** 3,969 samples against 3,985 ms of CPU (user plus system) in a spinning libevent loop, so the CPU timer counts the kernel's time; a profile is "where the thread's CPU time went", with syscalls inside the frame that made them.
+- **At 300 req/s the server costs about 200 us a request, at 1,000 req/s about 117 us, at 18,000 req/s 29 us** (scope 3): a per-request CPU number is meaningless without its rate; a later scope that compares profiles must hold the rate.
+- **`GET /feed` is 85 % S6 and 15 % S7 within its own samples; shared work (read, parse, write, loop, accept) is 45 to 51 % of all the server's CPU** at 300 to 1,000 req/s, S6 is 41 to 47 %. So the next phase's biggest levers by this smoke are the shared parts (S8 `fwrite`, S2 `fread` and the parse, the loop) and the feed's query, in that order of size after the query.
+- **A `docker exec ... cat` of the profile file costs the server almost nothing but is in the cgroup's window:** the harness reads cpu.stat before it.
+- **bash 3.2:** nothing new; the `profile_json=null` line is what `shellcheck` from the repo root wants (same cause as scope 3's SC2034 note).
+
+### Where to look (scope 4)
+
+- `lab/servers/diy-profile.php` (`DiyProfile`: the profiler, the timer, the atomic write), `lab/servers/diy-server.php` (named callables, the `$profile` argument), `lab/app/server.php` (`APP_PROFILE`, `APP_PROFILE_PERIOD`). `@4775db8`
+- `lab/profile/fold-lib.php`, `lab/profile/fold.php`, `lab/profile/steps.rules` (the rules, with the reason of each frame), `lab/profile/calibrate.php` (`hash` and `loop` modes). `@4775db8`
+- `lab/profile.sh` (the harness side), `lab/realistic.sh` and `lab/macro.sh` (`--profile`), `lab/images/install-excimer.sh`, `Dockerfile.src` (the layer), `lab/lib.sh` (`lab_source_release`'s 5th field), `lab/results/excimer-on-php-8.6.md`. `@4775db8`
+- `lab/check/fold-test.php`, `lab/check/fixtures/profile-collapsed.txt`, README section "The profile". `@4775db8`
+
 ## Questions for the project manager
 
 - Nothing blocking. To settle before the measuring scope: k6 costs about 300 us of CPU per request with the CSV stream on (it falls with the rate), so 20,000 req/s takes about 5 to 6 of the 8 CPUs that k6 and the aggregator share. I did not measure above 2,000 req/s. If it does not fit on a quiet VM, the options are fewer tags per CSV row (k6's `systemTags`), or a lower top rate for the staircase; the cap and the scale ignore k6's CPU today.
 
 - **From scope 3, nothing blocking.** Two for the measuring scope: (1) the aggregator's lag peaked at 3.9 s of the 4 s gate at 18,000 req/s (2.4 to 3.3 s in the other runs): a measurement at the top steps may come out INVALID on the lag, and a gate of 6 s or fewer CSV rows per request (k6's `systemTags`) are the options, not tried. (2) The deviations from the brief: native byte order for `mxFrame`, `mincore` through FFI instead of util-linux's `fincore`, a closed idle connection is exit 3.
+
+- **From scope 4, nothing blocking.** (1) The brief's "one table" is two blocks (the table of shares of all samples, and each endpoint's own shares): say if you want the second one dropped. (2) The loop callbacks are now named method callables in `diy-server.php` (shared with the bake-off's DIY server): no behaviour change, per-call cost not measured; a re-run of the phase 3 DIY numbers would be the proof if it matters. (3) S9 cannot be separated from S6 without an explicit transaction in the app: the next phase decides if it wants that change.
 
 ## Retro
 
@@ -217,3 +276,13 @@
 - **Deterministic:** `shellcheck` run from `lab/` passed while the check's own run (from the repo root, pinned image) failed on 8 SC2034 (a variable read only in `lib.sh` or `series.sh`, which it does not follow from there): `bash lab/check.sh check_shellcheck` is the reference and takes 10 s, but the brief and `common.md` tell developers to run the local one. Branch it where the brief says "run it locally": the same invocation as `check_shellcheck` (from the repo root, `-w`), e.g. a `lab/shellcheck.sh` that the check and the developers both call. Also the hard-coded floors in `check.sh` (60 and 55 ok cases) need an edit per case again (impression, same as scopes 1 and 2).
 - **Plan should have decided:** exit 3 or exit 1 for a closed idle connection; what to do when the aggregator's lag nears its gate at the top steps (3.9 s of 4 s at 18,000 req/s), since a scope 5 measurement would turn INVALID there.
 - **Blind spot:** the cost of the telemetry itself and of the sampler is only argued (two `hrtime`, one timer, one fork a second on CPUs 0-1), nobody has measured it yet; and the aggregator's lag at high rates is read once a second in a status file nobody plots (it is in `results.aggregator.max_lag_s` only).
+
+### Scope 4
+
+- **Missing:** nothing blocked me. Two facts the brief could not know and I found by running: Excimer never shows an internal function as a frame (so the brief's "which one" question had a one-line answer), and the loop's first-class-closure callbacks are named by a line number in a profile, which the rules cannot use.
+- **Guessed:** that two blocks (shares of all samples, then each endpoint's own shares) are acceptable for "one table" (no confirmation; I asked in "Questions"); that the profile's window may include the warm-up and the ramps; that renaming the callbacks to method callables in the shared `diy-server.php` is within "each step in its own function" (it changes no behaviour, but it is a change to a file the bake-off uses).
+- **Lost time:** about 10 minutes on a stray `docker build -q -t x .` I typed by mistake in the worktree root (it failed without an image; no harm); about 5 minutes redoing a zsh-vs-bash slip (`source lib.sh` in the interactive shell, `docker: invalid reference format`: scripts for the lab go in a file run with `bash`); about 12 minutes waiting for the suite twice, and one check failed in the first full run because I ran a lab container (`lab/run.sh` on the server CPU) while it was going.
+- **Useless or contradictory instruction:** "see every case fail first": the fold's design was settled before the first line, so the 24 cases were written after it and proved by mutation instead (stated in "Verified"). The brief's "every phase 2 and 3 `php-info` line stays the same" is the one that mattered and it held.
+- **Deterministic:** a check that runs `lab/run.sh` while `lab/check.sh` is running disturbs the staircase (a 97 %-of-offered rule at 300 req/s): `lab/check.sh` could take a lock (a `lab-check` file or `flock`) that `lab/run.sh`, `macro.sh` and `realistic.sh` refuse to start under, instead of a note in the brief. Also, `check.sh`'s ok-count floors (24 here) need an edit per case, as scopes 1 to 3 said (impression).
+- **Plan should have decided:** whether S9 may be split from S6 by an explicit transaction in the app (it cannot be, as the app is, and the brief asks for the row); whether the profile's window is the whole run or the plateau; whether a profile belongs to a 300 req/s run or a high-rate one (the shares move a little with the rate: S6 41.5 % at 300, 47.1 % at 1,000).
+- **Blind spot:** nothing measures Excimer's cost properly: my smoke (two runs of each kind, 118.4 against 117.5 us/req) cannot see a 2 % effect, and the profiler's flush timer (stopped profiler, a 2 s rewrite of a growing file) is not in the profile by design, so its own cost is invisible there. Also the S2/S8 split inside `DiyConnection::parse` (the response head's concatenation) is a known small bias nobody has sized.

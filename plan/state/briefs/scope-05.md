@@ -64,6 +64,12 @@ Scope 2's calibration (busy VM): k6 about 0.3 MiB per VU, VU cap 5,400 (fds, wit
    Every raw JSON (and the `.txt` of what each run printed, and the collapsed stacks) sits next to the README. Invalid
    runs keep their files and are shown, not counted.
 
+**From scope 4 (read its handover):** the fold prints two blocks (shares of all samples, then each endpoint's own
+shares): keep both in the README. S9 has no frame of its own: with autocommit, a write's commit (and any checkpoint)
+happens inside `PDOStatement::execute`, so it counts in S6; say so under the table, and the step lab will split it.
+The profile window is the server's whole life after its first answer (warm-up and ramps included), so the profiled
+run gives shares only; µs per request per step uses the unprofiled run's µs/req.
+
 **Done when:** `lab/results/2026-11-22-realistic-baseline/README.md` holds the predictions (copied unchanged), the
 staircase, the 3 holds and their median, the hold one step above, per-endpoint p95 and p99, per-second latency, memory
 and WAL over time, the profile table, Q10's runs and answer, telemetry's and Excimer's cost, each prediction marked held

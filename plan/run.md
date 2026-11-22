@@ -3,10 +3,10 @@
 **Pace:** 🟢 full · 5-hour 3 % · weekly 23 % at 10:52 · 5-hour resets 15:19 · away
 
 **Status:** 🔵 Running
-**Progress:** step 1/7, scope 4 running since 13:22 · started 2026-11-22 10:50
-**Since your last read:** scope 3 done (`b47adcf`, pushed): 60,000 idle connections held for a whole run, per-second
-series, cold starts. A smoke on the busy VM already passed 17,816 req/s with 60,000 idle, so the knee may sit above the
-lab's 20,000 req/s: D46 says how the baseline reaches it. Scopes 1 and 2 done (`64af809`, `47e4728`).
+**Progress:** step 1/7, a fix for a flaky check (scope 3) since 14:05, then scope 5 (the baseline) · started 2026-11-22 10:50
+**Since your last read:** scope 4 done (`4775db8`): Excimer profiles fold into the steps; a first smoke profile puts
+SQLite at 42 % of the samples, the response write at 24 %, the event loop at 15 %. One check is flaky at low load:
+fixed before the baseline. Scopes 1 to 3 done (`64af809`, `47e4728`, `b47adcf`).
 **👉 Your turn:** nothing. The Docker VM is quiet since 13:27 (your 23 containers stopped for the weekend, restart policy `unless-stopped`).
 
 ## Steps
@@ -14,7 +14,7 @@ lab's 20,000 req/s: D46 says how the baseline reaches it. Scopes 1 and 2 done (`
 | #   | Step              | State   | Start | End | Detail |
 |-----|-------------------|---------|-------|-----|--------|
 | 0   | Plan review       | done    | 10:59 | 11:17 |     | full NOT_OK at 11:10 (1 🔴, 5 🟠), settled as D38 to D43; delta NOT_OK at 11:14 (1 🟠), settled as D44; delta 2 and final full OK at 11:17 |
-| 1   | Scopes            | running | 11:19 |     | 3/6    |
+| 1   | Scopes            | running | 11:19 |     | 4/6    |
 | 2   | Questions         | to do   |       |     |        |
 | 3   | Lab suite         | to do   |       |     |        |
 | 4   | `pr-reviewer`     | to do   |       |     |        |
@@ -28,7 +28,7 @@ lab's 20,000 req/s: D46 says how the baseline reaches it. Scopes 1 and 2 done (`
 | 1   | done | 11:19 | 11:37 | +1060 -156 | 42/42 twice, broken fixture fails, check.sh 35/35 (PM rerun) | `64af809` |       |
 | 2   | done | 11:40 | 12:28 | +8059 -3 | staircase 3/3 pass, slow fixture stops on the 97 % rule, cap 5,400 VUs, s = 0.0286, replay at 480k rows/s, check.sh 44/44 (PM rerun) | `47e4728` |       |
 | 3   | done | 12:33 | 13:12 | +1632 -80 | 60,000 idle held start to end with 5,377 VUs (19,565 req/s, smoke), cold `fincore` 0 % vs 100 %, macro `--fresh-db --cold --per-second`, check.sh 53/53 (PM rerun) | `b47adcf` |       |
-| 4   | running | 13:22 |     |       |        |     |       |
+| 4   | done | 13:22 | 13:53 | +1232 -38 | excimer 1.2.6 (not 8.6), fold 0 % unclassified, calibration 0.1 / 0.4 points off (JIT on / off), check.sh 56/57 (PM rerun: `check_realistic_idle_run` flaky, passes alone 3/3) | `4775db8` | flaky check: scope 3's developer, 14:05 |
 | 5   | to do |       |     |       |        |     |       |
 | 6   | to do |       |     |       |        |     |       |
 
