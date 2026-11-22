@@ -437,7 +437,7 @@ One line each, by the rule written with them (a range holds if the measured valu
 **6 of 12 held** (1, 4, 7, 10, 11, 12).
 
 1. **Held.** The challenge's 42 tests pass on the app (`challenge-test.txt`: `passed=42 failed=0`), with the reference SQL, `json_encode` and the hand-written HS256 check.
-2. **Not held.** 27.15 µs of CPU per request, against 50 to 90. `GET /feed` carries 47.6 % of the CPU, not more than half.
+2. **Not held.** 27.15 µs of CPU per request, against 50 to 90. `GET /feed` carries 47.6 % of the CPU, not more than half, and a feed request costs about 7 times a post request (28 against 4 µs, each being 46 % of the requests), not 3 to 4 times.
 3. **Not held.** 23,386 req/s and 221,002 mapped users, against 10,000 to 18,000 and 94,500 to 170,000.
 4. **Held.** The first failing step (24,000, coarse run 2) has p95 13.84 ms (under 500) and fails on its achieved rate (96.7 %); without the rule the staircase
    would have gone on (24,250 and the three holds pass, and no latency threshold is near).
