@@ -415,3 +415,52 @@ k6 user keeps its own connection, so one process serves about 65,500 users at on
 **Verdict:** ✅ S1-d first in phase 5, with its cost per reconnect measured; prior art shows one epoll process reaching
 185,000 that way. 🔶 S1-b only if S1-d's reconnects cost more than a second process. ❌ io_uring direct descriptors
 (needs C).
+
+**2026-11-22 18:08:** the ❌ on io_uring is reopened by the next note: PHP's FFI may reach it without writing C.
+
+### 2026-11-22 18:08 · 💡 Idea: try io_uring anyway, something nobody tried in PHP
+
+**Jacob:** "do you think we could still even try it? […] to be at the top, we need to do some, let's say, gray hat
+actions. We need to go out of the woods and try to do something new, something like spectacular or just that nobody
+really tried to do usually."
+
+**What io_uring is:** a Linux interface where the program and the kernel share two queues in memory. The program
+writes its orders (accept, read, write) into the first, the kernel does them and posts the results in the second.
+Two gains: many operations per syscall instead of one each (the kernel is 30 % of our CPU), and "direct
+descriptors", sockets kept in a ring's own table instead of the process's fd table, so several rings carry several
+times 65,535 connections in one process.
+
+**Challenge:**
+
+- **A way in without C: FFI.** Our PHP builds have FFI (core PHP). It can call libc's `syscall()` and `mmap()`, so a
+  PHP loop could set up a ring with `io_uring_setup`, map its queues, write the orders through FFI pointers and call
+  `io_uring_enter`. liburing's helpers are inline C functions FFI can't call, so the loop would do their work in PHP.
+  No PHP entry of the challenge uses io_uring (tzimpel's build even turns Swoole's off): it would be a first.
+- **Is it still real PHP?** Our own PHP code driving the kernel through a core extension, like the FFI to
+  `libsqlite3` already in S6. Not HolyPHP's road (PHP syntax compiled to C). Jacob's call (D2).
+- **The risks:** each FFI call and each access to C memory costs more than a native call, maybe enough to eat the
+  syscalls it saves; the queues need memory ordering, which FFI can't express, so the loop must rely on
+  `io_uring_enter`'s own ordering; Docker's default seccomp profile blocks io_uring, so the lab needs its own profile
+  (the bench's systemd service allows it: the top entries run on it).
+- **Bold, not gray hat:** io_uring is inside the rules (the top 6 use it). Bending a rule is what took two entries
+  off the board for read coalescing: the score has to survive Arjay's review.
+
+**Verdict:** 🔶 Claude's take: yes, as a time-boxed spike in phase 5 next to S1-d (the safe path): a no-op server on
+an FFI io_uring loop with direct descriptors, holding more than 65,535 connections in one process, its µs per
+request against DIY's 21.88. If FFI's overhead eats the gain, we learned it cheaply. Open until Jacob plans phase 5.
+
+### 2026-11-22 18:08 · 💡 Idea: a proxy in front, several processes holding the connections
+
+**Jacob:** "Can we have a proxy in between that could help? Like if we have multiple processes that have 65,000 of
+connections and they perform an HTTP in between our PHP application with the connection close on every request."
+
+**Challenge:**
+
+- **It's S1-b plus a hop.** The proxy processes are the several processes (each holding up to 65,535 clients), so
+  they pay S1-b's context switches, and every request is then read, parsed and written twice, and crosses a second
+  socket on the same core. Nginx alone cost 14 to 20 % of the CPU in the challenge's video (the reason for D1).
+- **`Connection: close` between the proxy and PHP** makes it worse: an accept, a handshake and a close for every
+  request, the cost S1-d only pays for the users past the limit.
+- Same as the PHP load balancer and Traefik of 2026-11-21 (above): whoever holds the client's socket holds its fd.
+
+**Verdict:** ❌ more CPU than S1-b alone, for the same fd gain.
