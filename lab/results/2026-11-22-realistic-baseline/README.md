@@ -108,7 +108,8 @@ build and no `lab/check.sh` during the series. A run that is invalid keeps its f
   container (so no run with `--idle` could say `other_containers: 0`), and a run of 20 minutes failed at the very end with `jq: Argument list
   too long` (one JSON passed through the arguments, over the 1 MiB macOS allows), which cost a whole staircase.
 - **The lag printed at the end can pass the gate in a valid run** (hold-3 says 6.3 s against 5.5): the gate is judged every second while k6
-  runs, and the figure keeps the tail after k6 stops, when the newest sample's second no longer advances.
+  runs, and the figure keeps the tail after k6 stops, when the newest sample's second no longer advances. The JSON does not hold the maximum
+  read while k6 ran, only the gate it stayed under. The harness's default gate is now 6 s (these runs set 5.5 s from the calibration).
 - **Run files:** every run's JSON and its `.txt` are here, `run-times.txt` has the start and end of each, and `profile.collapsed` holds
   the stacks. The JSON's command line is the one that ran. `challenge-test.txt` is the challenge's own suite on the app.
 
@@ -396,7 +397,8 @@ No step failed.
 - **Staircases:** at 0.0286 nothing fails up to 19,000 req/s (the cap); at 0.02 the CPU per request is 26.5 to 27.3 µs from 18,000 to 24,000
   and p95 grows from 4.3 to 13 ms. The first failing step is 24,000 (coarse run 2): p95 13.8 ms, p99 38.7 ms, 0 errors, failing on achieved
   96.7 %, never on a latency threshold. Mean latency at the baseline is 2.2 ms against a p95 of 11 to 13 ms.
-- **The baseline (median of 3 holds at 24,000):** **23,386 req/s achieved, 221,002 users at 9.45 per req/s, 27.15 µs of CPU per request,
+- **The baseline (median of 3 holds at 24,000), to be read as at least 23,386 req/s at `s = 0.02`** (a floor set by the harness, not the
+  server's capacity: its CPU is 63 % busy): **23,386 req/s achieved, 221,002 users at 9.45 per req/s, 27.15 µs of CPU per request,
   p95 11.93 ms, p99 28.29 ms**, 0 errors, 60,000 idle connections held at the start and the end of each. The hold above (24,250) passes with
   23,625 req/s, 223,259 users, 26.96 µs, p95 11.58 ms, p99 27.87 ms: the baseline is a conservative reading of the rule at `s = 0.02`.
   Per endpoint (median p95 / p99 ms): `GET /feed` 12.66 / 29.58, `GET /posts/:id` 11.41 / 27.46, `POST /posts/:id/like` 11.75 / 27.87,
@@ -404,26 +406,37 @@ No step failed.
 - **Latency second by second:** the median per-second p99 of `GET /feed` is 20 to 22 ms, but **every hold has 16 to 21 seconds (of 298)
   whose max latency is over 100 ms**, up to 303 ms. In none of the 53 stalled seconds of the three holds was a callback as long as the stall
   (44 of them have a longest callback under 20 ms, 9 between 20 and 49 ms), and the server's cgroup was throttled once or not at all (0 to 9 ms).
-  No `gc_status()` run in any hold, no major fault.
+  No `gc_status()` run in any hold, no major fault. **The longest callback of a second is high every second:** its median is 11.2 to 11.4 ms
+  in the holds, and all 298 seconds of each hold are over 5 ms (a callback normally takes tens of µs), against 0.5 ms at 7,000 req/s (`q10-*`).
+  The server's loop is blocked or preempted for about 11 ms inside a callback every second at this rate. It is the likely source of the
+  p99 of 20 to 28 ms against a p50 of 0.3 ms, and the per-endpoint p95 and p99 carry it.
 - **Memory:** `Pss_Anon` climbs from 104 to 158 to 161 MiB over each plateau (91 MiB of idle connections and 6 MiB of the app are
-  there at the start; the rest is consistent with SQLite's 64 MiB page cache filling as `GET /posts/:id` reads random posts: 91 + 6 + 64 = 161,
-  and the four holds peak at 158 to 161; not proven by a longer run). `memory.current` goes from 594 to 697 MiB with it (page cache of the
-  database file included).
+  there at the start), and **the rise is not explained**. It is not the page cache filling from random posts: the journey reads a post taken from
+  the feed, so the 20 newest. A more likely candidate is the `likes` primary key `(user_id, post_id)` and `likes_post_id_idx`, whose pages are
+  touched at random `user_id`s on each like (7 % of the requests); the 64 MiB `cache_size` caps what they can take. I did not test it (it
+  needs a run with the likes turned off, or SQLite's cache counters, which PHP does not expose). The four holds peak at 158 to 161 MiB, so
+  the five minutes do not show a plateau or a leak. `memory.current` goes from 594 to 697 MiB with it (page cache of the database file
+  included).
 - **The WAL:** frames in use go from 3 to 1,004 to 1,009 (the autocheckpoint at 1,000 pages), 93 to 112 checkpoints per hold, never above
   2,000. The file grows 8 to 16 KiB in a hold (4,056 to 4,080 KiB) and stays there.
 - **The profile** (57,666 samples of the server's whole life after its first answer, warm-up and ramps included; 30 % of the CPU is in the
   kernel, the samples cover 100 % of the cgroup's CPU): S6 (SQLite) takes 51.7 % of the samples (14.3 µs of 27.6), the write (S8, with the
-  kernel's send inside `fwrite`) 20.2 %, S7 (JSON) 9.7 %, read and parse (S2) 8.0 %, the event loop 6.5 %, accept and close (S1) 1.7 %, the JWT check
+  kernel's send inside `fwrite`) 20.2 %, S7 (JSON) 9.7 %, read and parse (S2) 8.0 %, the event loop 6.5 %, accept and close (S1) 1.7 % (see the note below), the JWT check
   (S4) 1.7 %, the route (S3) 0.4 %, validation (S5) 0.1 %. **S9 has no frame**: with autocommit a write's commit (and any checkpoint) happens inside
   `PDOStatement::execute`, so it counts in S6; the step lab will split it. `GET /feed` carries 47.6 % of the samples, `GET /posts/:id` 6.7 %,
   `POST /posts/:id/like` 7.5 %, `POST /posts` 1.3 %, and the work done before the route is known (read, parse, write, loop, accept) is
   36.8 %. Within `GET /feed` S6 is 81.4 % and S7 18.6 %.
   The profiled window includes the ramps, so the table gives shares; the microseconds use the unprofiled runs' 27.59 µs per request.
+  **S1's 1.7 % is not a cost per request.** The window also holds the opening of the 60,000 idle connections and their `GET /health`:
+  S1 has 968 samples (about 15 µs for each of the roughly 64,500 accepts), and k6's connections are keep-alive, so a request pays almost no
+  accept. The same, smaller, goes for S2 and for the `GET /health` column (0.2 %), which hold the idle connections' first request.
 - **Excimer at 1 ms** costs -0.33 % of the CPU per request (+2.4 % against the first unprofiled run, -2.9 % against the second, which ran
   5 % apart from each other): it is inside the noise, and under 5 %. **The telemetry** costs -0.05 % (+1.0 % in the first pair, -1.1 % in the
   second): inside the noise, under 2 %.
 - **Q10, are the bake-off's stalls the server's?** Mostly not. In the three holds 0 of 53 stalled seconds had a callback as long as the stall
-  (44 under 20 ms), so the time is lost outside the PHP code (the host, k6, the VM). The exception is one `posts.js` run at 700 VUs
+  (44 under 20 ms), so the time is not spent running PHP code. "Outside the PHP code" is a list of suspects, not separated by these runs: the per-second sampler
+  (it reads `smaps_rollup` and about 64,000 `fd` entries of the server's process every second), the telemetry, k6, and the VM's vCPU.
+  Separating them needs a run without the sampler: left for the next phase. The exception is one `posts.js` run at 700 VUs
   (`q10-warm-1`, 877 ms): its cgroup was CFS-throttled for 325 ms in 6 periods, with two callbacks of 181 ms: the server was stopped by
   its own 1-CPU quota, not slowed by its code. The other two warm runs stalled once (139 and 147 ms, callbacks 4 and 14 ms), and two of the three
   warm `posts.js` runs dropped iterations like the bake-off's (9,193 and 39), against none of the three cold ones.
@@ -437,8 +450,8 @@ One line each, by the rule written with them (a range holds if the measured valu
 **6 of 12 held** (1, 4, 7, 10, 11, 12).
 
 1. **Held.** The challenge's 42 tests pass on the app (`challenge-test.txt`: `passed=42 failed=0`), with the reference SQL, `json_encode` and the hand-written HS256 check.
-2. **Not held.** 27.15 µs of CPU per request, against 50 to 90. `GET /feed` carries 47.6 % of the CPU, not more than half, and a feed request costs about 7 times a post request (28 against 4 µs, each being 46 % of the requests), not 3 to 4 times.
-3. **Not held.** 23,386 req/s and 221,002 mapped users, against 10,000 to 18,000 and 94,500 to 170,000.
+2. **Not held.** 27.15 µs of CPU per request, against 50 to 90. `GET /feed` carries 47.6 % of the CPU, not more than half, and a feed request costs less than 3 to 4 times a post request: the route's own work is 28 against 4 µs (about 7 times), but every request also pays the shared work (read, parse, write, loop: about 10.1 µs on average), so a whole feed request is about 38 µs against 14 for a post, about 2.7 times.
+3. **Not held.** At least 23,386 req/s at `s = 0.02` (a floor set by the harness, the server 63 % busy) and at least 221,002 mapped users, against 10,000 to 18,000 and 94,500 to 170,000.
 4. **Held.** The first failing step (24,000, coarse run 2) has p95 13.84 ms (under 500) and fails on its achieved rate (96.7 %); without the rule the staircase
    would have gone on (24,250 and the three holds pass, and no latency threshold is near).
 5. **Not held.** p99 is under 50 ms on every endpoint (27.05 to 29.58 ms, the worst single hold 34.33), but the writes do not have the highest p99: `POST /posts`
@@ -468,7 +481,7 @@ would scale each by 1.6 % less):
 | 3 | S7 build the JSON | 9.7 % | 2.7 |
 | 4 | S2 read and parse | 8.0 % | 2.2 |
 | 5 | the event loop (libevent and `epoll_wait`, not a step) | 6.5 % | 1.8 |
-| 6 | S1 accept and close | 1.7 % | 0.5 |
+| 6 | S1 accept and close (mostly the 64,500 accepts of the idle connections and k6's, not a per-request cost) | 1.7 % | 0.5 |
 | 7 | S4 verify the JWT | 1.7 % | 0.5 |
 | 8 | S3 route | 0.4 % | 0.1 |
 | 9 | S5 validate the input | 0.1 % | 0.0 |
