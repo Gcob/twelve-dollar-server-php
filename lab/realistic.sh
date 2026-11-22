@@ -502,7 +502,7 @@ run_measured() {
 stop_k6() { docker exec "$K6C" sh -c 'kill -INT $(pidof k6)' >/dev/null 2>&1 || true; }
 
 other_names=()
-while IFS= read -r name; do [ -z "$name" ] || other_names+=("$name"); done < <(lab_other_containers "$SERVER" "$K6C" "$PROBE" "$AGG")
+while IFS= read -r name; do [ -z "$name" ] || other_names+=("$name"); done < <(lab_other_containers "$SERVER" "$K6C" "$PROBE" "$AGG" "$IDLEC")
 other_json="$(jq -nc --argjson names "$(json_array "${other_names[@]+"${other_names[@]}"}")" '{count: ($names | length), names: $names}')"
 other_warning=""
 if [ "${#other_names[@]}" -gt 0 ]; then
