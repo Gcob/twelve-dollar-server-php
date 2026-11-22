@@ -1,13 +1,13 @@
 # pr-reviewer : phase 4, realistic baseline
 
-**État :** passe 1 faite le 2026-11-22 à 17:55 sur `0eba220..phase-4-claude` (HEAD `1acc81a`). Verdict OK, aucun 🔴 ni 🟠,
+**État :** passe 1 faite le 2026-11-22 à 17:55 sur `0f7b594..phase-4-claude` (HEAD `7d6281a`). Verdict OK, aucun 🔴 ni 🟠,
 9 🟡, 1 ⚠️. Rapport : `plan/reviews/PR-2026-11-22-1755.md`.
 
 ## Vérifié
 
 - Les 6 scopes sont livrés, avec les écarts réglés par D45 à D47 ou dits dans le README du baseline. **Preuve :** lecture de
   `details/phase-4.md`, de `decisions.md`, du diff de `lab/`, du README du baseline et de `summarize.sh`.
-- Le code mesuré est celui de HEAD : les corrections du harnais (`38fc153` 15:03, `fcf104f` 15:25 locales) précèdent les
+- Le code mesuré est celui de HEAD : les corrections du harnais (`0e7f604` 15:03, `52e9792` 15:25 locales) précèdent les
   premières courses comptées (20:48 UTC = 15:48). **Preuve :** `git log --format='%h %ad'` et `run-times.txt`.
 - Aucun chemin `/Users/`, courriel ou identifiant de compte ajouté. **Preuve :** `git grep` sur `lab` et le diff.
 - Les renvois `D5`, `D31`, `D35`, `D40`, `Q10` du README du baseline sont dans le bloc des prédictions recopié tel quel, et

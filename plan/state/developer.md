@@ -1,6 +1,6 @@
 # Developer: phase 4, the realistic baseline
 
-**State:** scope 4 done (commit 4775db8, on top of scope 3's `b47adcf`): Excimer 1.2.6 in the 8.3, 8.4 and 8.5 images (8.6 does not build it), `APP_PROFILE` in the app, `--profile` in `lab/realistic.sh` and `lab/macro.sh`, `lab/profile/fold.php` with `steps.rules`, the calibration, 4 new checks (full `bash lab/check.sh` 57/57 ok: 56 in the full run, and `check_realistic_staircase_passes`, which failed in it because I ran a lab container at the same time, ok alone, shellcheck clean). Scopes 1 to 3 stay as they were.
+**State:** scope 4 done (commit 6621654, on top of scope 3's `81d9216`): Excimer 1.2.6 in the 8.3, 8.4 and 8.5 images (8.6 does not build it), `APP_PROFILE` in the app, `--profile` in `lab/realistic.sh` and `lab/macro.sh`, `lab/profile/fold.php` with `steps.rules`, the calibration, 4 new checks (full `bash lab/check.sh` 57/57 ok: 56 in the full run, and `check_realistic_staircase_passes`, which failed in it because I ran a lab container at the same time, ok alone, shellcheck clean). Scopes 1 to 3 stay as they were.
 
 ## Verified
 
@@ -44,10 +44,10 @@
 
 ## Where to look
 
-- `lab/app/app.php` (routes, JWT, validation, queries, JSON, responses), `lab/app/server.php` (entry). `@64af809`
-- `lab/servers/diy-server.php` (the loop, `diy_listen`, `diy_socket_line`), `lab/servers/diy-connection.php` (`Authorization`, statuses 201/401/503). `@64af809`
-- `lab/lib.sh` -> `lab_run_server_container`, `lab_start_app`, `lab_ensure_tools_image`. `@64af809`
-- `lab/challenge-test.sh`, `lab/images/Dockerfile.tools`, `lab/check/fixtures/wrong-golden-app.php`, `lab/check/app-test.php`. `@64af809`
+- `lab/app/app.php` (routes, JWT, validation, queries, JSON, responses), `lab/app/server.php` (entry). `@f840725`
+- `lab/servers/diy-server.php` (the loop, `diy_listen`, `diy_socket_line`), `lab/servers/diy-connection.php` (`Authorization`, statuses 201/401/503). `@f840725`
+- `lab/lib.sh` -> `lab_run_server_container`, `lab_start_app`, `lab_ensure_tools_image`. `@f840725`
+- `lab/challenge-test.sh`, `lab/images/Dockerfile.tools`, `lab/check/fixtures/wrong-golden-app.php`, `lab/check/app-test.php`. `@f840725`
 
 ## Next steps
 
@@ -56,7 +56,7 @@
 3. The telemetry's cost (on against off) is still not measured: `--env APP_TELEMETRY=0` turns it off in `realistic.sh` and in `macro.sh --fresh-db`.
 4. What the table cannot say (see "Raw learnings (scope 4)"): S9 is inside S6, `parse` holds the response head's concatenation, and a sample cannot tell `read` from `epoll_wait`.
 
-## Handover of scope 2 (the realistic mode, commit 47e4728)
+## Handover of scope 2 (the realistic mode, commit 07808e7)
 
 ### Verified (scope 2)
 
@@ -118,11 +118,11 @@
 
 ### Where to look (scope 2)
 
-- `lab/realistic.sh` (`run_measured`, `options_for`, `run_json`, the calibration `jq`), `lab/macro/aggregate.php` (the process), `lab/macro/aggregate-lib.php` (`Aggregate::feed`, `agg_window`, `agg_summarize`, `agg_per_second`), `lab/macro/replay.php`. `@47e4728`
-- `lab/macro/k6/realistic.js` (the bench's script, header names the commit), `lab/check.sh` (`check_realistic_*`, `check_replay_keeps_up`, `realistic_script_diff`), `lab/macro/probe.sh` (`poll`, `fds`, `client-ips`). `@47e4728`
-- `lab/README.md` section "The realistic mode" (numbers, pass rule, calibration). `@47e4728`
+- `lab/realistic.sh` (`run_measured`, `options_for`, `run_json`, the calibration `jq`), `lab/macro/aggregate.php` (the process), `lab/macro/aggregate-lib.php` (`Aggregate::feed`, `agg_window`, `agg_summarize`, `agg_per_second`), `lab/macro/replay.php`. `@07808e7`
+- `lab/macro/k6/realistic.js` (the bench's script, header names the commit), `lab/check.sh` (`check_realistic_*`, `check_replay_keeps_up`, `realistic_script_diff`), `lab/macro/probe.sh` (`poll`, `fds`, `client-ips`). `@07808e7`
+- `lab/README.md` section "The realistic mode" (numbers, pass rule, calibration). `@07808e7`
 
-## Handover of scope 3 (idle connections, time, cold start, commit b47adcf)
+## Handover of scope 3 (idle connections, time, cold start, commit 81d9216)
 
 ### Verified (scope 3)
 
@@ -175,13 +175,13 @@
 
 ### Where to look (scope 3)
 
-- `lab/realistic.sh` (`--idle`, `--cold`, `idle_wait`, the `cold_json` and `idle_json` blocks, `run_measured`'s sampler and series), `lab/series.sh` (`sampler_start/stop`, `series_build`, `series_print`). `@b47adcf`
-- `lab/macro/sampler.php`, `lab/macro/series-lib.php` (`wal_frames`, `wal_header_frames`, `proc_stat_faults`, `telemetry_parse`, `series_merge`), `lab/macro/series.php`, `lab/macro/fincore.php`. `@b47adcf`
-- `lab/servers/diy-telemetry.php` (`DiyTelemetry`, `nextBoundary`), `lab/servers/diy-server.php` (the optional telemetry), `lab/app/app.php` (`app_count`, `app_telemetry_*`), `lab/app/server.php`. `@b47adcf`
-- `lab/lib.sh` -> `lab_start_app` (`LAB_COLD`, the `fincore:` line), `lab_fincore_line`; `lab/conns/client.php` (hold mode); `lab/macro.sh` (`--fresh-db`, `--cold`, `--per-second`). `@b47adcf`
-- `lab/check/fixtures/idle-timeout-app.php` (a select-loop server that closes connections idle for 2 s). README sections "Idle connections, the per-second series, telemetry and a cold start" and "The challenge app on `macro.sh`". `@b47adcf`
+- `lab/realistic.sh` (`--idle`, `--cold`, `idle_wait`, the `cold_json` and `idle_json` blocks, `run_measured`'s sampler and series), `lab/series.sh` (`sampler_start/stop`, `series_build`, `series_print`). `@81d9216`
+- `lab/macro/sampler.php`, `lab/macro/series-lib.php` (`wal_frames`, `wal_header_frames`, `proc_stat_faults`, `telemetry_parse`, `series_merge`), `lab/macro/series.php`, `lab/macro/fincore.php`. `@81d9216`
+- `lab/servers/diy-telemetry.php` (`DiyTelemetry`, `nextBoundary`), `lab/servers/diy-server.php` (the optional telemetry), `lab/app/app.php` (`app_count`, `app_telemetry_*`), `lab/app/server.php`. `@81d9216`
+- `lab/lib.sh` -> `lab_start_app` (`LAB_COLD`, the `fincore:` line), `lab_fincore_line`; `lab/conns/client.php` (hold mode); `lab/macro.sh` (`--fresh-db`, `--cold`, `--per-second`). `@81d9216`
+- `lab/check/fixtures/idle-timeout-app.php` (a select-loop server that closes connections idle for 2 s). README sections "Idle connections, the per-second series, telemetry and a cold start" and "The challenge app on `macro.sh`". `@81d9216`
 
-## Handover of scope 4 (the profile, commit 4775db8)
+## Handover of scope 4 (the profile, commit 6621654)
 
 ### Verified (scope 4)
 
@@ -232,26 +232,26 @@
 
 ### Where to look (scope 4)
 
-- `lab/servers/diy-profile.php` (`DiyProfile`: the profiler, the timer, the atomic write), `lab/servers/diy-server.php` (named callables, the `$profile` argument), `lab/app/server.php` (`APP_PROFILE`, `APP_PROFILE_PERIOD`). `@4775db8`
-- `lab/profile/fold-lib.php`, `lab/profile/fold.php`, `lab/profile/steps.rules` (the rules, with the reason of each frame), `lab/profile/calibrate.php` (`hash` and `loop` modes). `@4775db8`
-- `lab/profile.sh` (the harness side), `lab/realistic.sh` and `lab/macro.sh` (`--profile`), `lab/images/install-excimer.sh`, `Dockerfile.src` (the layer), `lab/lib.sh` (`lab_source_release`'s 5th field), `lab/results/excimer-on-php-8.6.md`. `@4775db8`
-- `lab/check/fold-test.php`, `lab/check/fixtures/profile-collapsed.txt`, README section "The profile". `@4775db8`
+- `lab/servers/diy-profile.php` (`DiyProfile`: the profiler, the timer, the atomic write), `lab/servers/diy-server.php` (named callables, the `$profile` argument), `lab/app/server.php` (`APP_PROFILE`, `APP_PROFILE_PERIOD`). `@6621654`
+- `lab/profile/fold-lib.php`, `lab/profile/fold.php`, `lab/profile/steps.rules` (the rules, with the reason of each frame), `lab/profile/calibrate.php` (`hash` and `loop` modes). `@6621654`
+- `lab/profile.sh` (the harness side), `lab/realistic.sh` and `lab/macro.sh` (`--profile`), `lab/images/install-excimer.sh`, `Dockerfile.src` (the layer), `lab/lib.sh` (`lab_source_release`'s 5th field), `lab/results/excimer-on-php-8.6.md`. `@6621654`
+- `lab/check/fold-test.php`, `lab/check/fixtures/profile-collapsed.txt`, README section "The profile". `@6621654`
 
-### Fix of scope 3: the idle-run check's flake (commit fc73cee)
+### Fix of scope 3: the idle-run check's flake (commit 0cbefb1)
 
 - **Cause found:** `check_series_rows` demanded `server.cpu_usec > 0` in every row. The first row (a partial second, before the load) and the last (after it) can have a true 0: 4 of 9 runs failed on old code, and with the clause named the failures read `server_readings`, row 0 or row 18, `cpu_usec: 0`, all other readings fine. Now the edge rows need `>= 0` and the rows between `> 0`. **Proof:** `idle10.log` before (6 ok of 9 before it was stopped), 10 of 10 ok after (`bash lab/check.sh check_realistic_idle_run` x10).
 - **The coordinator's failure came from the other block** (the message `{idle, cold, k6_connection_errors, rows}`), which I never reproduced in about 25 runs; two clauses of it could fail at 40 req/s: the telemetry total within 3 % of the aggregator's (one second at an edge is 5 %), and `.telemetry.requests | to_entries` on a row with a null telemetry (a jq error, so exit 5, same message). Both are fixed whatever it was: every clause is a named boolean, the failure prints the false clause names and the numbers (`telemetry_requests`, `aggregator_requests`, `rows_without_telemetry`, `rows_without_server`, `wal_frames_max`, `longest_callback_max`), and the totals are compared on the rows between the first and the last, within 2 % plus 8 requests (a lost line is a whole second, about 40 requests, so it still fails).
-- **The full suite on fc73cee: 56 ok of 57, one FAIL: `check_realistic_stops_at_a_failing_step`** (scope 2's check): its step 1 at 60 req/s against `slow-app.php` achieved 56.3 of 60.3 (93 %, p95 16.8 ms) in that run, and the check passed 5 of 5 alone right after. Same kind of flake as my first smoke run (a short plateau at a low rate is noisy), not touched here; step 1 of that check has a margin of 0.97 against a 4 ms server at 24 % busy, a longer plateau than 8 s or a lower first rate would give it room.
+- **The full suite on 0cbefb1: 56 ok of 57, one FAIL: `check_realistic_stops_at_a_failing_step`** (scope 2's check): its step 1 at 60 req/s against `slow-app.php` achieved 56.3 of 60.3 (93 %, p95 16.8 ms) in that run, and the check passed 5 of 5 alone right after. Same kind of flake as my first smoke run (a short plateau at a low rate is noisy), not touched here; step 1 of that check has a margin of 0.97 against a 4 ms server at 24 % busy, a longer plateau than 8 s or a lower first rate would give it room.
 
-### Second fix of scope 3: the failing-step check's passing step (commit b18af33)
+### Second fix of scope 3: the failing-step check's passing step (commit 90a54c7)
 
 - **Cause, found by a first attempt that did not work:** `check_realistic_stops_at_a_failing_step` failed its step 1 by chance, and not on latency. A first try (`--think-scale 0.2 --staircase 40,260,300,12`, more mean-latency margin: 58 ms) still failed 1 run of 10 at 96.7 % achieved (38.9 of 40.2) with a p95 of 13 ms, far from the margin. The shortfall is in the request COUNT: a 40 to 60 req/s plateau of 8 to 12 s holds 300 to 500 requests, and with random think times that count alone moves by 2 to 3 %, against a 3 % rule.
-- **Fix:** `--think-scale 0.2 --staircase 100,200,300,15`: step 1 at 100 req/s (about 1,200 requests in its 12 s of data, 40 to 50 % busy against the 4 ms fixture), step 2 at 300 req/s (above the fixture's 190 to 250 req/s, still fails on the 97 % rule and stops the staircase). About 30 s a run (it was about 25 s). **Proof:** `bash lab/check.sh check_realistic_stops_at_a_failing_step` 10 of 10 ok in a row (the first try: 9 of 10); the full `bash lab/check.sh` on b18af33: 57 of 57 ok, no other flake in that run.
+- **Fix:** `--think-scale 0.2 --staircase 100,200,300,15`: step 1 at 100 req/s (about 1,200 requests in its 12 s of data, 40 to 50 % busy against the 4 ms fixture), step 2 at 300 req/s (above the fixture's 190 to 250 req/s, still fails on the 97 % rule and stops the staircase). About 30 s a run (it was about 25 s). **Proof:** `bash lab/check.sh check_realistic_stops_at_a_failing_step` 10 of 10 ok in a row (the first try: 9 of 10); the full `bash lab/check.sh` on 90a54c7: 57 of 57 ok, no other flake in that run.
 - **Learning:** any check that runs the 97 % rule on a short plateau at a low rate is a coin flip (my first smoke run at 50 req/s and 6 s failed the same way): give such a step at least about 1,000 requests, not only latency room.
 
-## Handover of scope 5 (the realistic baseline, commit 671d87b, with two fixes before it)
+## Handover of scope 5 (the realistic baseline, commit 8fe2ab8, with two fixes before it)
 
-Commits: `38fc153` (fix: the run's own idle client counted as another container), `fcf104f` (fix: a long run's rows to jq through files), `671d87b` (the results, `lab/results/2026-11-22-realistic-baseline/`, and a lab README note on k6's memory and the printed lag), `374c75c` (one line of the README's verdict 2: a feed costs 7 posts, not 3 to 4).
+Commits: `0e7f604` (fix: the run's own idle client counted as another container), `52e9792` (fix: a long run's rows to jq through files), `8fe2ab8` (the results, `lab/results/2026-11-22-realistic-baseline/`, and a lab README note on k6's memory and the printed lag), `60116f0` (one line of the README's verdict 2: a feed costs 7 posts, not 3 to 4).
 
 ### Verified (scope 5)
 
@@ -296,11 +296,11 @@ Commits: `38fc153` (fix: the run's own idle client counted as another container)
 
 ### Where to look (scope 5)
 
-- `lab/results/2026-11-22-realistic-baseline/README.md` (predictions, deviations, the summarize output, the verdicts, the step lab's order), `summarize.sh`, `run-times.txt`, `invalid/`. `@671d87b`
-- `lab/realistic.sh` -> the `runs.json` block before the final `jq` (the argv fix), the `lab_other_containers` call (the idle fix). `@fcf104f`, `@38fc153`
-- `lab/README.md` "The guard: lag and memory" (two new bullets). `@671d87b`
+- `lab/results/2026-11-22-realistic-baseline/README.md` (predictions, deviations, the summarize output, the verdicts, the step lab's order), `summarize.sh`, `run-times.txt`, `invalid/`. `@8fe2ab8`
+- `lab/realistic.sh` -> the `runs.json` block before the final `jq` (the argv fix), the `lab_other_containers` call (the idle fix). `@52e9792`, `@0e7f604`
+- `lab/README.md` "The guard: lag and memory" (two new bullets). `@8fe2ab8`
 
-## Handover of scope 6 (every results folder regenerates its tables, commit 55c9d2e)
+## Handover of scope 6 (every results folder regenerates its tables, commit be42b8b)
 
 ### Verified (scope 6)
 
@@ -318,11 +318,11 @@ Commits: `38fc153` (fix: the run's own idle client counted as another container)
 
 ### Follow-up commit (fd wall note)
 
-- **A paragraph on the fd wall** (221,002 users are CPU-equivalent, about 71,000 on the real bench, S1-d or S1-b first, churn cost first) sits at the top of the baseline README's "The step lab's order", right under the heading and before the ranking intro and table, outside the summarize block. `check_results_regenerate` still ok for the baseline folder (216 lines). Commit 1acc81a.
+- **A paragraph on the fd wall** (221,002 users are CPU-equivalent, about 71,000 on the real bench, S1-d or S1-b first, churn cost first) sits at the top of the baseline README's "The step lab's order", right under the heading and before the ranking intro and table, outside the summarize block. `check_results_regenerate` still ok for the baseline folder (216 lines). Commit 7d6281a.
 
 ### Where to look (scope 6)
 
-- `lab/check.sh` -> `results_check`, `check_results_regenerate`, `check_results_check_catches_drift`; `lab/check/fixtures/results-drift/`; `lab/README.md` last paragraph of "Checks". `@55c9d2e`
+- `lab/check.sh` -> `results_check`, `check_results_regenerate`, `check_results_check_catches_drift`; `lab/check/fixtures/results-drift/`; `lab/README.md` last paragraph of "Checks". `@be42b8b`
 
 ## Next steps (from scope 5)
 
@@ -330,22 +330,22 @@ Commits: `38fc153` (fix: the run's own idle client counted as another container)
 2. The stalls: 16 to 21 seconds over 100 ms per 5 minutes at the baseline, outside the PHP code. Not explained.
 3. S9 is still inside S6 (autocommit); S6 is 51.7 % of the CPU: the step lab's biggest lever is the query, then the write (S8) and the JSON (S7).
 
-### Review fixes (scope 5): items 1 to 7 of the final review (commits 6259b72, 72cd9db)
+### Review fixes (scope 5): items 1 to 7 of the final review (commits ab3dd04, ea30389)
 
-- **Words only, no table or number changed:** `summarize.sh` output still equals the README (`check_results_regenerate` ok). `lab/realistic.sh` default `--lag-gate` is now 6 s (6259b72; `aggregate.php` has no default; `macro.sh`'s 4 s is a separate harness at 7,000 req/s, left). Checks run alone after it: `check_realistic_staircase_passes`, `check_realistic_marks_invalid_run`, `check_realistic_idle_run`, all ok; shellcheck clean.
-- **README (72cd9db):** Pss_Anon's rise "not explained", candidate the `likes` PK and `likes_post_id_idx` (untested), 91+6+64 sum dropped; prediction 2 now says about 2.7 times with the shared work (28+10.1 against 4+10.1 us); S1's 1.7 % is mostly the idle connections' accepts (968 samples, about 15 us each, 64,500 accepts), noted in the profile bullet and the step order row; "at least ... at s = 0.02" in the baseline bullet and prediction 3; longest-callback median 11.2 to 11.4 ms in the holds (I checked the JSON: all 298 seconds of each hold are over 5 ms, so 100 %, not 99 %) against 0.5 ms at 7,000 req/s, and "outside the PHP code" is now a list of suspects (sampler, telemetry, k6, VM vCPU), separating them needs a run without the sampler. The JSON does not hold the in-run lag maximum (said in the README).
+- **Words only, no table or number changed:** `summarize.sh` output still equals the README (`check_results_regenerate` ok). `lab/realistic.sh` default `--lag-gate` is now 6 s (ab3dd04; `aggregate.php` has no default; `macro.sh`'s 4 s is a separate harness at 7,000 req/s, left). Checks run alone after it: `check_realistic_staircase_passes`, `check_realistic_marks_invalid_run`, `check_realistic_idle_run`, all ok; shellcheck clean.
+- **README (ea30389):** Pss_Anon's rise "not explained", candidate the `likes` PK and `likes_post_id_idx` (untested), 91+6+64 sum dropped; prediction 2 now says about 2.7 times with the shared work (28+10.1 against 4+10.1 us); S1's 1.7 % is mostly the idle connections' accepts (968 samples, about 15 us each, 64,500 accepts), noted in the profile bullet and the step order row; "at least ... at s = 0.02" in the baseline bullet and prediction 3; longest-callback median 11.2 to 11.4 ms in the holds (I checked the JSON: all 298 seconds of each hold are over 5 ms, so 100 %, not 99 %) against 0.5 ms at 7,000 req/s, and "outside the PHP code" is now a list of suspects (sampler, telemetry, k6, VM vCPU), separating them needs a run without the sampler. The JSON does not hold the in-run lag maximum (said in the README).
 - **`lab/README.md`:** the calibration table is said to be typed by hand from the calibration JSON (no `summarize.sh`, the check skips it); the lag gate text now says 6 s.
 - **Disagreement:** none. Two small precisions: the likes candidate is untested, so the README says "more likely", not "the cause"; S1 has 968 samples by my count of `onAccept` and `close` in `profile.collapsed` (the review says 944, the same order).
 
-## Handover of the final blind review's fixes (commits 1c8c6c0, 515fc67, 832f422, 5a06fe5, 51dfe37)
+## Handover of the final blind review's fixes (commits 0706612, c2178cc, 5deb526, e7c2d16, af8fe6a)
 
 ### Verified (final fixes)
 
-- **No other project's container name in the tree.** Names were extracted from the two calibration JSONs (23, a file outside the repo, deleted at the end) before the scrub; `git grep -F -f` at HEAD: 0 files outside `plan/reviews/`, 2 files inside it, matching only the generic words `pgsql` (2 lines) and `traefik` (1 line). The two JSONs lost only `other_containers.names` (`jq 'del(...)'`: `jq .` of the old files was byte-identical to them, so formatting is untouched; the diff is 52 deleted lines, 2 added). The names stay in the pushed history (`72cd9db` and before): Jacob's call (rewrite or leave), not done here.
+- **No other project's container name in the tree.** Names were extracted from the two calibration JSONs (23, a file outside the repo, deleted at the end) before the scrub; `git grep -F -f` at HEAD: 0 files outside `plan/reviews/`, 2 files inside it, matching only the generic words `pgsql` (2 lines) and `traefik` (1 line). The two JSONs lost only `other_containers.names` (`jq 'del(...)'`: `jq .` of the old files was byte-identical to them, so formatting is untouched; the diff is 52 deleted lines, 2 added). The names stay in the pushed history (`ea30389` and before): Jacob's call (rewrite or leave), not done here.
 - **Count only:** `lab_other_containers_count` in `lab/lib.sh` (the names function stays for it); `realistic.sh`, `macro.sh`, `conns.sh` write `{count}` and print `WARNING: N other containers running: see docker ps`. `check_realistic_staircase_passes`, `check_macro_bake_swoole_posts_is_valid` and `check_conns_holds_steps` now start a fixture container (`lab-check-other-fixture`), demand `other_containers` keys == `["count"]`, `count >= 1` and `count <= running before + 2` (the run's own 4 or 5 containers, if counted, would push it past). New check `check_results_hold_no_container_names` (every JSON under `lab/results` has no `names`, or an empty one: the bake-off JSONs have `names: []`).
 - **Fold, red then green:** `lab/check/fold-test.php` changed first (mystery leaf under `like_insert`, a renamed `feed_fetch` leaf under `route_feed`, shares 360 / 10): 5 cases failed, then all 25 ok after `fold_classify` takes the leaf frame. The baseline's leaves: every one was already named except `DiyProfile::write` (19) and a closure of `diy-profile.php` (1), which the old code counted in "event loop" by inheritance. They are now named `loop` by rule, so **nothing moved in the baseline: 0 unclassified samples (0.0 %), `summarize.sh` output identical to the README block, no number or word of its tables changed.** `app_count` is not a leaf in the baseline (it is S3 by rule); the review said it would be.
 - **`--no-series`:** a live run (hold 100 req/s, 25 s) had no `sampler.php` process and no `.samples` file in the probe; `check_realistic_no_series` (a 2-step staircase at 100 req/s) ok. The check does not detect a sampler that runs and is ignored (I mutated `sampler_start` back on: the check still passed): the live `ps` was the proof, and the flag gates the sampler, the poll's `memory-now` (via `probe.sh poll ... light`), the `series_build` and the mid-run `client-ips` read together.
-- **Full suite on 5a06fe5:** 60 ok of 61 (59 before + `check_results_hold_no_container_names` + `check_realistic_no_series`), the one FAIL was my new `check_realistic_no_series` (a 100 req/s step lost on the 97 % rule on the busy VM, the staircase stopped at 18 seconds). Fixed in 51dfe37 (a step may fail on that rule alone; at least 10 per-second rows), then 3 of 3 ok alone. `check_realistic_staircase_passes` also failed once in a first run of three checks and once in a pair, ok on a rerun alone each time (same flake: 24 other containers on the VM, step 2 or 3 at 96.9 %).
+- **Full suite on e7c2d16:** 60 ok of 61 (59 before + `check_results_hold_no_container_names` + `check_realistic_no_series`), the one FAIL was my new `check_realistic_no_series` (a 100 req/s step lost on the 97 % rule on the busy VM, the staircase stopped at 18 seconds). Fixed in af8fe6a (a step may fail on that rule alone; at least 10 per-second rows), then 3 of 3 ok alone. `check_realistic_staircase_passes` also failed once in a first run of three checks and once in a pair, ok on a rerun alone each time (same flake: 24 other containers on the VM, step 2 or 3 at 96.9 %).
 
 ### Decisions on the way (final fixes)
 
@@ -365,9 +365,9 @@ Commits: `38fc153` (fix: the run's own idle client counted as another container)
 
 ### Where to look (final fixes)
 
-- `lab/lib.sh` -> `lab_other_containers_count`; `lab/check.sh` -> `other_fixture_start`, `other_containers_jq`, `check_results_hold_no_container_names`, `check_realistic_no_series`, `results_check`. `@5a06fe5`
-- `lab/profile/fold-lib.php` -> `fold_classify` (the leaf), `lab/profile/steps.rules` (header and the new leaves). `@515fc67`
-- `lab/realistic.sh` (`series`, `--no-series`), `lab/macro/probe.sh` (`poll ... light`). `@832f422`
+- `lab/lib.sh` -> `lab_other_containers_count`; `lab/check.sh` -> `other_fixture_start`, `other_containers_jq`, `check_results_hold_no_container_names`, `check_realistic_no_series`, `results_check`. `@e7c2d16`
+- `lab/profile/fold-lib.php` -> `fold_classify` (the leaf), `lab/profile/steps.rules` (header and the new leaves). `@c2178cc`
+- `lab/realistic.sh` (`series`, `--no-series`), `lab/macro/probe.sh` (`poll ... light`). `@5deb526`
 
 ## Questions for the project manager
 
@@ -446,5 +446,5 @@ Commits: `38fc153` (fix: the run's own idle client counted as another container)
 - **Lost time:** about 25 minutes on the full suite (12 minutes) and one rerun after my own new check flaked on the busy VM; about 5 minutes on a `git -C` alias I tried to put in a shell variable (`$G add ...` fails: the variable holds the whole command).
 - **Useless or contradictory instruction:** "see it fail first" for `--no-series`: the first run without the flag fails on an unknown option, which proves nothing about the check. Mutation showed my check cannot see a sampler that runs and is ignored; I closed that with a live `ps`, not with a check.
 - **Deterministic:** a check helper `other_fixture_start` / `other_containers_jq` now exists for any run JSON. A `lab/check.sh` lock (scope 4's idea) and a done-marker log would still save time; also a lint that greps committed files for the names of `docker ps` (a guard on the way in, not only on the JSONs): `check_results_hold_no_container_names` covers the JSON only, a `.txt` of a run's output could still carry a name.
-- **Plan should have decided:** whether a pushed history that holds the names is rewritten (force-push is off the table without Jacob): the first leak is in `72cd9db` and its parents, on `origin/phase-4-claude`.
+- **Plan should have decided:** whether a pushed history that holds the names is rewritten (force-push is off the table without Jacob): the first leak is in `ea30389` and its parents, on `origin/phase-4-claude`.
 - **Blind spot:** the `.txt` run outputs and the READMEs are not scanned for container names (the check reads JSON). And the new `--no-series` has no number yet: nobody has measured what the probes cost.

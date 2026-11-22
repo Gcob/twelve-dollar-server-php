@@ -9,7 +9,7 @@ full path) · **Your handover:** `plan/state/developer.md` in the main checkout.
 2 % new post, think time between), with the think times scaled down so a few thousand VUs make the bench's request
 rate, in a staircase or a hold, and judge each step the way the bench would.
 
-**Today:** the skeleton (`lab/app/server.php` and `lab/app/app.php`, scope 1, `64af809`) passes the challenge's 42
+**Today:** the skeleton (`lab/app/server.php` and `lab/app/app.php`, scope 1, `f840725`) passes the challenge's 42
 tests. `lab_start_app` in `lab/lib.sh` starts it on a fresh seed copy (`cp` inside the container, `sync`, then the app
 with `SQLITE_PATH`); `lab_run_server_container` holds the shared `docker run`. The DIY loop is in
 `lab/servers/diy-server.php`, shared by the app and `bake-diy.php`. `lab/challenge-test.sh` runs the tests from a

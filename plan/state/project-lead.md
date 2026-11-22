@@ -11,7 +11,7 @@ Skill defaults (`autonomous-run/pipeline.yml`), no run override file. Changes fr
 
 - **Code:** branch `phase-4-claude`, worktree `.claude/worktrees/twelve-dollar-server-php/phase-4-claude` under the
   home folder (the full absolute path goes in agent prompts, never in a committed file). Created by the planning
-  session from `main` at `0eba220`. Every git command in full form `git -C <that path> ...`, alone in its call. The PM
+  session from `main` at `0f7b594`. Every git command in full form `git -C <that path> ...`, alone in its call. The PM
   pushes it with `git -C <that path> push -u origin phase-4-claude`. Never merge.
 - **`plan/`:** on `main`, this checkout, committed and pushed by the PM. Never write the worktree's copy of `plan/`.
   `plan/notes.md` belongs to the planning session.
@@ -30,21 +30,21 @@ Skill defaults (`autonomous-run/pipeline.yml`), no run override file. Changes fr
 | Scope | Agent id | State |
 |-------|----------|-------|
 | plan-reviewer | a480e25853b51eccf | full NOT_OK 11:09; delta NOT_OK 11:14; delta 2 + final full OK 11:17 |
-| 1     | afe8ff70047c6f1a9 | done `64af809`, pushed 11:38 (tools image built locally: no pull allowed; handler gets a 4th arg) |
-| 2     | a075911b200113f1b | done `47e4728`, pushed 12:31 (k6 ~300 µs CPU/req with the stream → D45) |
-| 3     | a1365daa1d690ecf0 | done `b47adcf` 13:12 (60k idle + 5,377 VUs, 19,565 req/s smoke; idle client 257 MiB; lag up to 3.9 s → D46) |
-| 4     | ac6145c4f718748e3 | done `4775db8` 13:53 (excimer 1.2.6, not on 8.6; calibration: C time goes to the caller, step functions carry it) |
-| 3 (fix) | a1365daa1d690ecf0 | `fc73cee` (edge rows of the series check), `b18af33` (failing-step check's request count), pushed 14:50 |
+| 1     | afe8ff70047c6f1a9 | done `f840725`, pushed 11:38 (tools image built locally: no pull allowed; handler gets a 4th arg) |
+| 2     | a075911b200113f1b | done `07808e7`, pushed 12:31 (k6 ~300 µs CPU/req with the stream → D45) |
+| 3     | a1365daa1d690ecf0 | done `81d9216` 13:12 (60k idle + 5,377 VUs, 19,565 req/s smoke; idle client 257 MiB; lag up to 3.9 s → D46) |
+| 4     | ac6145c4f718748e3 | done `6621654` 13:53 (excimer 1.2.6, not on 8.6; calibration: C time goes to the caller, step functions carry it) |
+| 3 (fix) | a1365daa1d690ecf0 | `0cbefb1` (edge rows of the series check), `90a54c7` (failing-step check's request count), pushed 14:50 |
 | 5     | a0693a2b219c3cb46 | done 17:30 |
-| 6     | aabebc28f7dcaaba7 | done 17:46; fd-wall note `1acc81a` |
+| 6     | aabebc28f7dcaaba7 | done 17:46; fd-wall note `7d6281a` |
 | pr-reviewer | a96493ee11e4c85c3 | OK 18:04 |
-| scope 5 (review fixes) | a0693a2b219c3cb46 | done 18:08: `6259b72`, `72cd9db` |
+| scope 5 (review fixes) | a0693a2b219c3cb46 | done 18:08: `ab3dd04`, `ea30389` |
 | blind-reviewer | af115c2e95734bb63 | NOT_OK 18:17 |
-| blind fixes | a6d7d3fcd59d94550 | done 18:47: `1c8c6c0`..`51dfe37` |
+| blind fixes | a6d7d3fcd59d94550 | done 18:47: `0706612`..`af8fe6a` |
 
 ## Verified
 
-- The worktree is at `0eba220`, clean; its `reference` is a relative symlink to the main checkout's clone (excluded by
+- The worktree is at `0f7b594`, clean; its `reference` is a relative symlink to the main checkout's clone (excluded by
   `/reference` in the shared `.git/info/exclude`); `lab/seed.sh` printed `OK ... content sha256 matches` there at 10:53.
 - 23 other containers running at 10:52 (D15: no measurement). Docker VM: 12 CPUs, 7.75 GiB.
 - The planning session says Jacob stopped his 23 containers at 10:55: the VM is quiet, measuring allowed once the
@@ -92,13 +92,13 @@ Rien.
   lab carries µs/req and the profile (D47). No new holds.
 - Verified by the PM: predictions block identical to the brief; all 26 counted JSONs `other_containers: 0`
   (`q10-warm-1` and `-3` are `valid: false` for dropped iterations, which is Q10's subject, shown in its table);
-  `summarize.sh` 266 lines all in the README; no private path or email in the new files; fixes `38fc153`, `fcf104f` read.
+  `summarize.sh` 266 lines all in the README; no private path or email in the new files; fixes `0e7f604`, `52e9792` read.
 - For the PR description: the final `max_lag_s` printed can pass the gate in a valid run (tail after k6 stops), noted
   in the README; not changed.
 
 ## To do before the delivery
 
-- DONE (`1acc81a`) 17:50, from the planning session: the baseline README's "The step lab's order" and run.md's delivery must say
+- DONE (`7d6281a`) 17:50, from the planning session: the baseline README's "The step lab's order" and run.md's delivery must say
   that the 221,002 users are CPU-equivalent: one process holds at most about 65,500 connections, so the real bench
   caps it near 71,000 users whatever the CPU. S1's fd wall (S1-d or S1-b, phase-4.md "Out of scope") is a gate that
   goes first in phase 5, before the CPU ranking; its cost under churn (an accept and a close per request past the
@@ -138,10 +138,10 @@ Rien.
 ## Where to look
 
 - `lab/servers/diy-connection.php`: the DIY parser reads only `Content-Length`, `Connection`, `Transfer-Encoding`; it
-  calls the global `handler_handle($method, $path, $body)`. Scope 1 changes this seam. `@0eba220`
-- `lab/conns/client.php`: phase 3's idle-connection client, rotating 127.x source addresses; scope 3 reuses it. `@0eba220`
+  calls the global `handler_handle($method, $path, $body)`. Scope 1 changes this seam. `@0f7b594`
+- `lab/conns/client.php`: phase 3's idle-connection client, rotating 127.x source addresses; scope 3 reuses it. `@0f7b594`
 - `lab/lib.sh` → `lab_start_server`: mounts `lab/data` read-only and runs `php <flags> <server>`; the skeleton needs a
-  fresh writable copy at `SQLITE_PATH` (D32). `@0eba220`
+  fresh writable copy at `SQLITE_PATH` (D32). `@0f7b594`
 
 ## Plan read up to
 

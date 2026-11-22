@@ -262,7 +262,7 @@ layout in `lab/lib.sh`, pinned versions with sha256, no absolute `/Users/...` pa
 
 ## Predictions (D5)
 
-Written by the project manager on 2026-11-22 at 10:57, before any phase 4 measurement (commit `b573485`), and revised
+Written by the project manager on 2026-11-22 at 10:57, before any phase 4 measurement (commit `3e6f1c8`), and revised
 at 11:12 after the plan review, still before any measurement: prediction 3 maps users at 9.45 per req/s (D40) instead
 of 10.8, and prediction 7 reads the WAL's frames, not its file size. Arm64, Docker Desktop on an M3 Pro, quiet VM, PHP
 8.5, the DIY server, 1 CPU.

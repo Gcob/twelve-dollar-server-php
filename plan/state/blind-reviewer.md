@@ -1,6 +1,6 @@
 # Blind reviewer: phase 4
 
-**State:** first review done on `phase-4-claude` at `72cd9db` (base `0eba220`): NOT_OK, 1 🔴, 2 🟠, 8 🟡. Report:
+**State:** first review done on `phase-4-claude` at `ea30389` (base `0f7b594`): NOT_OK, 1 🔴, 2 🟠, 8 🟡. Report:
 `plan/reviews/BLIND-2026-11-22-1809.md`.
 
 ## Verified
@@ -9,7 +9,7 @@
   **Proof:** `awk` over `lab/results/2026-11-22-realistic-baseline/profile.collapsed`: 57,666 of 57,666 samples.
 - Only the two calibration JSONs list other projects' containers. **Proof:** `jq '.other_containers'` over every
   committed `lab/results/**/*.json`.
-- The branch is pushed. **Proof:** `git branch -r` shows `origin/phase-4-claude` at `72cd9db`.
+- The branch is pushed. **Proof:** `git branch -r` shows `origin/phase-4-claude` at `ea30389`.
 - The median longest callback over the four holds' plateaus is 11.26 to 11.38 ms, every second over 5 ms; k6's mean
   latency is 2.21 to 2.67 ms. **Proof:** `jq` on `hold-*.json`.
 - "17 runs at 24,000, 4 failed" adds up from the README's tables.

@@ -21,13 +21,13 @@ there, D47). SQLite is 52 % of the CPU, the response write 20 %, JSON 10 %. 6 of
 **Blocking the delivery** (not the fixes, which go on). The blind-reviewer found that 2 calibration JSON files of scope
 2 (`lab/results/2026-11-22-realistic-calibration/scale-0.03-*.json` and `scale-0.1-*.json`, key
 `other_containers.names`) list the names of your 23 other Docker containers. They ran on the busy VM, and the harness
-recorded the names. They are on the public branch `phase-4-claude` since commit `47e4728`, pushed at about 12:28.
+recorded the names. They are on the public branch `phase-4-claude` since commit `07808e7`, pushed at about 12:28.
 `main` and its history are clean. A fix-forward commit removes them from the files and makes the harness record only
 the count, but the old commit keeps them, and the rules forbid me to rewrite pushed history or force-push.
 
 **Question:** what do we do with the branch's history?
 
-- **A.** Rewrite the branch so `47e4728` never held the names (a rebase that scrubs the two files), then force-push
+- **A.** Rewrite the branch so `07808e7` never held the names (a rebase that scrubs the two files), then force-push
   `phase-4-claude`, with your explicit OK for that one force push (or you run it).
   **Aims at:** names gone from every ref, per-scope commits kept for your review and the merge.
   **For:** the branch is yours alone, nobody builds on it; the SHAs in `run.md` get rewritten once.
@@ -53,7 +53,7 @@ branch only this run uses.
 phase-4-claude`); I push it again, cleaned, after your answer.
 
 **Answer:** A, through the planning session at 18:25: "Please, fix the leak by yourself". The planning session
-deleted the remote branch; the project manager rewrites the branch locally (no commit holds the names, `47e4728`
+deleted the remote branch; the project manager rewrites the branch locally (no commit holds the names, `07808e7`
 included), checks every commit with `git log -S`, and pushes the clean branch again (no force needed: the remote
 branch is gone).
 
