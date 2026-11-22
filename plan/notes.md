@@ -324,3 +324,31 @@ it is not worth because we waste CPU in this case, but maybe it is worth for a l
 
 **Verdict:** ❌ parallel steps inside a request (one vCPU, steps that only use the CPU). ✅ its real form, a
 background checkpointer: a new S9 variant for phase 4, next to the group commit per loop turn.
+
+### 2026-11-22 13:41 · ❓ Question: a remote VM, so the lab can push its tests further?
+
+**Jacob:** "Will you need an AWS EC2, Digital Ocean or other distant VM to let the lab push its test into a better
+incubator?"
+
+**Context:** scope 3's smoke runs (a busy VM, not measurements) passed every step up to 17,816 req/s with 60,000 idle
+connections, and k6 on the Mac tops out around 20,000 req/s (D45, D46). The knee may sit above what the Mac can push.
+
+**Challenge:**
+
+- **Not for phase 4 or the step lab.** They ask relative questions (where the CPU goes, which variant costs less),
+  and the Mac answers those. Pushing the Mac past its knee buys little: its req/s isn't the bench's (arm64 against a
+  2.4 GHz Xeon), and past about 65,000 connections the fd wall comes first anyway (S1), on any machine.
+- **Needed later, for two numbers the Mac can't give:**
+  1. **The x86 factor:** µs per request on a Xeon like the bench's. One server VM and the realistic mode with one
+     generator are enough, for an hour or two.
+  2. **The score check (phase 7):** more than 71,000 users held 5 minutes with `load.js` unscaled. That's 100,000 or
+     more VUs: tens of GB of k6 memory, and at most about 64,000 connections per source IP, so 2 or 3 generators in
+     the same datacenter, or `rlt` (the Rust `load.js` used by java-micronaut-Clickin), which is lighter.
+- **Which machine:** the most faithful is the bench's own provider, a Synteq VPS (KVM, Xeon Platinum 8260, 1 vCPU,
+  about 2 GB, kernel 6.8): the leaderboard's hardware. The hourly alternative is AWS `c5` or `m5` (the same Xeon
+  Scalable families), limited to 1 vCPU like the lab. Not a `t3`: its CPU credits run out under a 5-minute hold.
+  Not DigitalOcean: the challenge's first runs there were about 2 times slower in CPU and were all re-run.
+- **The cost is Jacob's call** (D7): nothing is created without him.
+
+**Verdict:** 🔶 Claude's take: no remote VM for phase 4; a short x86 calibration after its baseline (one server VM,
+one generator), and the full-size check with several generators in phase 7. Open until Jacob decides.
