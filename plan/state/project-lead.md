@@ -29,7 +29,8 @@ Skill defaults (`autonomous-run/pipeline.yml`), no run override file. Changes fr
 
 | Scope | Agent id | State |
 |-------|----------|-------|
-| plan-reviewer | a480e25853b51eccf | full, running since 10:59 |
+| plan-reviewer | a480e25853b51eccf | full NOT_OK 11:09; delta NOT_OK 11:14; delta 2 + final full OK 11:17 |
+| 1     | afe8ff70047c6f1a9 | done `64af809`, pushed 11:38 (tools image built locally: no pull allowed; handler gets a 4th arg) |
 
 ## Verified
 
@@ -38,6 +39,8 @@ Skill defaults (`autonomous-run/pipeline.yml`), no run override file. Changes fr
 - 23 other containers running at 10:52 (D15: no measurement). Docker VM: 12 CPUs, 7.75 GiB.
 - The planning session says Jacob stopped his 23 containers at 10:55: the VM is quiet, measuring allowed once the
   plan is ready; still `docker ps` before each measurement, and tell the planning session if one comes back.
+- 11:36: the 23 containers are back (the VM booted at 11:18:53 per `/proc/uptime`; they have restart policy
+  `always`). Not from this run. No measurement until quiet; the planning session asked Jacob.
 
 ## Assumed
 
@@ -78,12 +81,12 @@ Rien.
 
 ## Plan read up to
 
-`plan.md`, `decisions.md` D1 to D36, 2026-11-22 10:57.
+`plan.md`, `decisions.md` D1 to D44, 2026-11-22 11:18.
 
 ## Next steps
 
-1. Plan review (full), settle its points.
-2. Scope 1 brief and developer.
+1. Check scope 2, push.
+2. Scope 3 brief and developer.
 
 ## Retro
 
