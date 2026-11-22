@@ -330,6 +330,13 @@ Commits: `38fc153` (fix: the run's own idle client counted as another container)
 2. The stalls: 16 to 21 seconds over 100 ms per 5 minutes at the baseline, outside the PHP code. Not explained.
 3. S9 is still inside S6 (autocommit); S6 is 51.7 % of the CPU: the step lab's biggest lever is the query, then the write (S8) and the JSON (S7).
 
+### Review fixes (scope 5): items 1 to 7 of the final review (commits 6259b72, 72cd9db)
+
+- **Words only, no table or number changed:** `summarize.sh` output still equals the README (`check_results_regenerate` ok). `lab/realistic.sh` default `--lag-gate` is now 6 s (6259b72; `aggregate.php` has no default; `macro.sh`'s 4 s is a separate harness at 7,000 req/s, left). Checks run alone after it: `check_realistic_staircase_passes`, `check_realistic_marks_invalid_run`, `check_realistic_idle_run`, all ok; shellcheck clean.
+- **README (72cd9db):** Pss_Anon's rise "not explained", candidate the `likes` PK and `likes_post_id_idx` (untested), 91+6+64 sum dropped; prediction 2 now says about 2.7 times with the shared work (28+10.1 against 4+10.1 us); S1's 1.7 % is mostly the idle connections' accepts (968 samples, about 15 us each, 64,500 accepts), noted in the profile bullet and the step order row; "at least ... at s = 0.02" in the baseline bullet and prediction 3; longest-callback median 11.2 to 11.4 ms in the holds (I checked the JSON: all 298 seconds of each hold are over 5 ms, so 100 %, not 99 %) against 0.5 ms at 7,000 req/s, and "outside the PHP code" is now a list of suspects (sampler, telemetry, k6, VM vCPU), separating them needs a run without the sampler. The JSON does not hold the in-run lag maximum (said in the README).
+- **`lab/README.md`:** the calibration table is said to be typed by hand from the calibration JSON (no `summarize.sh`, the check skips it); the lag gate text now says 6 s.
+- **Disagreement:** none. Two small precisions: the likes candidate is untested, so the README says "more likely", not "the cause"; S1 has 968 samples by my count of `onAccept` and `close` in `profile.collapsed` (the review says 944, the same order).
+
 ## Questions for the project manager
 
 - Nothing blocking. To settle before the measuring scope: k6 costs about 300 us of CPU per request with the CSV stream on (it falls with the rate), so 20,000 req/s takes about 5 to 6 of the 8 CPUs that k6 and the aggregator share. I did not measure above 2,000 req/s. If it does not fit on a quiet VM, the options are fewer tags per CSV row (k6's `systemTags`), or a lower top rate for the staircase; the cap and the scale ignore k6's CPU today.

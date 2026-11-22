@@ -37,8 +37,9 @@ Skill defaults (`autonomous-run/pipeline.yml`), no run override file. Changes fr
 | 3 (fix) | a1365daa1d690ecf0 | `fc73cee` (edge rows of the series check), `b18af33` (failing-step check's request count), pushed 14:50 |
 | 5     | a0693a2b219c3cb46 | done 17:30 |
 | 6     | aabebc28f7dcaaba7 | done 17:46; fd-wall note `1acc81a` |
-| pr-reviewer | a96493ee11e4c85c3 | OK 18:05 |
-| scope 5 (review fixes) | a0693a2b219c3cb46 | since 18:08 |
+| pr-reviewer | a96493ee11e4c85c3 | OK 18:04 |
+| scope 5 (review fixes) | a0693a2b219c3cb46 | done 18:08: `6259b72`, `72cd9db` |
+| blind-reviewer | af115c2e95734bb63 | pass 1 since 18:09 |
 
 ## Verified
 
@@ -115,7 +116,7 @@ Rien.
 - Delta (11:14): 🟠 no backpressure on k6's stream → D44 (reviewer's pick A). 5 🟡 folded (fd cap, per-step functions,
   `--fresh-db`, slow fixture, D16 period).
 
-- `pr-reviewer` pass 1 (18:05), OK: 🟡 1 to 7 sent to scope 5's developer. 🟡 8 (the `cold_json` jq block in both
+- `pr-reviewer` pass 1 (18:04), OK: 🟡 1 to 7 sent to scope 5's developer. 🟡 8 (the `cold_json` jq block in both
   harnesses) set aside: a refactor of working code after the measurement, better done when phase 5 next touches
   them. 🟡 9 (3 % + 0.02 ms aggregator-vs-k6 tolerance): scope 2 set it from its smoke runs (k6's own summary
   rounds and its trend is sampled differently), checks stay stable; not tightened now. "Plan to review" → Q11.
