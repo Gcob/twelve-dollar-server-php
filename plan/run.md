@@ -7,7 +7,7 @@
 **Since your last read:** scope 3 done (`b47adcf`, pushed): 60,000 idle connections held for a whole run, per-second
 series, cold starts. A smoke on the busy VM already passed 17,816 req/s with 60,000 idle, so the knee may sit above the
 lab's 20,000 req/s: D46 says how the baseline reaches it. Scopes 1 and 2 done (`64af809`, `47e4728`).
-**👉 Your turn:** nothing new. The Docker VM restarted at 11:18 and the 23 other containers came back (restart policy `always`): scope 5 needs them stopped again (D15); scopes 1 to 4 go on.
+**👉 Your turn:** 🔴 blocking from scope 5 (about 14:05): stop the 23 other containers on Docker's VM, then say "go" (D15), in [plan.md](plan.md).
 
 ## Steps
 

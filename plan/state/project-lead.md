@@ -33,6 +33,7 @@ Skill defaults (`autonomous-run/pipeline.yml`), no run override file. Changes fr
 | 1     | afe8ff70047c6f1a9 | done `64af809`, pushed 11:38 (tools image built locally: no pull allowed; handler gets a 4th arg) |
 | 2     | a075911b200113f1b | done `47e4728`, pushed 12:31 (k6 ~300 µs CPU/req with the stream → D45) |
 | 3     | a1365daa1d690ecf0 | done `b47adcf` 13:12 (60k idle + 5,377 VUs, 19,565 req/s smoke; idle client 257 MiB; lag up to 3.9 s → D46) |
+| 4     | ac6145c4f718748e3 | running since 13:22 |
 
 ## Verified
 
