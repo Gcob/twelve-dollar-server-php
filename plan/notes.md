@@ -464,3 +464,30 @@ connections and they perform an HTTP in between our PHP application with the con
 - Same as the PHP load balancer and Traefik of 2026-11-21 (above): whoever holds the client's socket holds its fd.
 
 **Verdict:** ❌ more CPU than S1-b alone, for the same fd gain.
+
+### 2026-11-22 18:15 · 💡 Idea: continue the lab on Jacob's desktop PC
+
+**Jacob** (his answer to Q11): "should we continue the lab on my ryzen 9 pc tower? It has 64 go RAM DDR5 + RTX4700, we
+could maybe try to create a VM or something. It is on Windows though"
+
+**Challenge:**
+
+- **What it would fix:** the Mac shares its CPUs between the server and k6, and k6 gave out before the server (D47).
+  The desktop has many more cores and 64 GB: at about 0.3 MiB per VU, 100,000 or more VUs fit, so `load.js` could run
+  **unscaled** (real think times, one connection per user) and test the fd wall past 65,535 for real, which the Mac
+  can't.
+- **It's x86:** closer to the bench than the M3, so a first x86 number. Not the bench's CPU (a Ryzen core is much
+  faster than a 2.4 GHz Xeon), so it doesn't replace the calibration on the bench's hardware.
+- **Layout:** everything on the desktop, like the Mac lab: the server pinned to one core, k6 on the others, all in
+  Linux. Mac to desktop over the LAN would put the home network in every measurement (about 400 Mbit/s of responses at
+  23,000 req/s, so wired gigabit at least). The Mac stays the place the sessions run, driving the desktop over SSH.
+- **Windows:** WSL2 runs a real Linux kernel (io_uring included, for the spike) with Docker inside, so the lab's bash
+  and images move as they are. Its noise (Windows Update, the antivirus, power saving) needs a quiet-machine rule
+  like D15. Dual-booting Ubuntu would be cleaner, at more setup.
+- **Cost:** none: Jacob's hardware, inside the no-paid-service rule. The setup (WSL2, Docker, SSH in) is Jacob's to do
+  on his machine.
+- **Q11 stays A:** a CPU-saving variant is still judged by its µs per request and the profile; the desktop adds the
+  server's own knee and the real connection counts.
+
+**Verdict:** 🔶 Claude's take: yes, as the lab's second host for the full-size realistic runs, the fd wall and the
+io_uring spike, with the Mac still running the quick comparisons. Open until Jacob confirms.
