@@ -153,13 +153,15 @@
   to the step", the skeleton keeps each step's work in its own function (the JWT check, the validation, each query, the
   JSON building, the response), named by what it does, and the fold's rules map those functions (plan review, settled
   by the project manager, phase 4, 2026-11-22, [PLAN-2026-11-22-1110](reviews/PLAN-2026-11-22-1110.md) item 6, and
-  {R}).
+  [PLAN-2026-11-22-1116-delta](reviews/PLAN-2026-11-22-1116-delta.md)).
 - **D44:** D41's stream is guarded, because k6 buffers samples in memory when the reader falls behind instead of
   slowing its VUs: k6's MiB per VU is calibrated with the stream on; a scope 2 case replays a recorded CSV at the rows of
   40,000 req/s through the aggregator; and every measured run is invalid, with that reason, when the aggregator's lag
-  (newest sample time against the clock) passes 2 s or k6's memory passes its budget. If the replay is too slow, the
+  (newest sample time against the clock) passes its gate or k6's memory passes its budget. k6's CSV flushes every
+  second by default, so the gate is the lag measured in calibration plus 2 s, with `K6_CSV_SAVE_INTERVAL` lowered. The
+  aggregator runs in its own container on k6's CPUs, outside k6's memory budget. If the replay is too slow, the
   reader skips every line but `http_req_duration` and `http_reqs` before parsing (plan review delta, settled by the
-  project manager, phase 4, 2026-11-22, {R}).
+  project manager, phase 4, 2026-11-22, [PLAN-2026-11-22-1116-delta](reviews/PLAN-2026-11-22-1116-delta.md)).
 
 ## History
 

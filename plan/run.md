@@ -3,8 +3,8 @@
 **Pace:** 🟢 full · 5-hour 3 % · weekly 23 % at 10:52 · 5-hour resets 15:19 · away
 
 **Status:** 🔵 Running
-**Progress:** step 0/7, `plan-reviewer` delta 2 running since 11:18 · started 2026-11-22 10:50
-**Since your last read:** phase 4 planned in [details/phase-4.md](details/phase-4.md): 5 scopes, predictions written
+**Progress:** step 1/7, scope 1 running since 11:19 · started 2026-11-22 10:50
+**Since your last read:** plan review OK at 11:17 (D38 to D44); scope 1 started. Phase 4 planned in [details/phase-4.md](details/phase-4.md): 5 scopes, predictions written
 before any measurement. Q7 and Q10 recorded (D26, D28), D27 to D43 added. D40 corrects the users per req/s: 9.45 on a steady load, not the leaderboard's 10.8 (its rate includes the ramps), so 7,000 req/s is about 66,000 users. Phase 3's run archived in
 [runs/phase-3/](runs/phase-3/run.md).
 **👉 Your turn:** nothing new. The Docker VM is quiet since 10:55 (D15): keep it that way until scope 5 is measured.
@@ -13,8 +13,8 @@ before any measurement. Q7 and Q10 recorded (D26, D28), D27 to D43 added. D40 co
 
 | #   | Step              | State   | Start | End | Detail |
 |-----|-------------------|---------|-------|-----|--------|
-| 0   | Plan review       | running | 10:59 |     | full NOT_OK at 11:10 (1 🔴, 5 🟠), settled as D38 to D43; delta NOT_OK at 11:16 (1 🟠), settled as D44; delta 2 running |
-| 1   | Scopes            | to do   |       |     | 0/6    |
+| 0   | Plan review       | done    | 10:59 | 11:17 |     | full NOT_OK at 11:10 (1 🔴, 5 🟠), settled as D38 to D43; delta NOT_OK at 11:14 (1 🟠), settled as D44; delta 2 and final full OK at 11:17 |
+| 1   | Scopes            | running | 11:19 |     | 0/6    |
 | 2   | Questions         | to do   |       |     |        |
 | 3   | Lab suite         | to do   |       |     |        |
 | 4   | `pr-reviewer`     | to do   |       |     |        |
@@ -25,7 +25,7 @@ before any measurement. Q7 and Q10 recorded (D26, D28), D27 to D43 added. D40 co
 
 | #   | State | Start | End | Lines | Checks | SHA | Fixes |
 |-----|-------|-------|-----|-------|--------|-----|-------|
-| 1   | to do |       |     |       |        |     |       |
+| 1   | running | 11:19 |     |       |        |     |       |
 | 2   | to do |       |     |       |        |     |       |
 | 3   | to do |       |     |       |        |     |       |
 | 4   | to do |       |     |       |        |     |       |
@@ -57,7 +57,7 @@ before any measurement.
   Excimer in its own layer with a switch; statuses 201, 401, 503; `/health`'s `db` and auth before id; where `test.sh`
   runs; the idle client's path and body; k6's exit 99.
 
-### `plan-reviewer`, delta · 11:14 to 11:16 · NOT_OK
+### `plan-reviewer`, delta · 11:12 to 11:14 · NOT_OK
 
 **Report:** [PLAN-2026-11-22-1116-delta.md](reviews/PLAN-2026-11-22-1116-delta.md). D38 to D43 hold; the 🟡 are folded
 in correctly.
@@ -70,6 +70,9 @@ in correctly.
   `macro.sh --fresh-db` so the bake-off servers don't get a second copy; a slow fixture server for scope 2's
   above-capacity case; a missing period in D16.
 
-### `plan-reviewer`, delta 2 (and final full pass) · since 11:18
+### `plan-reviewer`, delta 2 and final full pass · 11:16 to 11:17 · OK
 
-Running.
+**Report:** [PLAN-2026-11-22-1120-final.md](reviews/PLAN-2026-11-22-1120-final.md). No 🔴 or 🟠; the scope order
+holds. 4 🟡, all fixed in the plan at 11:18: two `{R}` placeholders in D43 and D44; D44's lag gate now the calibrated
+lag plus 2 s with `K6_CSV_SAVE_INTERVAL` lowered (k6 flushes its CSV every second); `plan.md`'s "Since your last
+read"; the aggregator in its own container, outside k6's memory budget.

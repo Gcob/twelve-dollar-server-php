@@ -48,7 +48,8 @@ From Jacob (D26 to D30, D37) and the project manager (D31 to D36, D38 to D43 fro
 - **D43, Excimer calibrated:** a fixture proves a C function's samples land on its frame, JIT on and off; each step's
   work lives in its own function in the skeleton, so even time attributed to the caller lands on its step.
 - **D44, the stream guarded:** k6's memory calibrated with the stream on, a replay case proves the aggregator's speed,
-  and a measured run is invalid when the aggregator lags over 2 s or k6 passes its memory budget.
+  and a measured run is invalid when the aggregator lags past its gate (calibrated lag plus 2 s) or k6 passes its
+  memory budget.
 
 ## Scopes
 
@@ -165,7 +166,9 @@ layout in `lab/lib.sh`, pinned versions with sha256, no absolute `/Users/...` pa
   it ends and stops k6 at the first failing one; k6's exit 99 (its thresholds failed) is a result, not a harness error.
   **The guard (D44):** k6 doesn't slow down when the reader falls behind, it buffers samples in memory. So the
   aggregator reports its lag (the newest sample's time against the clock) and the harness reads k6's memory; a run
-  whose lag passes 2 s or whose k6 passes its memory budget is invalid with that reason. A replay case feeds a
+  whose lag passes its gate or whose k6 passes its memory budget is invalid with that reason. k6's CSV output flushes
+  every second by default: lower `K6_CSV_SAVE_INTERVAL`, and set the gate at the lag measured in calibration plus
+  2 s. The aggregator runs in its own container on k6's CPUs, so its memory isn't in k6's budget. A replay case feeds a
   recorded CSV through the aggregator at the rows of 40,000 req/s (about 12 rows per request); if it's too slow, the
   reader skips every line but `http_req_duration` and `http_reqs` before parsing.
 - **Output:** the table, and a JSON with every step, the think scale, the per-VU rate, k6's peak memory and CPU, the
@@ -249,7 +252,7 @@ layout in `lab/lib.sh`, pinned versions with sha256, no absolute `/Users/...` pa
 - **Staircase:** a fresh run, 60,000 idle connections, warm-up at about 10 % of the expected capacity for 60 s, then
   steps of 1,000 req/s from 3,000 req/s, 60 s plateaus, stopping at the first failing step; then a second staircase of
   250 req/s steps from the last passing step to the failing one.
-- **Every measured run** passes D44's gate (aggregator lag under 2 s, k6 under its memory budget) or is invalid and
+- **Every measured run** passes D44's gate (aggregator lag under its calibrated gate, k6 under its memory budget) or is invalid and
   rerun.
 - **Holds:** 3 holds of 5 minutes at the highest passing rate of the fine staircase, each a fresh run (new seed copy,
   new server, new idle connections); the median of the 3 is the baseline; 1 hold one fine step above. If a hold fails,

@@ -2,9 +2,12 @@
 
 **Status:** 🔵 Phase 4 running (realistic baseline) · 0 questions open · approved on 2026-11-21 · snapshot
 2026-11-21-0920 · **Round:** 3
-**Since your last read:** Q7 and Q10 are answered (D26, D28). Phase 4 is "realistic first" (D27): a walking skeleton
-of the 5 endpoints, a realistic mode of the lab, the baseline it holds and a profile; the step lab is now phase 5.
-Arjay's rule 5 ruling and the two new S9 variants are D29 and D30. Progress in [run.md](run.md).
+**Since your last read:** Q7 and Q10 are answered (D26, D28), and your `ok` for the results check is D37 (scope 6).
+Phase 4 is "realistic first" (D27): a walking skeleton of the 5 endpoints, a realistic mode of the lab, the baseline
+it holds and a profile; the step lab is now phase 5. The plan review (full, 2 deltas, OK at 11:17) added D38 to D44.
+**One correction to know:** a steady load is 9.45 users per req/s, not the leaderboard's 10.8 (its rate includes the
+ramps), so 7,000 req/s is about 66,000 users and the 71,000 record about 7,500 steady req/s (D40). Progress in
+[run.md](run.md).
 **Project:** this repo, `plan/` · **Submission:**
 `submissions/php-<runtime>-Gcob/` · **Jira:** none
 
@@ -43,7 +46,7 @@ step's choice backed by a measurement.
 | 7 | Score           | `bench/load.js` ramps, x86 calibration                      | More than 71,000 held for 5 minutes                     |
 | 8 | Submit          | The PR to the challenge repo                                | CI green                                                |
 
-**Decisions:** 43 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
+**Decisions:** 44 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
 is a prediction we re-measure, not an answer.
 
 ### Phase 4 scopes (running)
