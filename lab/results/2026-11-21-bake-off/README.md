@@ -372,10 +372,12 @@ Reading the tables:
 The first try ran series A at rate / 10 VUs (700 at 7,000 req/s). It was stopped after round 2: 4 `posts.js` runs dropped
 iterations during stalls of 100 to 300 ms, and `workerman-nocache` posts was invalid twice in round 2. The cause of the
 stalls is not separated: the host (the Mac was under memory pressure, 35 GB used and 16 GB in the compressor, with a load
-average of 6 to 7 on 12 CPUs) or the server's reads of its database. What points away from the host alone: all 8 invalid
-runs of the first try and the counted series are `posts.js` runs, none of the 31 `/noop` runs is invalid, and 7 of the 8
-cost more µs/req than the valid run of their pair, which a paused vCPU would not do (it adds no CPU time to the server's
-cgroup). The extra VUs absorb a stall whatever its cause. Its 18
+average of 6 to 7 on 12 CPUs) or the server's reads of its database. The facts: all 8 invalid runs of the first try and
+the counted series are `posts.js` runs, none of the 31 `/noop` runs is invalid, and 7 of the 8 cost more µs/req than the
+valid run of their pair. They fit both causes: the VM's `/proc/stat` shows a steal of 0 (one reading, not a measurement),
+which means either that nothing was stolen or that this VM does not report steal, so a host stall may well be charged to
+the server's cgroup; and the `posts.js` runs touch about 108 MiB more guest memory than `/noop`, so a host under memory
+pressure could hit them alone. The extra VUs absorb a stall whatever its cause. Its 18
 runs are in `first-try-700-vus/` with their `.txt`, and are not counted anywhere. The table at the end of the output above
 lists them. Series A restarted from round 1 with twice the VUs, and every run of A, B and D used them. One thing the two
 tries show side by side, without being a test (the VUs and the time of day both changed): on `/noop` every runtime cost
@@ -396,7 +398,9 @@ the number the prediction names, a range holds if the value is inside it.
    the rule below.
 4. **Workerman stock 10 to 25 % cheaper than nocache on `/noop`, under 5 % cheaper on posts: held, narrowly.** On `/noop`
    stock is **10.9 % cheaper** (23.39 against 26.24, relative to nocache), 0.9 points inside the range. On posts stock is
-   2.2 % more expensive (34.05 against 33.32), so it is not 5 % cheaper.
+   2.2 % more expensive (34.05 against 33.32), so it is not 5 % cheaper. Across the repeats the `/noop` figure goes from
+   5.9 % (stock's worst, 23.59, against nocache's best, 25.06) to 13.0 % (stock's best, 23.10, against nocache's worst,
+   26.56), and the posts figure from 3.6 % cheaper to 12.3 % dearer; the verdict is judged on the medians, as the rule says.
 5. **DIY within 15 % of Swoole on `/noop`, finalists Swoole and DIY: held, narrowly.** DIY is **14.1 % cheaper**
    (21.88 against 25.47); depending on which repeats are compared it goes from 9.9 % (DIY's worst, 22.03, against
    Swoole's best, 24.44) to 16.3 % (DIY's best, 21.52, against Swoole's worst, 25.72), so the 15 % line is crossed only by
@@ -426,7 +430,7 @@ the number the prediction names, a range holds if the value is inside it.
 
 ### The flip rule
 
-The plan's rule for the runtime choice: Workerman's loop with our own parser would replace the plain patched Workerman if the patched parser
+The rule for the runtime choice (`plan/details/runtimes.md`, which the predictions call runtimes.md): Workerman's loop with our own parser would replace the plain patched Workerman if the patched parser
 could not come within 30 % of Swoole on a no-op route. **It comes within 3.0 %** (26.24 against 25.47 µs/req on `/noop`),
 so the rule does not flip. For reference, DIY is 14.1 % cheaper than Swoole on the same route and 16.6 % cheaper than
 Workerman nocache (21.88 against 26.24 µs/req).
@@ -487,11 +491,11 @@ bash lab/conformance.sh --image 8.5 <server flags>        # output kept as confo
 - **The posts route stalls more than `/noop`:** all 8 invalid runs (4 in the first try, 4 in the counted series) were
   `posts.js` runs, with 100 to 450 ms of max latency, at 700 VUs and at 1,400; none of the 31 `/noop` runs was invalid. The
   cause is not separated: the host, or the server's database reads. 7 of the 8 cost more µs/req than the valid run of
-  their pair.
+  their pair; these facts fit both causes.
 - **DIY on 8.6** cost 33.16 on posts in its one information run, 13.8 % above its 8.5 median (the other three 8.6 numbers
   are within 6.4 % of the 8.5 medians). One run each: not a result.
 - **Second place is not settled.** On posts Swoole's lead over Workerman nocache is 1.5 % at 7,000 and Workerman nocache
   is 5.2 % ahead at 9,500 (the two sets ran at different times of day); on `/noop` Swoole is ahead at both rates (3.0 %,
   16.9 %). Which of the two is second depends on the route and the rate; the brief's rule gives Swoole.
-- **DIY wins by a margin that is not large:** 14.1 % on `/noop` and 11.3 % on posts against Swoole, with a spread of
-  4 to 9 % inside each runtime's 3 repeats.
+- **DIY wins by a margin that is not large:** 14.1 % on `/noop` and 11.3 % on posts against Swoole, with a spread (max over min) of 2.1 to 9.1 %
+  inside each runtime and route's 3 repeats.
