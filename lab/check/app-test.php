@@ -85,8 +85,6 @@ function check_case(string $name, callable $fn): void
 
 $good = '{"body":"hello"}';
 
-$good = '{"body":"hello"}';
-
 check_case('a good token creates a post, answered with its author and 0 likes', fn () => expect_status(
     call('POST', '/posts', '{"body":"  hello  "}', token(claims())), 201,
     fn ($json, $raw) => preg_match('/^\{"post":\{"id":4,"body":"hello","created_at":"[^"]+","author":"ada","like_count":0\}\}$/', $raw) ? null : "the body is $raw"));
@@ -186,9 +184,11 @@ check_case('one like per user and post: 201, then 200, and another user adds its
         ?? expect_status($other, 201)
         ?? expect_status(call('GET', '/posts/3'), 200, fn ($j) => $j['post']['like_count'] === 2 ? null : 'like_count is ' . json_encode($j['post']['like_count']));
 });
-check_case('a like on a post that does not exist is a 404, and leaves no row', function () {
+check_case('a like on a post that does not exist is a 404, and leaves no row', function () use ($path) {
     $got = call('POST', '/posts/9999/like', '', token(claims()));
-    return expect_error($got, 404, 'post not found');
+    // Why: foreign keys are off, so a like inserted before the post is looked up would stay in the table.
+    $rows = (int) (new PDO('sqlite:' . $path))->query('SELECT COUNT(*) FROM likes WHERE post_id = 9999')->fetchColumn();
+    return expect_error($got, 404, 'post not found') ?? ($rows === 0 ? null : "$rows like rows were left for post 9999");
 });
 
 check_case('ids: 0, -1, abc, 1.5, empty and a huge one', function () {

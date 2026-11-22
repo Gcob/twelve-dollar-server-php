@@ -153,7 +153,7 @@ final class DiyConnection
             try {
                 [$status, $payload] = handler_handle($this->method, $this->target, $body, $this->authorization);
             } catch (Throwable $e) {
-                fwrite(STDERR, 'bake-diy: the handler failed: ' . get_class($e) . ': ' . $e->getMessage() . "\n");
+                fwrite(STDERR, 'diy-connection: the handler failed: ' . get_class($e) . ': ' . $e->getMessage() . "\n");
                 [$status, $payload] = [500, self::INTERNAL_ERROR];
             }
             $this->wbuf .= self::HEAD[$status] . strlen($payload) . "\r\n\r\n" . $payload;

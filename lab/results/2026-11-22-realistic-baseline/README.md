@@ -399,11 +399,13 @@ No step failed.
   8 CPUs at the baseline (k6 307 % of one CPU, which is 38 % of the 8, and the aggregator is one process: 12.5 % at most), so no step is generator-bound.
 - **Staircases:** at 0.0286 nothing fails up to 19,000 req/s (the cap); at 0.02 the CPU per request is 26.5 to 27.3 µs from 18,000 to 24,000
   and p95 grows from 4.3 to 13 ms. The first failing step is 24,000 (coarse run 2): p95 13.8 ms, p99 38.7 ms, 0 errors, failing on achieved
-  96.7 %, never on a latency threshold. Mean latency at the baseline is 2.2 ms against a p95 of 11 to 13 ms.
+  96.7 %, never on a latency threshold. k6's mean latency over the three holds (whole runs, ramps included) is 2.21 to 2.67 ms against
+  a p95 of 11 to 13 ms.
 - **The baseline (median of 3 holds at 24,000), to be read as at least 23,386 req/s at `s = 0.02`** (a floor set by the harness, not the
   server's capacity: its CPU is 63 % busy): **23,386 req/s achieved, 221,002 users at 9.45 per req/s, 27.15 µs of CPU per request,
-  p95 11.93 ms, p99 28.29 ms** (with the per-second probes on), 0 errors, 60,000 idle connections held at the start and the end of each. The hold above (24,250) passes with
-  23,625 req/s, 223,259 users, 26.96 µs, p95 11.58 ms, p99 27.87 ms: the baseline is a conservative reading of the rule at `s = 0.02`.
+  p95 11.93 ms, p99 28.29 ms** (with the per-second probes on), 0 errors, 60,000 idle connections held at the start and the end of
+  each. The hold above (24,250) passes with 23,625 req/s, 223,259 users, 26.96 µs, p95 11.58 ms, p99 27.87 ms. 24,000 req/s sits on
+  the rule's line, though: 4 of the 17 runs at that rate failed the 97 % rule.
   Per endpoint (median p95 / p99 ms): `GET /feed` 12.66 / 29.58, `GET /posts/:id` 11.41 / 27.46, `POST /posts/:id/like` 11.75 / 27.87,
   `POST /posts` 11.07 / 27.05.
 - **Latency second by second (with the per-second probes on):** the median per-second p99 of `GET /feed` is 20 to 22 ms, but **every hold
