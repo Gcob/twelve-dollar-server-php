@@ -405,7 +405,7 @@ the number the prediction names, a range holds if the value is inside it.
    (21.88 against 25.47); depending on which repeats are compared it goes from 9.9 % (DIY's worst, 22.03, against
    Swoole's best, 24.44) to 16.3 % (DIY's best, 21.52, against Swoole's worst, 25.72), so the 15 % line is crossed only by
    the best against the worst. On posts it is 11.3 % cheaper. The finalists by the posts medians are DIY (29.14) and Swoole
-   (32.83); Workerman nocache is third (33.32). **Second place is a tie within the spread.** By the brief's rule (the
+   (32.83); Workerman nocache is third (33.32). **Second place is a tie within the spread.** By the rule in "Plan of the runs" above (the
    lowest medians) the finalists are DIY and Swoole, but Swoole's lead over Workerman nocache on posts is 1.5 % (32.83
    against 33.32, repeats 31.62 to 33.58 against 31.50 to 34.36), under the 5 % noise line stated above. Series B was therefore also
    run for Workerman nocache (after the others, not interleaved): at 9,500 req/s it costs 29.40 on posts (29.27 to 30.38),
@@ -450,7 +450,7 @@ Workerman nocache (21.88 against 26.24 µs/req).
 | k6 | v1.8.3, image `grafana/k6:1.8.3@sha256:2cd9cd09e4119340a122aaf06f30cf3009c19db23b87954909fba0d3eda58e08`, scripts `lab/macro/k6/fixed-rate.js` and `lab/macro/k6/posts.js` |
 | VUs | pre-allocated = max = rate / 5 (1,400 at 7,000 req/s, 1,900 at 9,500) |
 | Harness | the lab at commit `9aadddc` (no lab script changed by this commit) |
-| Other load | The VM had **no other container** before each series and in every counted JSON. The Mac was not quiet: Chrome and other apps were running, the load average was 4.6 to 7.6 on 12 CPUs during the runs, and the Mac was under memory pressure (about 35 GB used, 16 GB in the compressor, at 21:28). Stalls of 100 to 450 ms happened (the dropped iterations of the invalid runs, and the max-latency column), all on `posts.js`; their cause is not separated (the host, or the server's database reads). I ran no build, no other benchmark and no `lab/check.sh` during a series (a `summarize.sh` run with no input, blocked on stdin, ran during the second and third runs of the restart; it used no CPU). |
+| Other load | The VM had **no other container** before each series and in every counted JSON. The Mac was not quiet: Chrome and other apps were running, the load average was 4.6 to 7.6 on 12 CPUs during the runs, and the Mac was under memory pressure (about 35 GB used, 16 GB in the compressor, at 21:28). Stalls happened (the dropped iterations of the invalid runs, with a max latency of 140 to 511 ms at 700, 1,400 and 1,900 VUs, and the max-latency column), all on `posts.js`; their cause is not separated (the host, or the server's database reads). I ran no build, no other benchmark and no `lab/check.sh` during a series (a `summarize.sh` run with no input, blocked on stdin, ran during the second and third runs of the restart; it used no CPU). |
 
 The exact commands, from the repo root (the drivers were loops in a scratch folder, not committed; they are these calls in
 this order; `<server>` is one of the four below, `<route>` one of the two below):
@@ -489,13 +489,14 @@ bash lab/conformance.sh --image 8.5 <server flags>        # output kept as confo
 - **No runtime was killed for memory.** Swoole at 65,522 connections is at 1.62 GiB of the 2 GiB, 18 KiB of
   `Pss_Anon` per connection at the max on average.
 - **The posts route stalls more than `/noop`:** all 8 invalid runs (4 in the first try, 4 in the counted series) were
-  `posts.js` runs, with 100 to 450 ms of max latency, at 700 VUs and at 1,400; none of the 31 `/noop` runs was invalid. The
+  `posts.js` runs, with 140 to 511 ms of max latency, at 700, 1,400 and 1,900 VUs; none of the 31 `/noop` runs was invalid. The
   cause is not separated: the host, or the server's database reads. 7 of the 8 cost more µs/req than the valid run of
   their pair; these facts fit both causes.
 - **DIY on 8.6** cost 33.16 on posts in its one information run, 13.8 % above its 8.5 median (the other three 8.6 numbers
   are within 6.4 % of the 8.5 medians). One run each: not a result.
 - **Second place is not settled.** On posts Swoole's lead over Workerman nocache is 1.5 % at 7,000 and Workerman nocache
   is 5.2 % ahead at 9,500 (the two sets ran at different times of day); on `/noop` Swoole is ahead at both rates (3.0 %,
-  16.9 %). Which of the two is second depends on the route and the rate; the brief's rule gives Swoole.
+  16.9 %). On posts the two are not separable: the 9,500 ranges overlap, and the two sets ran about 20 minutes apart. The rule in
+  "Plan of the runs" (the lowest medians at 7,000) gives Swoole.
 - **DIY wins by a margin that is not large:** 14.1 % on `/noop` and 11.3 % on posts against Swoole, with a spread (max over min) of 2.1 to 9.1 %
   inside each runtime and route's 3 repeats.
