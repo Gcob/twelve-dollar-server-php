@@ -83,6 +83,9 @@ produced it, and the prior-art prediction it checks (D5).
   - **statements:** prepared once at boot and reset, versus prepared per request (to see what reuse saves).
 - **Measure:** micro bench per query on a fresh seed copy, ns per call, and `EXPLAIN QUERY PLAN` saved with the
   result.
+- **Not a variant, rule 5 (D29):** every request runs its own reads. Batching several requests' reads into one
+  `IN (...)`, or sharing one result between identical requests, is what the challenge's author ruled out on
+  2026-11-15. Two statements for one request's feed (the 20 posts, then their counts) stay allowed.
 
 ## S7: build the JSON
 
@@ -104,6 +107,12 @@ produced it, and the prior-art prediction it checks (D5).
 - **Matters for:** UC3 and UC4, and the p99 of everyone, because a checkpoint can land inside any commit.
 - **Variants:**
   - one transaction per write versus group commit (writes queued for a few ms, one `COMMIT`, then every response);
+  - **group commit per loop turn** (D30): each turn of the event loop gathers the writes that arrived together, runs
+    one `BEGIN … COMMIT`, then answers them all. No timer: at low load a batch is one write (no added latency), near
+    saturation the batches grow by themselves. Rule 6 allows it because every response waits for its commit;
   - `wal_autocheckpoint` default, larger, or off with a `PASSIVE` checkpoint on a timer;
+  - **a background checkpointer** (D30): a separate process runs `PRAGMA wal_checkpoint(PASSIVE)` on a timer, with the
+    server's `wal_autocheckpoint` off. The checkpoint's CPU stays on the same core, but its wait on the disk (`fsync`)
+    leaves the event loop, which would otherwise freeze every connection while it runs;
   - `synchronous=NORMAL` (minimum allowed) is the starting point.
 - **Measure:** macro, p99 of the reads while the writes run, WAL size over 5 minutes.

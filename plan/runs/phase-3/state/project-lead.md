@@ -1,0 +1,118 @@
+# Project manager: phase 3, runtime bake-off
+
+**State:** 🏁 delivered 22:36: 7/7 scopes, both final reviews OK (delta 2 each), check.sh 32/32 on `b216364` (`01e1ad5` README only), branch pushed at `01e1ad5`, not merged. Retro sorted into run.md; 4 inbox entries in ~/.claude/inbox.md. Nothing in flight. Phase 4 not started (D12).
+
+## Resolved config
+
+**Also read `CLAUDE.local.md`** (git-ignored, repo root): pace (read usage before each agent, land at 🟠: 5-hour over
+85 % or weekly 98 %), the PM pushes after `git fetch` + `git status -sb` (behind: stop), developers commit.
+
+Skill defaults (`autonomous-run/pipeline.yml`), no run override file. Changes from D12 and D14:
+
+- **Code:** branch `phase-3-claude`, worktree `.claude/worktrees/twelve-dollar-server-php/phase-3-claude` under the home folder (the full absolute path goes in agent prompts, never in a committed file).
+  Every git command in full form `git -C <that path> ...`, alone in its call. The PM pushes it with
+  `git -C <that path> push -u origin phase-3-claude`. Never merge.
+- **`plan/`:** on `main`, this checkout, committed and pushed by the PM. Never write the worktree's copy of `plan/`.
+- One commit per scope, explicit `git add` per file, no co-authored-by, never `push --force`.
+- The repo is public: no private details, no absolute home paths in committed files.
+- `plan/notes.md` belongs to the planning session.
+- One phase per run: stop after phase 3 (D12).
+- developer: sonnet, high · pr-reviewer: sonnet, max 2 relaunches · blind-reviewer: opus, max 1 relaunch.
+- **D15:** `docker ps` before every measurement; other projects' containers running means no measuring. Never stop
+  or remove them.
+- Jacob is away: a choice for him becomes a `run` question in 👉 of `plan.md` with a `FIXME(pending)`; stop only when
+  truly blocked.
+
+## Developers
+
+| Scope | Agent id | State |
+|-------|----------|-------|
+| plan-reviewer | aafd6e0f78a1cc771 | full NOT_OK 16:42 (settled D21-D24); delta OK 16:48 |
+| 1     | a912ed904256c9783 | done `a0477ba`, pushed 16:34 (fixture SC2046: SC2086 is info level; tag v0.11.0) |
+| 2     | a989762d0cb68a567 | done `0d74fda`, pushed 16:59 |
+| 3     | a3803015f5e6ef81d | done `deeb8d1`, pushed 17:15 |
+| 4     | a161b1a16e1bf9f8d | done `8c8f7cc`, pushed 17:53 (images rebuilt from scratch: build cache was gone) |
+| 5     | a6a4a68f6415877b2 | done `ad52342`, pushed 18:03 |
+| 6     | a5ac629088e976752 | done `3e74d76`, pushed 18:17 (DIY spins on accept at the fd limit: noted for the conns run) |
+| pr-reviewer | ac896543c8894bdb6 | pass 1 OK 18:23 (6 🟡) |
+| 6 (fixes)   | a5ac629088e976752 | R1 R2 R4 fixed `e1cf918`, pushed 18:30 |
+| blind-reviewer | abca1a48d5f108622 | pass 1 NOT_OK 18:38 (1 🟠) |
+| 6 (fixes 2) | a5ac629088e976752 | R7 to R10 fixed `9aadddc`, pushed 18:47 |
+| blind-reviewer | abca1a48d5f108622 | pass 2 OK 18:49 (R12 🟡 left) |
+| 7     | aa198fd9407d71d19 | first try stopped 21:28 (D25); done `e062f0b` 22:09, pushed 22:11 |
+| pr-reviewer | ac896543c8894bdb6 | delta on `e062f0b` NOT_OK 22:15 (1 🟠, 5 🟡, all fixed `793d503` `d0bf2bc`); delta 2 OK |
+| blind-reviewer | abca1a48d5f108622 | delta on `e062f0b..d0bf2bc` NOT_OK 22:20 (D1 🟠 second finalist a tie; D2-D6 🟡) |
+| 7 (fixes 3) | aa198fd9407d71d19 | D1 (`2b54788`, 6 runs) and D2-D6 (`b216364`), pushed |
+| blind-reviewer | abca1a48d5f108622 | delta 2 OK 22:29 (D7-D9 🟡 wording) |
+| 7 (fixes 4) | aa198fd9407d71d19 | D7-D9 wording `01e1ad5`, pushed 22:31 |
+
+## Verified
+
+- The worktree is at `b14068f`, clean; its `reference` is a relative symlink to the main checkout's clone, excluded
+  in `.git/info/exclude` (shared by both checkouts); `lab/seed.sh` printed OK there. **Proof:** commands at 16:27.
+- 0 containers running at 16:24, images `php-lab:8.3-apt`, `8.3` to `8.6` present. **Proof:** `docker ps`, `docker images`.
+
+## Assumed
+
+- ext-event (PECL) builds on 8.5; maybe not on 8.6.
+- Workerman 5.2.4 needs `workerman/coroutine` at runtime only through its autoloader (to check in scope 4).
+
+## Dead ends
+
+- A 10 s posts run at 7k on the busy VM (23 other containers) went INVALID: 153 dropped on a 150 ms stall. The 20 s
+  Done-when runs right after were VALID. Busy-VM stalls, not the server: one more reason for D15. (16:57)
+
+## Decisions on the way
+
+- D17 to D20 (PHP 8.5, ext-event, each runtime's headers, two routes), in `decisions.md`.
+- Phase 2's run archived in `plan/runs/phase-2/` (run.md links rewritten to `../../`).
+
+## Review triage
+
+- Plan review (full, 16:42): 🔴 pcntl → D21; 🟠 backlog → D22; 🟠 max connections → D23; 🟠 partial write → D24; all
+  with the reviewer's own picks. 🟡 folded into phase-3.md. Predictions 7, 8 revised 16:44 (before any measurement).
+- pr-reviewer pass 1 (OK): R1, R2, R4 fixed by scope 6's developer (broadest context, one writer); R3, R5, R6 left
+  (no failure scenario that changes a number).
+- blind pass 1 (NOT_OK): R7 🟠 Pss counts mmap pages → fix (Pss_Anon); R8, R9, R10 🟡 → fix (cheap, R8 is close to a
+  bug); R11 left. One developer (scope 6's: DIY context, one writer on README).
+
+## Suggested skills
+
+`autonomous-run`, `plan-format`, `markdown`.
+
+## Where to look
+
+- `lab/macro.sh`: the server-start and probe logic that `conformance.sh` and `conns.sh` reuse. `@b14068f`
+- `lab/lib.sh` → `LAB_SERVER_PHP_FLAGS`: loads Swoole for every server today (scope 2 adds `--ext`). `@b14068f`
+- `reference/workerman/` (tag v5.2.4): the 5 caches of D10 (runtimes.md lists them). `@4c817de`
+
+## Plan read up to
+
+`plan.md`, `decisions.md` D1 to D20, 2026-11-21 16:30.
+
+## Decisions on the way (cont.)
+
+- 18:17: scope 7 blocked by a busy VM (23 other containers since 16:43). Reviews run on scopes 1 to 6 now; after
+  scope 7, each reviewer gets a delta pass on its commit only. Questions point skipped: no new `run` question.
+
+- 21:30: scope 7 first try stopped at 21:28 (posts runs dropped iterations on host stalls of 100-300 ms, workerman-nocache posts invalid twice; all /noop valid; VM quiet throughout). D25: VUs at rate / 5 on every run, series A from round 1, first try kept in `first-try-700-vus/`, shown not counted. Predictions stay unchanged with a line pointing to decisions.md.
+
+## Next steps
+
+1. Plan review, settle its points.
+2. Scope 1 brief and developer.
+
+## Retro
+
+1. **What I was missing:** a way to see the Mac's load from inside the run; D15 covers Docker's VM only. Proof: the
+   first try stopped at 21:28 on posts-only stalls.
+2. **What I guessed:** that the stalls came from the host (D25's first wording, 21:30); both reviewers showed the
+   data doesn't separate it. Reworded at 22:16 and 22:21.
+3. **Where I lost time:** five rounds on scope 7's README (check.sh, pr delta, blind delta, blind delta 2), each
+   small; a one-minute sanity run and a noise-band finalist rule in the brief would have saved two.
+4. **A useless or contradictory instruction:** Rien.
+5. **What could have been deterministic:** the "summarize.sh output is in the README" diff, run by hand at 5 commits:
+   a check in `lab/check.sh` (question in plan.md).
+6. **What the plan should have decided:** the finalist rule's noise band; a fixed k6 connection count for memory.
+7. **A blind spot:** nobody checked the 8.6 information runs beyond "one run each"; DIY's 8.6 posts run is 13.8 %
+   above its 8.5 median, unexplained.

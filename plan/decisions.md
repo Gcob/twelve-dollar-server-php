@@ -73,6 +73,48 @@
   the server's database reads), and the extra VUs absorb a stall whatever its cause. The cost: twice the connections
   under load, which moves Swoole's memory under load (a memory comparison must fix k6's connection count). The first
   try at rate / 10 is kept and shown, not counted (scope 7, settled by the project manager, phase 3, 2026-11-21).
+- **D26:** PHP 8.6 gets the micro benches only; the Swoole servers run on 8.3 to 8.5, and we revisit when a Swoole
+  release supports 8.6 ([Q7](questions/2026-11-22-1049.ronde-3.md)).
+- **D27:** phase 4 is "realistic first": a walking skeleton of the 5 endpoints on the DIY server, a realistic mode of the
+  lab (the bench's own journey, think time scaled, plus the bench's idle connections), the baseline it holds, and a
+  profile under that load. The step lab (S1 to S9) becomes phase 5, in the order the profile gives; submission, score
+  and submit become phases 6, 7 and 8. Where D16 says "phase 4", read the step lab, now phase 5. Phase 4 stops after
+  the profile (D12) (Jacob, 2026-11-22 10:49, [notes.md](notes.md) "test the way Arjay tests").
+- **D28:** the posts stalls of the bake-off (Q10) are measured inside phase 4's realistic runs: per-second latency, cold
+  versus warm page cache, `gc_status()` and SQLite's page cache (or the page faults that stand for it), under the bench's
+  real hot set (the newest posts, read from the feed), and once more under the bake-off's `posts.js` to tell a lab
+  artifact from a real stall ([Q10](questions/2026-11-22-1049.ronde-3.md), answered A by the shape of phase 4).
+- **D29:** rule 5, as the challenge's author ruled on 2026-11-15 (`LEADERBOARD.md`, "Rule flags from code review"):
+  every request does its own reads. No read is shared by several requests, whether merged (identical reads) or batched
+  (one `IN (...)` for several requests' ids). Group commit for writes stays allowed (rule 6), each response waiting for
+  its commit (Jacob, 2026-11-22, [notes.md](notes.md) 10:41).
+- **D30:** S9 gets two new variants for the step lab: a group commit with one batch per turn of the event loop (no
+  timer), and a background checkpointer (a separate process running `PRAGMA wal_checkpoint(PASSIVE)` on a timer, with
+  the server's `wal_autocheckpoint` off) (Jacob, 2026-11-22, [notes.md](notes.md) 10:33).
+- **D31:** in the realistic mode, a step passes when it meets the bench's thresholds (p95 under 500 ms, p99 under 1 s,
+  errors under 1 %) **and** its VUs achieve at least 97 % of the request rate they offer (their count over the journey's
+  mean loop time, latency left out). Users are mapped from the achieved rate (10.8 users per req/s, the leaderboard's
+  ratio), never from the VU count. Why: with think time scaled by `s`, latency weighs `1/s` times more in a VU's loop, so
+  the thresholds alone pass loads far past saturation (at `s = 0.02`, an average latency of 500 ms needs about 3.6 times
+  the VUs of the knee; in the real bench, 1.05 times) (project manager, phase 4, 2026-11-22).
+- **D32:** the skeleton reads its config like a submission: it opens `SQLITE_PATH` (never copies it) and reads
+  `JWT_SECRET`, `HOST` and `PORT`. The lab gives every run a fresh copy of the seed on the server container's own disk.
+  The bake-off's files keep working (its `check.sh` checks stay green), and its numbers stay reproducible at their
+  commit (project manager, phase 4, 2026-11-22).
+- **D33:** the profiler is Excimer (PECL, sampling on CPU time), built in the images like ext-event (sha256 pinned, loaded
+  only with `--ext excimer`). The kernel's part comes from the cgroup's `system_usec` against `user_usec`; `perf` only if
+  it runs without changing anything VM-wide. A profiled run never gives a µs/req of the baseline: its cost is measured
+  against an unprofiled run instead (project manager, phase 4, 2026-11-22).
+- **D34:** the skeleton prints one telemetry line per second with `APP_TELEMETRY=1` (requests per endpoint, its longest
+  callback, `gc_status()` counters, the WAL's size, minor and major page faults). It's on in every phase 4 run; its cost
+  is measured once, on against off at the same rate (project manager, phase 4, 2026-11-22).
+- **D35:** the baseline runs the DIY server only (the cheapest per request in the bake-off) on PHP 8.5 (D17), on the
+  Mac: the users it maps to are an arm64 number, not a score (D7) (project manager, phase 4, 2026-11-22).
+- **D36:** the realistic mode's sizes: 60,000 idle keep-alive connections held by phase 3's connection client, at most
+  3,000 k6 VUs (k6's memory in a 7.75 GiB VM, and 63,000 sockets in all stay under the server's 65,535 fds), a think
+  scale picked by calibration so the knee needs at most 2,500 VUs. The baseline: warm-up, a staircase that stops at the
+  first failing step, then 3 holds of 5 minutes at the highest passing step (the median counts) and 1 hold one step
+  above; a fresh seed copy for every run (project manager, phase 4, 2026-11-22).
 
 ## History
 

@@ -1,9 +1,9 @@
-# How phase 3 differs from your agent file (every brief points here)
+# How phase 4 differs from your agent file (every brief points here)
 
 - **Write in English** everywhere: `plan/state/developer.md`, your answer, code, comments, commits.
 - **Two places, never mix them:**
-  - **Code:** the worktree `.claude/worktrees/twelve-dollar-server-php/phase-3-claude` under the home folder, branch
-    `phase-3-claude`. Your prompt gives its full absolute path. Every git command is `git -C <that absolute path> ...`,
+  - **Code:** the worktree `.claude/worktrees/twelve-dollar-server-php/phase-4-claude` under the home folder, branch
+    `phase-4-claude`. Your prompt gives its full absolute path. Every git command is `git -C <that absolute path> ...`,
     alone in its Bash call, the path written in full (no `~`, no variable). You commit there.
   - **Your handover:** `plan/state/developer.md` in the **main checkout** (`www-perso/twelve-dollar-server-challenge/`
     under the home folder; your prompt gives the absolute path). Never write the worktree's copy of `plan/`, and
@@ -17,8 +17,15 @@
 - **The seed is already built** in the worktree's `lab/data/` (ignored by git).
 - **The `php-lab:*` Docker images are shared** with the main checkout (one Docker daemon). Never remove or retag them.
 - **Other projects' containers on the Docker VM:** never stop or remove them. A smoke run with them running is fine;
-  a measurement is not (scope 7 only).
+  a measurement is not (scope 5 only).
 - **No install on the Mac** (no `brew install`, no global npm): tools run in Docker.
 - **No plan references in code, tests or docs** (no `D17`, no "scope 3"): write the reason itself.
 - **The lab's suite** is `bash lab/check.sh` (from the worktree). Run it fully before you commit and report the count
   (`N/N ok`). It needs the images; it takes a few minutes.
+- **Earlier handovers:** phase 3's developers left their learnings in `plan/runs/phase-3/state/developer.md` (read
+  "Raw learnings", "Where to look" and "Dead ends" for any harness you touch: `macro.sh`, `conns.sh`, `conformance.sh`,
+  the DIY server, the images). Phase 2's are in `plan/runs/phase-2/state/developer.md`.
+- **Rule 5 of the challenge:** every request reads its own data from SQLite. No result, response or JWT verification
+  kept across requests, and no read shared by several requests (merged, or batched with `IN (...)`). Prepared
+  statements reused across requests are fine.
+- **PHP 8.5** (`php-lab:8.5`) for everything in this phase.

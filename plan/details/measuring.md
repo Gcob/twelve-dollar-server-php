@@ -24,10 +24,30 @@ Two levels, always both: a micro result that doesn't hold up end to end doesn't 
 - **Connection ceiling:** many VUs with long sleeps and a no-op route, to find the max idle connections.
 - **The real score:** `bench/load.js` with ramps, the way the leaderboard runs it, only at the end.
 
+## Realistic: the bench's journey, on the Mac (phase 4, D27, D31, D36)
+
+The fixed-rate macro ranks variants of one route. The realistic mode loads the server the way the bench does: the
+challenge's own `bench/load.js` (feed, a post from it, 15 % like, 2 % new post, think time between), with its think
+times scaled by `s` so a few thousand VUs make the bench's request rate, plus 60,000 idle keep-alive connections held by
+the connection client. Arjay's run shape on top: calibration, warm-up, a staircase that stops at the first failing
+step, then 5-minute holds, 3 times, median; a fresh seed copy every run.
+
+- **A step passes (D31)** on the bench's thresholds (p95 under 500 ms, p99 under 1 s, errors under 1 %) **and** an
+  achieved rate of at least 97 % of the rate its VUs offer. Scaled think time makes latency weigh `1/s` times more in a
+  VU's loop, so the thresholds alone would pass loads far past saturation.
+- **Users** are mapped from the achieved rate, 10.8 per req/s, never from the VUs. On arm64 they aren't a score (D7).
+- **What it reads:** µs CPU/req, p95 and p99 per endpoint, per-second latency, memory, the WAL's size, page faults,
+  and the server's telemetry (longest callback, GC) per second.
+- The full-size run (100,000 users, several generators, x86) is phase 7.
+
 ## Profiling
 
 When a step is slower than its theory: a sampling profiler (SPX or Excimer) for a flame graph of the PHP side, and
 `perf` for the C side (Swoole, SQLite), if the environment allows it.
+
+Phase 4 picks **Excimer** (D33): it samples on CPU time, so a long-running server can be profiled under load. Its
+collapsed stacks are folded into the steps S1 to S9 by a rules file; the kernel's part comes from the cgroup's
+`system_usec`. A profiled run never gives a µs/req: its cost is measured against an unprofiled run.
 
 ## Prior art as predictions (D5)
 
