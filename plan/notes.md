@@ -491,3 +491,108 @@ could maybe try to create a VM or something. It is on Windows though"
 
 **Verdict:** 🔶 Claude's take: yes, as the lab's second host for the full-size realistic runs, the fd wall and the
 io_uring spike, with the Mac still running the quick comparisons. Open until Jacob confirms.
+
+### 2026-11-22 18:25 · ❓ Question: what does FFI cost, and can a fail-fast lab tell?
+
+**Jacob:** "'FFI isn't free': please detail more, and can we do a fail fast lab to see that?"
+
+**Challenge:**
+
+- **Where FFI costs:** (1) each call crosses from PHP to C: arguments converted from PHP values to C types, the call
+  made through libffi, the result converted back; (2) each read or write of a C struct field through an `FFI\CData`
+  is a PHP object operation with type checks, much costlier than an array access; (3) bytes move between C memory and
+  PHP strings by copy (`FFI::string`, `FFI::memcpy`). How much each costs on PHP 8.5 nobody here has measured.
+- **Designing around it:** work per turn of the loop, not per request. Build every submission of a turn in one PHP
+  string with `pack()` and copy it in one `FFI::memcpy`; read every completion of the turn with one `FFI::string` and
+  `unpack()`; one `io_uring_enter` per turn. A request is then left with two copies (its bytes in, its response out)
+  plus its share of the turn's few calls.
+- **What it can win:** the kernel is 30 % of the CPU and the event loop 6.5 % (phase 4's profile); io_uring saves the
+  syscalls' entries and exits and epoll's bookkeeping, not the TCP stack's work. And, above all, the fd wall without
+  reconnects.
+- **The fail-fast lab, cheapest first, each step with its stop rule:**
+  1. **Smoke (done, 18:25):** in a lab container with Docker's seccomp filter lifted, PHP's FFI called
+     `io_uring_setup` and got a ring back (kernel 6.12.76, `io_uring_disabled` 0). With the default filter: `EPERM`.
+  2. **Micro, about an hour on the micro harness:** ns per FFI call (`syscall(getpid)` through FFI against
+     `posix_getpid()`), per `CData` field write, per `FFI::memcpy` and `FFI::string` of 200 bytes and 5 KB, per
+     `pack()` of a 64-byte submission. Stop if a request's FFI budget (two copies and its share of a turn) costs more
+     than the syscalls it saves.
+  3. **A no-op server on an FFI ring** (multishot accept, receive, send, direct descriptors): its µs per request at
+     7,000 req/s against DIY's 21.88, and more than 65,535 connections held. Stop if it costs more than DIY plus
+     S1-d's reconnects.
+
+**Verdict:** ✅ the fail-fast lab, as the io_uring spike's first steps in phase 5. Step 1 is done.
+
+### 2026-11-22 18:25 · ❓ Question: the queues' memory ordering: what's the risk, can it be fully controlled?
+
+**Jacob:** "I want more details. What is the risk, and can we determine if the risk can be 100% controlled?"
+
+**The protocol:** the program writes a submission, then moves the submission queue's tail; the kernel reads the tail,
+then the submission. The kernel writes a completion, then moves the completion queue's tail; the program reads the
+tail, then the completion, then moves the head to free the slot. Each "then" matters: in C, liburing uses atomic
+loads and stores with acquire and release ordering. FFI has no such operations.
+
+**The risk:** a CPU core may see another core's writes out of order (x86 keeps them in order, arm64 doesn't). If the
+kernel saw a new tail before the submission's bytes, it would run a half-written order (a wrong socket, buffer or
+length); if the program saw a new completion tail before the completion's bytes, it would take a stale result. The
+worst case is one user's response sent to another user: a correctness bug and a privacy bug.
+
+**How to control it, by design rather than luck:**
+
+- **No `SQPOLL`:** the kernel then reads submissions only inside our own `io_uring_enter` call, on our thread, so on
+  the same core, where program order holds on any CPU.
+- **`IORING_SETUP_DEFER_TASKRUN` with `IORING_SETUP_SINGLE_ISSUER`** (kernel 6.1 and up; the bench runs 6.8, the lab
+  6.12): the kernel posts completions only when our thread calls `io_uring_enter` with `GETEVENTS`, in our thread's
+  context. Both queues are then touched by the kernel only inside our own calls: no other core is involved.
+- **The bench has one vCPU:** there is no other core to see things out of order.
+- **A stress test checks the implementation:** every request carries a unique id that its response echoes, millions
+  of requests on the multi-core lab VM (where a reordering could show), zero mismatches, plus the challenge's 42 tests.
+
+**"100 %":** the design rules the race out (both queues only touched by the kernel inside our own calls, on our
+thread); a test can't prove an absence, it catches mistakes in following the design. That's as controlled as a C
+program using liburing.
+
+**Verdict:** ✅ the risk is controlled by those settings; they are requirements of the spike, and the stress test
+is part of its "done when".
+
+### 2026-11-22 18:25 · 💡 Idea: move the lab to a VM
+
+**Jacob:** "'Docker blocks io_uring by default' I think it is time to use a VM, what do you think?"
+
+**Challenge:**
+
+- **Not needed for io_uring:** Docker Desktop's VM runs kernel 6.12.76 with io_uring on. Docker only blocks it through
+  its default seccomp profile, and a lab container can allow the io_uring syscalls (tested at 18:25, see above).
+- **Useful for other reasons:** a VM with Ubuntu 24.04 runs the bench's kernel (6.8) and distribution, and is
+  isolated from Jacob's other projects: Docker's VM rebooted on its own today and brought 23 containers back, which
+  blocked measuring twice (D15).
+- **Where:** Jacob's desktop (x86, many cores, 64 GB) in a Hyper-V VM with Ubuntu 24.04 is the closest thing to the
+  bench we own: the bench is itself an x86 KVM virtual machine on kernel 6.8. It merges with the desktop idea above.
+  The Mac's Docker stays for quick comparisons.
+
+**Verdict:** 🔶 Claude's take: yes, an Ubuntu 24.04 VM on the desktop as the lab's main host for phase 5's
+full-size runs and the io_uring spike; not required to start the spike. Open until Jacob confirms the desktop.
+
+### 2026-11-22 18:25 · 💡 Idea: keep the software factory private, publish only the decisions
+
+**Context:** a lab harness recorded the names of Jacob's other Docker containers in two results files of phase 4's
+branch, pushed and public for about 6 hours before the blind reviewer caught it. The branch was deleted from GitHub
+at 18:25 and is being rewritten without them. Fewer names had also reached a phase 3 plan update on `main` (since
+removed from the files, still in the history).
+
+**Jacob:** "I think the SF should not be public to avoid that in the future. Maybe only the decisions, what do you
+think?"
+
+**Challenge:**
+
+- **This leak came from `lab/results/`, not from `plan/`:** a harness wrote what it observed. Hiding the factory
+  wouldn't have stopped it, and the results have to stay public (they're the point of the repo).
+- **The real guard is before every push:** a git-ignored denylist of private words (it can't be committed, it holds
+  them), plus patterns (emails, account ids, `/Users/` paths), checked by `lab/check.sh` and a pre-push hook that
+  refuses the push. And harnesses record counts, never names.
+- **The factory's working files are where agents log what they see:** `run.md`, `state/`, `reviews/`, `runs/`,
+  briefs, snapshots. They're also the noisiest to read. Keeping public `plan.md`, `decisions.md`, `notes.md`,
+  `details/` and the lab, and making the working files private, loses little transparency and removes most of the
+  exposure. Private means git-ignored here and backed up in a private repo, so nothing is lost.
+
+**Verdict:** 🔶 Claude's take: the push guard first (it covers the whole repo), and the factory's working files
+private, the decisions, notes, details and results public. A change to D11: Jacob decides.
