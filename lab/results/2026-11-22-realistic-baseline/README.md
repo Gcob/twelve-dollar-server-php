@@ -456,6 +456,8 @@ One line each, by the rule written with them (a range holds if the measured valu
 
 ## The step lab's order
 
+The fd wall comes first. The 221,002 users are CPU-equivalent: one process holds at most about 65,500 connections (65,535 fds), so on the real bench this server caps near 71,000 users, whatever its CPU. S1's fd wall therefore comes first in the step lab, before the CPU ranking below. That means S1-d (one process, answering with `Connection: close` near the limit) or S1-b (several processes with `SO_REUSEPORT`). The first thing to measure there is its cost under churn: one accept and one close per request past the limit. The CPU ranking below then orders the rest.
+
 The steps ranked by their µs per request in the profile (the profiled shares times the unprofiled runs' 27.59 µs per request; the baseline's 27.15 µs
 would scale each by 1.6 % less):
 
