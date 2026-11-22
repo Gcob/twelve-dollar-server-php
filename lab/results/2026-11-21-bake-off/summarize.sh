@@ -32,7 +32,7 @@ median_us() { # label route rate image
   # Why: the file names (run-*.json) hold no space, and the list must reach jq as separate arguments.
   # shellcheck disable=SC2046
   jq -n "$PRELUDE"'[counted_group($label; $route; ($rate | tonumber); $image)[] | .us] | med' \
-    --arg label "$1" --arg route "$2" --arg rate "$3" --arg image "$4" $(macro_files)
+    --arg label "$1" --arg route "$2" --arg rate "$3" --arg image "$4" $(macro_files) </dev/null
 }
 
 echo "### Series A: per runtime and route at 7,000 req/s on 8.5 (counted runs only; spread = min to max)"
@@ -46,7 +46,7 @@ for s in $SERVERS; do
       [counted_group($s; $r; 7000; "8.5")] | .[0] as $g
       | "| \($s) | \($r) | \($g | length) | \($g | map(.us) | med | r2) | \($g | map(.us) | min | r2) .. \($g | map(.us) | max | r2)"
         + " | \($g | map(.p99) | med | r2) | \($g | map(.anon) | max | r1) | \($g | map(.cur) | max | r1) | \($g | map(.pss) | max | r1) |"' \
-      --arg s "$s" --arg r "$r" $(macro_files)
+      --arg s "$s" --arg r "$r" $(macro_files) </dev/null
   done
 done
 
@@ -93,11 +93,14 @@ finalists="$(jq -nr --argjson s "$m_swoole_posts" --argjson w "$m_workerman_noca
 echo "Finalists: $(jq -nr --arg f "$finalists" '$f | split(" ") | map("**\(.)**") | join(" and ")') (posts medians: Swoole $(jq -n "$m_swoole_posts | . * 100 | round / 100"), Workerman nocache $(jq -n "$m_workerman_nocache_posts | . * 100 | round / 100"), DIY $(jq -n "$m_diy_posts | . * 100 | round / 100") µs/req)."
 
 echo
-echo "### Series B: the finalists at 9,500 req/s on 8.5 (counted runs only), against their 7,000 medians"
+echo "### Series B: the finalists, and Workerman nocache, at 9,500 req/s on 8.5 (counted runs only), against their 7,000 medians"
 echo
 echo "| Runtime | Route | Counted runs | µs CPU/req median | min .. max | p99 ms (median) | median at 7,000 | lower than at 7,000 by |"
 echo "|---|---|---|---|---|---|---|---|"
-for s in $finalists; do
+# Workerman nocache is third on the posts medians at 7,000, within the spread of the second place: it is run at 9,500 too.
+b_runtimes="$finalists"
+case " $finalists " in *" workerman-nocache "*) ;; *) b_runtimes="$finalists workerman-nocache" ;; esac
+for s in $b_runtimes; do
   for r in noop posts; do
     base="$(median_us "$s" "$r" 7000 8.5)"
     # shellcheck disable=SC2046
@@ -105,18 +108,38 @@ for s in $finalists; do
       [counted_group($s; $r; 9500; "8.5")] | .[0] as $g | ($base | tonumber) as $b | ($g | map(.us) | med) as $m
       | "| \($s) | \($r) | \($g | length) | \($m | r2) | \($g | map(.us) | min | r2) .. \($g | map(.us) | max | r2)"
         + " | \($g | map(.p99) | med | r2) | \($b | r2) | \(($b - $m) / $b * 100 | r1) % |"' \
-      --arg s "$s" --arg r "$r" --arg base "$base" $(macro_files)
+      --arg s "$s" --arg r "$r" --arg base "$base" $(macro_files) </dev/null
   done
 done
 
 echo
+echo "| At 9,500 req/s, median µs/req | /noop | posts |"
+echo "|---|---|---|"
+b_median() { median_us "$1" "$2" 9500 8.5; }
+jq -nr \
+  --argjson wn_n "$(b_median workerman-nocache noop)" --argjson wn_p "$(b_median workerman-nocache posts)" \
+  --argjson s_n "$(b_median swoole noop)" --argjson s_p "$(b_median swoole posts)" \
+  --argjson d_n "$(b_median diy noop)" --argjson d_p "$(b_median diy posts)" '
+  def r1: . * 10 | round / 10;
+  def pct($a; $b): (($a - $b) / $b * 100) | r1;
+  "| Workerman nocache against Swoole | \(pct($wn_n; $s_n)) % | \(pct($wn_p; $s_p)) % |",
+  "| Workerman nocache against DIY | \(pct($wn_n; $d_n)) % | \(pct($wn_p; $d_p)) % |"' </dev/null
+
+echo
+# shellcheck disable=SC2046
+jq -nr "$PRELUDE"'[inputs | rec | select(.rate == 9500 and .image == "8.5")] | group_by(.label == "workerman-nocache") as $g
+  | ($g | map({nocache: (.[0].label == "workerman-nocache"), first: (map(.date) | min), last: (map(.date) | max)})) as $t
+  | ($t | map(select(.nocache))[0]) as $w | ($t | map(select(.nocache | not))[0]) as $o
+  | "Workerman nocache'"'"'s 9,500 runs ran from \($w.first) to \($w.last) (UTC), after the other 9,500 runs (\($o.first) to \($o.last)), not interleaved with them: the time of day differs."' $(macro_files) </dev/null
+echo
+
 echo "### Series D: PHP 8.6, information, one run each, at 7,000 req/s (not counted in any median)"
 echo
 echo "| Runtime | Route | µs CPU/req on 8.6 | median on 8.5 | difference | valid | other containers |"
 echo "|---|---|---|---|---|---|---|"
 # shellcheck disable=SC2046
 jq -nr "$PRELUDE"'[inputs | rec | select(.image == "8.6")] | sort_by(.date) | .[]
-  | "| \(.label) | \(.route) | \(.us | r2) | MEDIAN_\(.label)_\(.route) | DIFF | \(.valid) | \(.others) |"' $(ls info-*.json 2>/dev/null) |
+  | "| \(.label) | \(.route) | \(.us | r2) | MEDIAN_\(.label)_\(.route) | DIFF | \(.valid) | \(.others) |"' $(ls info-*.json 2>/dev/null) </dev/null |
   while IFS= read -r line; do
     label="$(cut -d'|' -f2 <<<"$line" | tr -d ' ')"; route="$(cut -d'|' -f3 <<<"$line" | tr -d ' ')"
     us="$(cut -d'|' -f4 <<<"$line" | tr -d ' ')"
@@ -191,7 +214,7 @@ echo "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"
 jq -nr "$PRELUDE"'
   [inputs | rec] | sort_by(.date) | .[]
   | (.file | sub("\\.json$"; "")) as $name
-  | "| \(.date) | \($name) | \(.image) | \(.vus) | \(.us | r2) | \(.achieved | r2) | \(.p99 | r2) | \(.max_ms | r2) | \(.srv_pct | r2) | \(.errors) | \(.dropped) | \(.others) | \(.valid) | \(if (.file | startswith("info-")) then "information only" elif .counted then "yes" else "no" end) |"' $(macro_files)
+  | "| \(.date) | \($name) | \(.image) | \(.vus) | \(.us | r2) | \(.achieved | r2) | \(.p99 | r2) | \(.max_ms | r2) | \(.srv_pct | r2) | \(.errors) | \(.dropped) | \(.others) | \(.valid) | \(if (.file | startswith("info-")) then "information only" elif .counted then "yes" else "no" end) |"' $(macro_files) </dev/null
 
 echo
 echo "### Connection runs, in the order they ran"
@@ -211,4 +234,4 @@ echo "|---|---|---|---|---|---|---|---|---|"
 # shellcheck disable=SC2046
 jq -nr "$PRELUDE"'
   [inputs | rec] | sort_by(.date) | .[]
-  | "| \(.date) | \(.file | sub("^first-try-700-vus/"; "") | sub("\\.json$"; "")) | \(.vus) | \(.us | r2) | \(.p99 | r2) | \(.max_ms | r2) | \(.dropped) | \(.others) | \(.valid) |"' first-try-700-vus/run-*.json
+  | "| \(.date) | \(.file | sub("^first-try-700-vus/"; "") | sub("\\.json$"; "")) | \(.vus) | \(.us | r2) | \(.p99 | r2) | \(.max_ms | r2) | \(.dropped) | \(.others) | \(.valid) |"' first-try-700-vus/run-*.json </dev/null

@@ -82,7 +82,11 @@ D.
 - **Series A:** Swoole, Workerman with its caches out (`nocache`), Workerman stock, and DIY (our own loop and parser), on
   `/noop` and on `posts.js` (a different post every request), at 7,000 req/s: 30 s measured after a 10 s warm-up, 1,400
   VUs, 3 repeats interleaved (round 1 runs the 8 pairs, then round 2, then round 3, same order).
-- **Series B:** the two finalists at 9,500 req/s (1,900 VUs), both routes, 3 interleaved repeats.
+- **Series B:** the two finalists at 9,500 req/s (1,900 VUs), both routes, 3 interleaved repeats. Added afterwards,
+  because second place was a tie within the noise (see "Did the predictions hold?", prediction 5): Workerman nocache at
+  9,500 req/s, same flags, image and VUs, 3 rounds of both routes. **These 6 runs ran after the others and are not
+  interleaved with them** (2026-11-22 from 03:22 to 03:27 UTC, against 02:51 to 03:01 for the finalists), so the time of
+  day differs.
 - **Series C:** `lab/conns.sh` once per runtime (Swoole, Workerman nocache, DIY), default steps up to 66,000.
 - **Series D:** PHP 8.6, Workerman nocache and DIY, one run per route, information only.
 - **µs CPU per request** is the server cgroup's `usage_usec` over the measured run divided by the requests k6 sent in
@@ -133,7 +137,7 @@ below, down to the first-try table, are its output, unedited.
 
 Finalists: **diy** and **swoole** (posts medians: Swoole 32.83, Workerman nocache 33.32, DIY 29.14 µs/req).
 
-### Series B: the finalists at 9,500 req/s on 8.5 (counted runs only), against their 7,000 medians
+### Series B: the finalists, and Workerman nocache, at 9,500 req/s on 8.5 (counted runs only), against their 7,000 medians
 
 | Runtime | Route | Counted runs | µs CPU/req median | min .. max | p99 ms (median) | median at 7,000 | lower than at 7,000 by |
 |---|---|---|---|---|---|---|---|
@@ -141,6 +145,15 @@ Finalists: **diy** and **swoole** (posts medians: Swoole 32.83, Workerman nocach
 | diy | posts | 3 | 27.66 | 26.12 .. 29.08 | 7.37 | 29.14 | 5.1 % |
 | swoole | noop | 3 | 18.53 | 17.83 .. 20.88 | 2.21 | 25.47 | 27.3 % |
 | swoole | posts | 3 | 31.01 | 28.34 .. 31.01 | 7.14 | 32.83 | 5.6 % |
+| workerman-nocache | noop | 3 | 21.65 | 21.35 .. 21.87 | 4.73 | 26.24 | 17.5 % |
+| workerman-nocache | posts | 3 | 29.4 | 29.27 .. 30.38 | 7.47 | 33.32 | 11.8 % |
+
+| At 9,500 req/s, median µs/req | /noop | posts |
+|---|---|---|
+| Workerman nocache against Swoole | 16.9 % | -5.2 % |
+| Workerman nocache against DIY | 24.6 % | 6.3 % |
+
+Workerman nocache's 9,500 runs ran from 2026-11-22T03:22:13Z to 2026-11-22T03:26:53Z (UTC), after the other 9,500 runs (2026-11-22T02:51:06Z to 2026-11-22T03:01:14Z), not interleaved with them: the time of day differs.
 
 ### Series D: PHP 8.6, information, one run each, at 7,000 req/s (not counted in any median)
 
@@ -297,6 +310,13 @@ Finalists: **diy** and **swoole** (posts medians: Swoole 32.83, Workerman nocach
 | 2026-11-22T03:06:00Z | info-8.6-workerman-nocache-posts-7000 | 8.6 | 1400 | 34.13 | 6999.26 | 1.99 | 43.99 | 23.53 | 0 | 0 | 0 | true | information only |
 | 2026-11-22T03:06:46Z | info-8.6-diy-noop-7000 | 8.6 | 1400 | 20.68 | 6999.14 | 2.33 | 58.35 | 14.25 | 0 | 0 | 0 | true | information only |
 | 2026-11-22T03:07:33Z | info-8.6-diy-posts-7000 | 8.6 | 1400 | 33.16 | 6999.61 | 10.21 | 75.96 | 22.84 | 0 | 0 | 0 | true | information only |
+| 2026-11-22T03:22:13Z | run-1-workerman-nocache-noop-9500 | 8.5 | 1900 | 21.35 | 9497.31 | 2.06 | 55.91 | 19.92 | 0 | 0 | 0 | true | yes |
+| 2026-11-22T03:22:59Z | run-1-workerman-nocache-posts-9500 | 8.5 | 1900 | 29.27 | 9498.85 | 7.58 | 63.96 | 27.32 | 0 | 0 | 0 | true | yes |
+| 2026-11-22T03:23:46Z | run-2-workerman-nocache-noop-9500 | 8.5 | 1900 | 21.87 | 9498.3 | 4.73 | 149 | 20.44 | 0 | 0 | 0 | true | yes |
+| 2026-11-22T03:24:33Z | run-2-workerman-nocache-posts-9500 | 8.5 | 1900 | 29.4 | 9490.15 | 6.04 | 72.97 | 27.34 | 0 | 0 | 0 | true | yes |
+| 2026-11-22T03:25:19Z | run-3-workerman-nocache-noop-9500 | 8.5 | 1900 | 21.65 | 9499.55 | 4.86 | 49.61 | 20.25 | 0 | 0 | 0 | true | yes |
+| 2026-11-22T03:26:06Z | run-3-workerman-nocache-posts-9500 | 8.5 | 1900 | 31.02 | 9488.62 | 66.73 | 511.3 | 28.92 | 0 | 308 | 0 | false | no |
+| 2026-11-22T03:26:53Z | run-3-workerman-nocache-posts-9500-rerun | 8.5 | 1900 | 30.38 | 9498.73 | 7.47 | 91.97 | 28.39 | 0 | 0 | 0 | true | yes |
 
 ### Connection runs, in the order they ran
 
@@ -341,18 +361,19 @@ Reading the tables:
   accepts, so the harness reports `request timeout`).
 - **Source addresses:** Workerman's run used 127.0.0.2, .3, then .9 to .13: the client skipped .4 to .8, the addresses
   Swoole's run had left in TIME_WAIT a minute earlier. DIY's run, a minute after that, got .2 to .8 back.
-- **Every run in the order it ran** lists the max latency of each run. Three counted-series runs dropped iterations
-  (`run-1-swoole-posts-7000`, `run-1-swoole-posts-9500`, `run-1-diy-posts-9500`: 1,785, 468 and 2,995 dropped, max
-  latency 430, 279 and 451 ms) and were rerun once each, all three reruns valid. All three are `posts.js` runs of round 1.
-  Why round 1 only is not known; one guess, not tested: the first reads of the seed copy of a fresh container.
+- **Every run in the order it ran** lists the max latency of each run. Four counted-series runs dropped iterations
+  (`run-1-swoole-posts-7000`, `run-1-swoole-posts-9500`, `run-1-diy-posts-9500`, `run-3-workerman-nocache-posts-9500`:
+  1,785, 468, 2,995 and 308 dropped, max latency 430, 279, 451 and 511 ms) and were rerun once each, all four reruns
+  valid. All four are `posts.js` runs; three are round 1 of the first runs, the fourth is round 3 of the later Workerman
+  nocache set. Why those is not known; one guess, not tested: the first reads of the seed copy of a fresh container.
 
 ### About the first try
 
 The first try ran series A at rate / 10 VUs (700 at 7,000 req/s). It was stopped after round 2: 4 `posts.js` runs dropped
 iterations during stalls of 100 to 300 ms, and `workerman-nocache` posts was invalid twice in round 2. The cause of the
 stalls is not separated: the host (the Mac was under memory pressure, 35 GB used and 16 GB in the compressor, with a load
-average of 6 to 7 on 12 CPUs) or the server's reads of its database. What points away from the host alone: all 7 invalid
-runs of the first try and the counted series are `posts.js` runs, none of the 28 `/noop` runs is invalid, and 6 of the 7
+average of 6 to 7 on 12 CPUs) or the server's reads of its database. What points away from the host alone: all 8 invalid
+runs of the first try and the counted series are `posts.js` runs, none of the 31 `/noop` runs is invalid, and 7 of the 8
 cost more µs/req than the valid run of their pair, which a paused vCPU would not do (it adds no CPU time to the server's
 cgroup). The extra VUs absorb a stall whatever its cause. Its 18
 runs are in `first-try-700-vus/` with their `.txt`, and are not counted anywhere. The table at the end of the output above
@@ -380,7 +401,13 @@ the number the prediction names, a range holds if the value is inside it.
    (21.88 against 25.47); depending on which repeats are compared it goes from 9.9 % (DIY's worst, 22.03, against
    Swoole's best, 24.44) to 16.3 % (DIY's best, 21.52, against Swoole's worst, 25.72), so the 15 % line is crossed only by
    the best against the worst. On posts it is 11.3 % cheaper. The finalists by the posts medians are DIY (29.14) and Swoole
-   (32.83); Workerman nocache is third (33.32).
+   (32.83); Workerman nocache is third (33.32). **Second place is a tie within the spread.** By the brief's rule (the
+   lowest medians) the finalists are DIY and Swoole, but Swoole's lead over Workerman nocache on posts is 1.5 % (32.83
+   against 33.32, repeats 31.62 to 33.58 against 31.50 to 34.36), under the 5 % noise line stated above. Series B was therefore also
+   run for Workerman nocache (after the others, not interleaved): at 9,500 req/s it costs 29.40 on posts (29.27 to 30.38),
+   5.2 % **less** than Swoole (31.01) and 6.3 % more than DIY (27.66), and 21.65 on `/noop` (21.35 to 21.87), 16.9 % more
+   than Swoole (18.53) and 24.6 % more than DIY (17.37). Read as a ranking, Swoole is second at 7,000 on both routes
+   and Workerman nocache second on posts at 9,500: the two are not separable on posts.
 6. **At 9,500 req/s µs/req is 5 to 15 % lower than at 7,000 for both finalists: did not hold.** On posts it held (DIY
    27.66 against 29.14, 5.1 % lower; Swoole 31.01 against 32.83, 5.6 % lower), both just above the bottom of the range.
    On `/noop` the drop is much larger (DIY 17.37 against 21.88, 20.6 % lower; Swoole 18.53 against 25.47, 27.3 % lower).
@@ -435,7 +462,8 @@ this order; `<server>` is one of the four below, `<route>` one of the two below)
 #   posts  --path /posts/1 --script lab/macro/k6/posts.js
 bash lab/macro.sh --image 8.5 <server flags> --label <server> <route flags> --rate 7000 --pre-vus 1400 --max-vus 1400 \
   --duration 30 --warmup 10 --out lab/results/2026-11-21-bake-off/run-<round>-<server>-<route>-7000.json
-# series B: --rate 9500 --pre-vus 1900 --max-vus 1900, swoole and diy only, out run-<round>-<server>-<route>-9500.json
+# series B: --rate 9500 --pre-vus 1900 --max-vus 1900, swoole and diy, then workerman-nocache in a later set,
+#   out run-<round>-<server>-<route>-9500.json
 # series D: --image 8.6, workerman-nocache and diy, --rate 7000 --pre-vus 1400 --max-vus 1400, out info-8.6-<server>-<route>-7000.json
 bash lab/conns.sh --image 8.5 <server flags> --label <server> --out lab/results/2026-11-21-bake-off/conns-<server>-8.5.json
 bash lab/conformance.sh --image 8.5 <server flags>        # output kept as conformance-<server>.txt
@@ -456,11 +484,14 @@ bash lab/conformance.sh --image 8.5 <server flags>        # output kept as confo
   and was not tested.
 - **No runtime was killed for memory.** Swoole at 65,522 connections is at 1.62 GiB of the 2 GiB, 18 KiB of
   `Pss_Anon` per connection at the max on average.
-- **The posts route stalls more than `/noop`:** all 7 invalid runs (4 in the first try, 3 in the counted series) were
-  `posts.js` runs, with 100 to 450 ms of max latency, at 700 VUs and at 1,400; none of the 28 `/noop` runs was invalid. The
-  cause is not separated: the host, or the server's database reads. 6 of the 7 cost more µs/req than the valid run of
+- **The posts route stalls more than `/noop`:** all 8 invalid runs (4 in the first try, 4 in the counted series) were
+  `posts.js` runs, with 100 to 450 ms of max latency, at 700 VUs and at 1,400; none of the 31 `/noop` runs was invalid. The
+  cause is not separated: the host, or the server's database reads. 7 of the 8 cost more µs/req than the valid run of
   their pair.
 - **DIY on 8.6** cost 33.16 on posts in its one information run, 13.8 % above its 8.5 median (the other three 8.6 numbers
   are within 6.4 % of the 8.5 medians). One run each: not a result.
+- **Second place is not settled.** On posts Swoole's lead over Workerman nocache is 1.5 % at 7,000 and Workerman nocache
+  is 5.2 % ahead at 9,500 (the two sets ran at different times of day); on `/noop` Swoole is ahead at both rates (3.0 %,
+  16.9 %). Which of the two is second depends on the route and the rate; the brief's rule gives Swoole.
 - **DIY wins by a margin that is not large:** 14.1 % on `/noop` and 11.3 % on posts against Swoole, with a spread of
   4 to 9 % inside each runtime's 3 repeats.
