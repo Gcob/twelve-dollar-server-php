@@ -3,7 +3,7 @@
 **Pace:** 🟢 full · 5-hour 10 % · weekly 29 % at 17:35 · 5-hour resets 20:20 · away
 
 **Status:** 🔵 Running
-**Progress:** step 3/7, the full lab suite, since 17:47 · started 2026-11-22 10:50
+**Progress:** step 4/7, `pr-reviewer` pass 1 since 17:55 · started 2026-11-22 10:50
 **Since your last read:** scope 5 done: the baseline holds 23,386 req/s (about 221,000 users at 9.45) at 27.15 µs
 of CPU per request, p99 28 ms, 60,000 idle held (median of 3 holds; arm64, not a score). The rate is a harness floor at
 `s = 0.02`, the server 63 % busy (D47). Profile: SQLite 52 %, write 20 %, JSON 10 %. 6 of 12 predictions held.
@@ -18,8 +18,8 @@ Q10: the stalls are outside the PHP code. Two harness fixes (`38fc153`, `fcf104f
 | 0   | Plan review       | done    | 10:59 | 11:17 |     | full NOT_OK at 11:10 (1 🔴, 5 🟠), settled as D38 to D43; delta NOT_OK at 11:14 (1 🟠), settled as D44; delta 2 and final full OK at 11:17 |
 | 1   | Scopes            | done    | 11:19 | 17:46 | 6/6    |
 | 2   | Questions         | done    | 17:40 | 17:40 | none open: scope 5's two settled as D47 |
-| 3   | Lab suite         | to do   |       |     |        |
-| 4   | `pr-reviewer`     | to do   |       |     |        |
+| 3   | Lab suite         | done    | 17:50 | 17:55 | 59/59 ok on `1acc81a`, no flake (other containers back at 17:54 during it) |
+| 4   | `pr-reviewer`     | running | 17:55 |     | pass 1/3 |
 | 5   | `blind-reviewer`  | to do   |       |     |        |
 | 6   | Delivery          | to do   |       |     |        |
 
@@ -78,3 +78,7 @@ in correctly.
 holds. 4 🟡, all fixed in the plan at 11:18: two `{R}` placeholders in D43 and D44; D44's lag gate now the calibrated
 lag plus 2 s with `K6_CSV_SAVE_INTERVAL` lowered (k6 flushes its CSV every second); `plan.md`'s "Since your last
 read"; the aggregator in its own container, outside k6's memory budget.
+
+### `pr-reviewer`, pass 1 · since 17:55
+
+Running.

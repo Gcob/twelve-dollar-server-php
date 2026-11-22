@@ -36,7 +36,8 @@ Skill defaults (`autonomous-run/pipeline.yml`), no run override file. Changes fr
 | 4     | ac6145c4f718748e3 | done `4775db8` 13:53 (excimer 1.2.6, not on 8.6; calibration: C time goes to the caller, step functions carry it) |
 | 3 (fix) | a1365daa1d690ecf0 | `fc73cee` (edge rows of the series check), `b18af33` (failing-step check's request count), pushed 14:50 |
 | 5     | a0693a2b219c3cb46 | done 17:30 |
-| 6     | aabebc28f7dcaaba7 | done 17:46; fd-wall note sent 17:48 |
+| 6     | aabebc28f7dcaaba7 | done 17:46; fd-wall note `1acc81a` |
+| pr-reviewer | a96493ee11e4c85c3 | pass 1 since 17:55 |
 
 ## Verified
 
@@ -100,6 +101,10 @@ Rien.
   goes first in phase 5, before the CPU ranking; its cost under churn (an accept and a close per request past the
   limit) is the first thing to measure there. Give it to scope 6's developer after its hand-back, as its own commit
   `docs(lab): ...` (it is editing the worktree now).
+
+- 17:54: Jacob's 23 containers are back (restart policy `always`). A finding that needs a new measurement goes to
+  👉 and to the planning session; never stop them. A smoke check that flakes under that load: note it, rerun it
+  once alone, and say so in the delivery.
 
 ## Review triage
 
