@@ -16,8 +16,9 @@ Two levels, always both: a micro result that doesn't hold up end to end doesn't 
     the leaderboard's metric, so our numbers compare with theirs;
   - **p95 and p99**, and the error rate;
   - **peak RSS** of the server's cgroup.
-- **Which rate (D16):** about **7,000 req/s** for every comparison in phases 3 and 4 (the rate of a 75,000-user
-  score, at 1 req/s per 10.8 users), plus **9,500 req/s** (100,000 users) for the finalists. µs/req depends on the
+- **Which rate (D16):** about **7,000 req/s** for every comparison in the bake-off and the step lab (about 66,000
+  users at 9.45 per steady req/s, D40; first written as 75,000 with the leaderboard's whole-run 10.8), plus
+  **9,500 req/s** (about 90,000 users) for the finalists. µs/req depends on the
   rate (the no-op server: 50.2 at 1k, 30.2 at 3k, 21.7 at 6k req/s), so a number measured at another rate doesn't
   compare. The harness opens rate / 10 connections (700 at 7k), far below the real run's 65k: the connection ceiling
   stays its own test.
@@ -35,7 +36,7 @@ step, then 5-minute holds, 3 times, median; a fresh seed copy every run.
 - **A step passes (D31)** on the bench's thresholds (p95 under 500 ms, p99 under 1 s, errors under 1 %) **and** an
   achieved rate of at least 97 % of the rate its VUs offer. Scaled think time makes latency weigh `1/s` times more in a
   VU's loop, so the thresholds alone would pass loads far past saturation.
-- **Users** are mapped from the achieved rate, 10.8 per req/s, never from the VUs. On arm64 they aren't a score (D7).
+- **Users** are mapped from the achieved rate, 9.45 per steady req/s (D40), never from the VUs. On arm64 they aren't a score (D7).
 - **What it reads:** µs CPU/req, p95 and p99 per endpoint, per-second latency, memory, the WAL's size, page faults,
   and the server's telemetry (longest callback, GC) per second.
 - The full-size run (100,000 users, several generators, x86) is phase 7.

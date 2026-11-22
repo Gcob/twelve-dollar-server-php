@@ -1,6 +1,6 @@
 # Project manager: phase 4, realistic baseline
 
-**State:** plan written (details/phase-4.md, D26 to D36), plan review next. No scope started.
+**State:** plan review full NOT_OK (11:10), settled D38 to D43; delta running. Scope 1 brief drafted, not launched.
 
 ## Resolved config
 
@@ -58,7 +58,9 @@ Rien.
 
 ## Review triage
 
-Rien.
+- Plan review (full, 11:10): 🔴 ports → D38; 🟠 VU budget → D39; 🟠 10.8 → D40 (9.45); 🟠 k6 per-step/per-second → D41
+  (one scenario + live histograms, not one scenario per step: no connection churn between steps); 🟠 macro.sh on the
+  skeleton → D42; 🟠 Excimer attribution → D43. 12 🟡 folded into phase-4.md. Predictions 3 and 7 revised 11:12.
 
 ## Suggested skills
 

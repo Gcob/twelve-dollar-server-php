@@ -3,9 +3,9 @@
 **Pace:** 🟢 full · 5-hour 3 % · weekly 23 % at 10:52 · 5-hour resets 15:19 · away
 
 **Status:** 🔵 Running
-**Progress:** step 0/7, `plan-reviewer` (full) running since 10:59 · started 2026-11-22 10:50
+**Progress:** step 0/7, `plan-reviewer` delta running since 11:14 · started 2026-11-22 10:50
 **Since your last read:** phase 4 planned in [details/phase-4.md](details/phase-4.md): 5 scopes, predictions written
-before any measurement. Q7 and Q10 recorded (D26, D28), D27 to D36 added. Phase 3's run archived in
+before any measurement. Q7 and Q10 recorded (D26, D28), D27 to D43 added. D40 corrects the users per req/s: 9.45 on a steady load, not the leaderboard's 10.8 (its rate includes the ramps), so 7,000 req/s is about 66,000 users. Phase 3's run archived in
 [runs/phase-3/](runs/phase-3/run.md).
 **👉 Your turn:** nothing new. The Docker VM is quiet since 10:55 (D15): keep it that way until scope 5 is measured.
 
@@ -13,7 +13,7 @@ before any measurement. Q7 and Q10 recorded (D26, D28), D27 to D36 added. Phase 
 
 | #   | Step              | State   | Start | End | Detail |
 |-----|-------------------|---------|-------|-----|--------|
-| 0   | Plan review       | running | 10:59 |     | full   |
+| 0   | Plan review       | running | 10:59 |     | full NOT_OK at 11:10 (1 🔴, 5 🟠), settled as D38 to D43; delta running |
 | 1   | Scopes            | to do   |       |     | 0/6    |
 | 2   | Questions         | to do   |       |     |        |
 | 3   | Lab suite         | to do   |       |     |        |
@@ -34,6 +34,29 @@ before any measurement. Q7 and Q10 recorded (D26, D28), D27 to D36 added. Phase 
 
 ## Reviews
 
-### `plan-reviewer`, full · since 10:59
+### `plan-reviewer`, full · 10:59 to 11:10 · NOT_OK
+
+**Report:** [PLAN-2026-11-22-1110.md](reviews/PLAN-2026-11-22-1110.md). 6 questions, each settled with the reviewer's
+own pick (D38 to D43), and the 12 🟡 folded into `details/phase-4.md`. Predictions 3 and 7 revised at 11:12, still
+before any measurement.
+
+- **🔴 With 60,000 idle connections, k6 gets about 500 ports.** The idle client `bind()`s each port, and bound ports
+  are skipped by every unbound `connect()`. Settled: D38, k6 binds its own source addresses; scope 3's Done-when now
+  runs 60,000 idle with k6 at its cap.
+- **🟠 The VU budget doesn't close** (11,400 req/s at most against a predicted knee up to 18,000; 3,000 × 2 MiB plus
+  2 GiB is over the VM). Settled: D39, the cap and the scale from calibration, a memory limit on k6.
+- **🟠 10.8 users per req/s includes the leaderboard's ramps.** A steady load is 9.45. Settled: D40; D16's users and
+  🤝's formula corrected (7,000 req/s is about 66,000 users; about 8.0 million / µs).
+- **🟠 No way to get per-step and per-second numbers from k6** without GBs of raw samples on the measured VM. Settled:
+  D41, live per-second histograms from a FIFO, nothing raw on disk, k6 stopped at the first failing step.
+- **🟠 `macro.sh` can't run the skeleton for Q10.** Settled: D42, one seed-copy function with `--cold`, wired in scope 3.
+- **🟠 Nothing proves where Excimer puts a C function's samples under the JIT.** Settled: D43, a calibration fixture
+  in scope 4.
+- **🟡** profile flushed on a timer and copied out; WAL frames from the `-shm` header; k6's own loop overhead in the
+  97 % margin; one sampler loop, no `docker exec` per second; `fsync` before eviction; `cp` inside the server container;
+  Excimer in its own layer with a switch; statuses 201, 401, 503; `/health`'s `db` and auth before id; where `test.sh`
+  runs; the idle client's path and body; k6's exit 99.
+
+### `plan-reviewer`, delta · since 11:14
 
 Running.

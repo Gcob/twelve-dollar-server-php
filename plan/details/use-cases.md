@@ -7,8 +7,8 @@ in [steps.md](steps.md).
 ## The traffic mix
 
 One k6 virtual user (VU) loops on: feed, pause 3 to 7 s, one post, pause 3 to 8 s, 15 % like, 2 % write, pause 5 to
-15 s. That's 2.17 requests per loop of about 20.5 s, so **about 0.106 req/s per user** (the leaderboard ratio is
-1 req/s for 10.8 users).
+15 s. That's 2.17 requests per loop of about 20.5 s, so **about 0.106 req/s per user**, 9.45 users per steady req/s
+(the leaderboard's ratio is 10.8 because its k6 rate includes the ramps, D40).
 
 | Use case        | Share of requests | Why it matters                                            |
 |-----------------|-------------------|-----------------------------------------------------------|

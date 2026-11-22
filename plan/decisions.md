@@ -41,7 +41,8 @@
   during a measurement. Rerun that way, the micro sample's two levels went away (1 UNSTABLE row of 40 instead of 28),
   so numbers from a busy VM are remeasured before any comparison ([Q8](questions/2026-11-21-1411.ronde-2.md)).
 - **D16:** phases 3 and 4 compare variants at about 7,000 req/s (a 75,000-user score), and the finalists also at
-  9,500 req/s (100,000 users) ([Q9](questions/2026-11-21-1411.ronde-2.md)).
+  9,500 req/s (100,000 users) ([Q9](questions/2026-11-21-1411.ronde-2.md)) D40 corrects the users: a
+  steady 7,000 req/s is about 66,000 users, 9,500 about 90,000; the rates stay.
 - **D17:** the phase 3 bake-off runs on PHP 8.5: the newest version all three runtimes build on (Swoole stops at 8.5,
   Q7), from source with the lab's flags (D13). Workerman and DIY also get one information run on 8.6 if ext-event
   builds there (project manager, phase 3, 2026-11-21, while Jacob was away).
@@ -93,8 +94,8 @@
   the server's `wal_autocheckpoint` off) (Jacob, 2026-11-22, [notes.md](notes.md) 10:33).
 - **D31:** in the realistic mode, a step passes when it meets the bench's thresholds (p95 under 500 ms, p99 under 1 s,
   errors under 1 %) **and** its VUs achieve at least 97 % of the request rate they offer (their count over the journey's
-  mean loop time, latency left out). Users are mapped from the achieved rate (10.8 users per req/s, the leaderboard's
-  ratio), never from the VU count. Why: with think time scaled by `s`, latency weighs `1/s` times more in a VU's loop, so
+  mean loop time, latency left out). Users are mapped from the achieved rate (9.45 users per req/s, D40), never from
+  the VU count. Why: with think time scaled by `s`, latency weighs `1/s` times more in a VU's loop, so
   the thresholds alone pass loads far past saturation (at `s = 0.02`, an average latency of 500 ms needs about 3.6 times
   the VUs of the knee; in the real bench, 1.05 times) (project manager, phase 4, 2026-11-22).
 - **D32:** the skeleton reads its config like a submission: it opens `SQLITE_PATH` (never copies it) and reads
@@ -110,14 +111,45 @@
   is measured once, on against off at the same rate (project manager, phase 4, 2026-11-22).
 - **D35:** the baseline runs the DIY server only (the cheapest per request in the bake-off) on PHP 8.5 (D17), on the
   Mac: the users it maps to are an arm64 number, not a score (D7) (project manager, phase 4, 2026-11-22).
-- **D36:** the realistic mode's sizes: 60,000 idle keep-alive connections held by phase 3's connection client, at most
-  3,000 k6 VUs (k6's memory in a 7.75 GiB VM, and 63,000 sockets in all stay under the server's 65,535 fds), a think
-  scale picked by calibration so the knee needs at most 2,500 VUs. The baseline: warm-up, a staircase that stops at the
+- **D36:** the realistic mode's sizes: 60,000 idle keep-alive connections held by phase 3's connection client, k6's VUs
+  on top, all sockets under the server's 65,535 fds (the VU cap and the think scale: D39). The baseline: warm-up, a staircase that stops at the
   first failing step, then 3 holds of 5 minutes at the highest passing step (the median counts) and 1 hold one step
   above; a fresh seed copy for every run (project manager, phase 4, 2026-11-22).
 - **D37:** `lab/check.sh` runs every `lab/results/*/summarize.sh` and checks that each line it prints is in that
   folder's README, so a results README can't drift from its raw files. Phase 4 adds it as its last scope, so it also
   covers the baseline's folder ([round 3](questions/2026-11-22-1049.ronde-3.md), Jacob's `ok` to the retro's item).
+- **D38:** in the realistic mode, k6 binds its own source addresses (`--local-ips`, for example 127.0.1.1 to 127.0.1.4),
+  recorded in the JSON. The idle client `bind()`s each port before it connects, and a port reserved that way is skipped
+  by every unbound `connect()`: with 60,000 held, k6 from 127.0.0.1 would get about 500 ports. If k6 1.8.3 refuses
+  loopback local IPs, the idle client sets `IP_BIND_ADDRESS_NO_PORT` instead. Never a VM-wide `ip_local_port_range`
+  change (plan review, settled by the project manager, phase 4, 2026-11-22, [PLAN-2026-11-22-1110](reviews/PLAN-2026-11-22-1110.md) item 1).
+- **D39:** the VU cap and the think scale come from calibration: k6's MiB per VU sets the cap at (VM memory − 2 GiB for
+  the server − the idle client − 1 GiB of margin) / MiB per VU; the scale `s` is then picked so 20,000 req/s fits under
+  the cap, so the staircase always reaches a failing step. The k6 container gets a `--memory` limit, so an overrun fails
+  k6 cleanly instead of making the VM swap. The calibration also records achieved against offered at low load and k6's
+  CPU, so the 97 % rule's margin (about `0.29 × s` s of mean latency per request) is known next to `s` (plan review,
+  settled by the project manager, phase 4, 2026-11-22, [PLAN-2026-11-22-1110](reviews/PLAN-2026-11-22-1110.md) items 2 and 9).
+- **D40:** a steady load maps to users at 9.45 per req/s (20.5 s of think time over 2.17 requests per loop). The
+  leaderboard's 10.8 is a whole-run ratio: its k6 rate includes the 60 s ramp-up and the 30 s ramp-down (about 10.7 in
+  theory, 10.2 to 10.84 observed). 10.8 stays only to read the leaderboard's req/s column. So the 71,000 record is about
+  7,500 steady req/s, and 🤝's `users ≈ 9.2 million / µs per request` becomes about 8.0 million (plan review, settled by
+  the project manager, phase 4, 2026-11-22, [PLAN-2026-11-22-1110](reviews/PLAN-2026-11-22-1110.md) item 3).
+- **D41:** per-step and per-second numbers come from one k6 scenario (`ramping-vus`) streamed live: k6's CSV output into
+  a FIFO, read by an aggregator that keeps per-second latency histograms per endpoint (log buckets, under 1 % error), so
+  a step's p95 and p99 merge its seconds' histograms. Nothing raw goes to disk during a measured run. The harness stops
+  k6 at the first failing step and handles k6's exit 99 (thresholds failed) as a result, not a harness failure. If the
+  aggregator can't keep up (k6 blocks), fall back to one scenario per step (plan review, settled by the project manager,
+  phase 4, 2026-11-22, [PLAN-2026-11-22-1110](reviews/PLAN-2026-11-22-1110.md) items 4 and 18).
+- **D42:** one seed-copy function in `lab/lib.sh`, used by `challenge-test.sh`, `realistic.sh` and `macro.sh`: it copies
+  the seed with `cp` inside the server container (so its page cache is charged to the server's cgroup, like the
+  bake-off's), `fsync`s it, and with `--cold` evicts its pages (`POSIX_FADV_DONTNEED` skips dirty pages, hence the
+  `fsync`). Scope 1 builds the copy, scope 3 adds `--cold` and wires `macro.sh`, so Q10's `posts.js` reruns run the
+  skeleton (plan review, settled by the project manager, phase 4, 2026-11-22, [PLAN-2026-11-22-1110](reviews/PLAN-2026-11-22-1110.md) items 5, 11 and 12).
+- **D43:** before the profile ranks the steps, a calibration fixture proves where Excimer puts a C function's samples:
+  a route that spends a known share of CPU in one internal function (`hash('sha256', ...)` in a loop) against a PHP
+  loop, profiled with the JIT on and off; its share must land on the internal frame within a stated tolerance. The
+  README says where libevent's and `epoll_wait`'s time lands (plan review, settled by the project manager, phase 4,
+  2026-11-22, [PLAN-2026-11-22-1110](reviews/PLAN-2026-11-22-1110.md) item 6).
 
 ## History
 
