@@ -26,7 +26,7 @@ foreach ($counted['cells'] as $step => $endpoints) {
     $byStep[$step] = array_sum($endpoints);
 }
 check('1,000 samples', $counted['samples'] === 1000, (string) $counted['samples']);
-$expected = ['loop' => 100, 'S1' => 20, 'S2' => 200, 'S3' => 40, 'S4' => 80, 'S5' => 30, 'S6' => 365, 'S7' => 100, 'S8' => 60, 'unclassified' => 5];
+$expected = ['loop' => 100, 'S1' => 20, 'S2' => 200, 'S3' => 40, 'S4' => 80, 'S5' => 30, 'S6' => 360, 'S7' => 100, 'S8' => 60, 'unclassified' => 10];
 ksort($expected);
 ksort($byStep);
 check('every step holds the samples counted by hand', $byStep === $expected, json_encode($byStep));
@@ -37,9 +37,10 @@ check('a sample with no route function on its stack is shared (the parse, the lo
 check('the POST /posts steps: S4 80 (the JWT, two stacks), S5 30, S6 70', ($counted['cells']['S4']['POST /posts'] ?? 0) === 80 && ($counted['cells']['S5']['POST /posts'] ?? 0) === 30 && ($counted['cells']['S6']['POST /posts'] ?? 0) === 70);
 
 // --- unknown frames -----------------------------------------------------------------------------------------------------------
-check('an unknown frame, alone or under a frame no rule names, is unclassified, 5 samples', ($byStep['unclassified'] ?? 0) === 5 && $counted['unknown'] === ['mysteryFrame' => 5], json_encode($counted['unknown']));
-check('an unknown frame under a known one does not hide it: like_insert under route_like is S6 of POST /posts/:id/like', ($counted['cells']['S6']['POST /posts/:id/like'] ?? 0) === 5);
-check('the innermost matching frame wins: a stack through handler_handle and route_feed ending in feed_query is S6, not S3', fold_classify($rules, ['DiyServer::run', 'handler_handle', 'route_feed', 'feed_query']) === ['S6', 'GET /feed']);
+check('a leaf frame no rule names is unclassified, alone, under a frame no rule names, or under a known one: 10 samples', ($byStep['unclassified'] ?? 0) === 10 && $counted['unknown'] === ['mysteryFrame' => 10], json_encode($counted['unknown']));
+check('an unnamed leaf under a known frame does not take its caller\'s step: like_insert;mysteryFrame is unclassified, on the endpoint of its route', ($counted['cells']['unclassified']['POST /posts/:id/like'] ?? 0) === 5 && ($counted['cells']['S6']['POST /posts/:id/like'] ?? 0) === 0);
+check('a renamed step function (a leaf the rules do not know) under the feed route is not counted in S3', fold_classify($rules, ['DiyServer::run', 'handler_handle', 'route_feed', 'feed_fetch']) === ['unclassified', 'GET /feed']);
+check('the leaf frame decides: a stack through handler_handle and route_feed ending in feed_query is S6, not S3', fold_classify($rules, ['DiyServer::run', 'handler_handle', 'route_feed', 'feed_query']) === ['S6', 'GET /feed']);
 check('a stack with no frame at all of a rule is unclassified and shared', fold_classify($rules, ['never_heard_of_it']) === ['unclassified', 'shared']);
 
 // --- the rules ------------------------------------------------------------------------------------------------------------------
@@ -60,11 +61,11 @@ $table = fold_table($rules, $counted);
 $lines = explode("\n", substr($table, 0, strpos($table, 'samples:')));
 check('the table has a row per step (S1 to S9, the event loop, unclassified) and an all row', count(array_filter($lines, static fn($l) => preg_match('/^(S[1-9] |event loop|unclassified|all)/', $l))) === 12);
 check('the all row reads 100.0 %', (bool) preg_grep('/^all .*100\.0%$/', $lines));
-check('S6 shows 36.5 % in all, GET /feed 25.0 %', (bool) preg_grep('/^S6 query SQLite .*25\.0%.* 36\.5%$/', $lines), $table);
+check('S6 shows 36.0 % in all, GET /feed 25.0 %', (bool) preg_grep('/^S6 query SQLite .*25\.0%.* 36\.0%$/', $lines), $table);
 check('without --us-per-req no cell gives microseconds', !preg_match('/\d ?us\b/', $table));
 $withUs = fold_table($rules, $counted, 40.0);
 check('with --us-per-req 40, GET /feed S6 adds 25 % of 40 us = 10.0 us and the table says how many it has', str_contains($withUs, '25.0% 10.0us') && str_contains($withUs, '40.0 us per request'));
-check('the unclassified frames are named under the table', str_contains($table, 'unclassified: 5 samples (0.5%)') && str_contains($table, 'mysteryFrame (5)'));
+check('the unclassified frames are named under the table', str_contains($table, 'unclassified: 10 samples (1.0%)') && str_contains($table, 'mysteryFrame (10)'));
 check('the within-endpoint block: GET /feed is 71.4 % S6 (250 of its 350)', (bool) preg_grep('/^S6 query SQLite\s+-?\s*.*71\.4%/', explode("\n", substr($table, strpos($table, 'within each endpoint')))));
 
 echo $failures === 0 ? "all ok\n" : "$failures failed\n";

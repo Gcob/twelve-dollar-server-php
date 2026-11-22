@@ -815,26 +815,28 @@ cgroup's CPU over the window divided by the requests of the window (the warm-up'
 ### The fold and its rules
 
 `lab/profile/fold.php <collapsed file or -> [--rules <file>] [--us-per-req <n>]` prints one table: the rows are the steps S1 to S9, the
-event loop and unclassified, the columns are the five endpoints, `shared` and `all`. A sample takes the step of the **innermost frame**
-of its stack that `lab/profile/steps.rules` names (a frame name, or a prefix ending in `*`), and the endpoint of the route function found
-anywhere on its stack; a sample with no route function (reading, parsing, writing, the loop: the work done before the route is known) is
+event loop and unclassified, the columns are the five endpoints, `shared` and `all`. A sample takes the step of its **leaf frame** (the
+innermost one), if `lab/profile/steps.rules` names it (a frame name, or a prefix ending in `*`), and the endpoint of the route function
+found anywhere on its stack; a sample with no route function (reading, parsing, writing, the loop: the work done before the route is known) is
 `shared`. Every cell is a share of **all** the samples (the table sums to 100 %, a column's total is its weight in the run), and with
 `--us-per-req` the microseconds it adds to the average request. A second block gives each endpoint column as a share of its own samples,
-which is the one that answers "which step costs the most for `GET /feed`". A frame that no rule names makes the sample `unclassified`, and
-the innermost frames of those are listed under the table: a rename in the app shows up there, not as a wrong step. `lab/check/fold-test.php`
+which is the one that answers "which step costs the most for `GET /feed`". A leaf that no rule names makes the sample `unclassified`, whatever its
+callers are (Excimer never shows an internal function as a frame, so the leaf is always one of our PHP functions), and those leaves are
+listed under the table: a rename in the app shows up there, not as a wrong step. The profiler's own flush (`DiyProfile::write`) goes to the
+event loop: it is not a step of a request. `lab/check/fold-test.php`
 tests the fold on a hand-written profile of 1,000 samples with known shares.
 
 | Step | Frames of `steps.rules` | What is in it |
 | --- | --- | --- |
 | S1 accept | `DiyServer::onAccept`, `DiyConnection::close` | `stream_socket_accept` and the new socket's setup, and `fclose` |
 | S2 read and parse | `DiyConnection::onReadable`, `::parse`, `::parseHead` | `fread` (the kernel's receive path), the header parse; `parse` also holds the response head's concatenation (S8 work, too small to split without a function of its own) |
-| S3 route | `handler_handle`, the `route_*` functions | the match on method and path |
+| S3 route | `handler_handle`, `app_count`, the `route_*` functions | the match on method and path |
 | S4 JWT, S5 validate | `jwt_verify` and its decoder, `id_validate`, `body_validate` | |
 | S6 query | `feed_query`, `post_query`, `post_insert`, `post_exists`, `like_insert`, `route_health` | `PDOStatement::execute` and the fetch; `route_health` runs its query inline |
 | S7 JSON | the `*_json` functions | `json_encode` |
 | S8 write | `response_json`, `response_error`, `DiyConnection::advance`, `::onWritable` | `fwrite` (the kernel's send path) |
 | S9 durability | none | SQLite commits inside `PDOStatement::execute` (autocommit), so a write's commit and its WAL checkpoint are in S6. The row stays at 0 to say so |
-| event loop | `DiyServer::run`, `::onReadable`, `::onWritable`, `::settle` | libevent's dispatch and `epoll_wait` (see the calibration), the events added and removed |
+| event loop | `DiyServer::run`, `::onReadable`, `::onWritable`, `::settle`, `DiyProfile::write` | libevent's dispatch and `epoll_wait` (see the calibration), the events added and removed, the profiler's own flush |
 
 ### Where Excimer's samples land (the calibration)
 

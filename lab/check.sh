@@ -858,7 +858,7 @@ check_macro_cold_needs_fresh_db() {
 }
 
 # The fold of a profile into the steps (lab/profile/fold-lib.php) on a hand-written profile of 1,000 samples whose shares are known: the
-# innermost matching frame wins, a stack with no route function is shared, an unknown frame is unclassified, the rules refuse a bad line.
+# leaf frame decides (an unnamed leaf is unclassified, even under a known frame), a stack with no route function is shared, the rules refuse a bad line.
 # Then the command line: the table on the fixture (every row, the all row at 100 %, the unknown frame named), microseconds with
 # --us-per-req, and an empty profile or a missing file refused.
 check_fold_cases() {
@@ -867,11 +867,11 @@ check_fold_cases() {
   [ "$rc" = 0 ] || { echo "fold-test.php exited $rc: ${out//$'\n'/ | }"; return 1; }
   grep -q '^FAIL' <<<"$out" && { echo "a case failed: ${out//$'\n'/ | }"; return 1; }
   ok="$(grep -c '^ok  ' <<<"$out")"
-  [ "$ok" -ge 24 ] || { echo "expected at least 24 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
+  [ "$ok" -ge 25 ] || { echo "expected at least 25 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
   table="$(bash "$LAB/run.sh" 8.5 php /lab/profile/fold.php "$fixture" --us-per-req 40 2>&1)" || { echo "fold.php failed on the fixture: ${table//$'\n'/ | }"; return 1; }
   grep -q '^all .*100.0% 40.0us$' <<<"$table" || { echo "the all row is not 100.0% 40.0us: ${table//$'\n'/ | }"; return 1; }
-  grep -q '^unclassified .* 0.5% 0.2us$' <<<"$table" || { echo "the unknown frame is not 0.5 % unclassified: ${table//$'\n'/ | }"; return 1; }
-  grep -q 'unclassified: 5 samples (0.5%), innermost frames: mysteryFrame (5)' <<<"$table" || { echo "the unknown frame is not named: ${table//$'\n'/ | }"; return 1; }
+  grep -q '^unclassified .* 1.0% 0.4us$' <<<"$table" || { echo "the unknown frame is not 1.0 % unclassified: ${table//$'\n'/ | }"; return 1; }
+  grep -q 'unclassified: 10 samples (1.0%), leaf frames: mysteryFrame (10)' <<<"$table" || { echo "the unknown frame is not named: ${table//$'\n'/ | }"; return 1; }
   rc=0
   bash "$LAB/run.sh" 8.5 sh -c ': > /tmp/empty; php /lab/profile/fold.php /tmp/empty' >/dev/null 2>&1 || rc=$?
   [ "$rc" = 1 ] || { echo "an empty profile should exit 1, got $rc"; return 1; }

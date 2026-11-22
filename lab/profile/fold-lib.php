@@ -71,21 +71,16 @@ function fold_step_of_frame(array $rules, string $frame): ?string
 }
 
 /**
- * The step and the endpoint of one stack (frames from the outermost to the innermost).
+ * The step and the endpoint of one stack (frames from the outermost to the innermost). The step is the LEAF frame's: a leaf no rule
+ * names is unclassified, whatever its callers are. Excimer never shows an internal function as a frame, so the leaf is always a PHP
+ * function of ours, and a renamed or new one must show up as unclassified instead of adding its cost to its caller's step.
  *
  * @param list<string> $frames
  * @return array{string, string} the step key (a key of FOLD_STEPS) and the endpoint name (FOLD_SHARED when no route function is on the stack)
  */
 function fold_classify(array $rules, array $frames): array
 {
-    $step = 'unclassified';
-    for ($i = count($frames) - 1; $i >= 0; $i--) {
-        $found = fold_step_of_frame($rules, $frames[$i]);
-        if ($found !== null) {
-            $step = $found;
-            break;
-        }
-    }
+    $step = fold_step_of_frame($rules, $frames[count($frames) - 1]) ?? 'unclassified';
     $endpoint = FOLD_SHARED;
     foreach ($frames as $frame) {
         if (isset($rules['routes'][$frame])) {
@@ -100,7 +95,7 @@ function fold_classify(array $rules, array $frames): array
  * Counts the samples of a collapsed profile per step and endpoint.
  *
  * @return array{samples: int, cells: array<string, array<string, int>>, unknown: array<string, int>} cells[step][endpoint]; unknown: the
- *         innermost frame of each unclassified stack, with its samples
+ *         leaf frame of each unclassified stack, with its samples
  */
 function fold_count(array $rules, string $collapsed): array
 {
@@ -183,7 +178,7 @@ function fold_table(array $rules, array $counted, ?float $usPerRequest = null): 
 
     $unclassified = array_sum($counted['cells']['unclassified'] ?? []);
     if ($unclassified > 0) {
-        $out .= sprintf("\nunclassified: %d samples (%.1f%%), innermost frames:", $unclassified, $unclassified / $total * 100);
+        $out .= sprintf("\nunclassified: %d samples (%.1f%%), leaf frames:", $unclassified, $unclassified / $total * 100);
         foreach (array_slice($counted['unknown'], 0, 5, true) as $frame => $n) {
             $out .= " $frame ($n)";
         }
