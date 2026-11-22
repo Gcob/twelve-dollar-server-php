@@ -16,13 +16,14 @@ ramps), so 7,000 req/s is about 66,000 users and the 71,000 record about 7,500 s
 > **Answer freely:** a letter or `ok`, your own choice (`other: …`), `?` if it's unclear, or
 > `badly framed: …` if an option is missing or the question doesn't hold.
 
-### 🔴 Blocking from scope 5 (about 14:05): quiet the Docker VM (run)
+### ✅ Quiet Docker VM for scope 5 (run, answered 13:27)
 
-- [ ] **Stop your 23 other containers, then say "go"** (D15). They came back when Docker's VM restarted at 11:18
+- [x] **Stop your 23 other containers, then say "go"** (D15). They came back when Docker's VM restarted at 11:18
   (restart policy `always`). Scopes 1 to 4 are code and smoke runs; scope 5 measures the baseline (about 1.5 to 2 hours
   of runs) and can't start while they run. Stopping them earlier is fine: scope 4 doesn't need them.
 
-  **Answer:**
+  **Answer:** done at 13:27: Jacob asked the planning session to stop them for the weekend; their restart policy is now
+  `unless-stopped`, so a VM reboot won't bring them back. "Go" for scope 5.
 
 ## 🤝 Essentials
 

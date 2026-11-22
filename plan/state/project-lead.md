@@ -44,6 +44,7 @@ Skill defaults (`autonomous-run/pipeline.yml`), no run override file. Changes fr
   plan is ready; still `docker ps` before each measurement, and tell the planning session if one comes back.
 - 11:36: the 23 containers are back (the VM booted at 11:18:53 per `/proc/uptime`; they have restart policy
   `always`). Not from this run. No measurement until quiet; the planning session asked Jacob.
+- 13:27: stopped again for the weekend at Jacob's request, restart policy now `unless-stopped`; "go" for scope 5.
 
 ## Assumed
 
