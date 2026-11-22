@@ -707,23 +707,36 @@ check_idle_client_hold_mode() {
     || { echo "a body that does not match the pattern: expected the failure 'bad answer': $(tr '\n' ' ' <<<"$out")"; return 1; }
 }
 
-# check_series_rows <json> <jq path of the rows>: the rows are one per second with no gap, every row has the server's readings and its
-# endpoints as an object. Prints why not, returns 1.
+# check_series_rows <json> <jq path of the rows>: the rows are one per second with no gap, every row has the server's readings (CPU, memory,
+# fds) and the server's telemetry line, and its endpoints as an object. The CPU of the first row (a partial second, before the load) and of
+# the last (after it) can be a true 0; the rows between must have used some. Prints which clause failed and the seconds (as seconds into the run)
+# that break it, returns 1.
 check_series_rows() {
-  jq -e "$2"' as $rows
-    | ($rows | length) > 5
-    and ($rows | map(.second) | . as $s | [range(1; length)] | all($s[.] == $s[. - 1] + 1))
-    and ($rows | map(.endpoints | type == "object") | all)
-    and ($rows | map(.server != null and .server.cpu_usec > 0 and .server.pss_anon_kb > 0 and .server.memory_current > 0 and .server.fds > 0) | all)
-    and ($rows | map(.telemetry != null) | all)' "$1" >/dev/null \
-    || { echo "the per-second rows have a gap, a missing reading or no telemetry: $(jq -c "$2"' | map({second, requests, server: (.server != null), telemetry: (.telemetry != null)})' "$1" | cut -c1-600)"; return 1; }
+  local verdict
+  verdict="$(jq -c "$2"' as $rows
+    | ($rows | map(.second)) as $s
+    | def at: . as $r | ($r.second - $rows[0].second);
+      {clauses: {
+         enough_rows: (($rows | length) > 5),
+         no_gap: ([range(1; $s | length) | select($s[.] != $s[. - 1] + 1)] | length == 0),
+         endpoints_are_objects: ($rows | map(.endpoints | type == "object") | all),
+         server_readings: ($rows | map(.server != null and .server.cpu_usec >= 0 and .server.pss_anon_kb > 0 and .server.memory_current > 0 and .server.fds > 0) | all),
+         server_cpu_in_the_rows_between: ($rows | .[1:-1] | map(.server != null and .server.cpu_usec > 0) | all),
+         telemetry_every_second: ($rows | map(.telemetry != null) | all)},
+       offending: {gaps_after_row: [range(1; $s | length) | select($s[.] != $s[. - 1] + 1) | . - 1],
+                   server_missing_or_zero: [$rows | to_entries[] | select(.value.server == null or .value.server.cpu_usec < 0 or .value.server.pss_anon_kb <= 0 or .value.server.memory_current <= 0 or .value.server.fds <= 0
+                                            or (.key > 0 and .key < ($rows | length) - 1 and .value.server.cpu_usec <= 0)) | {row: (.value | at), server: .value.server}],
+                   telemetry_missing: [$rows[] | select(.telemetry == null) | at]},
+       rows: ($rows | length)}' "$1")"
+  jq -e '.clauses | all' <<<"$verdict" >/dev/null \
+    || { echo "the per-second rows fail $(jq -c '[.clauses | to_entries[] | select(.value == false) | .key]' <<<"$verdict"): $(jq -c '{offending, rows}' <<<"$verdict")"; return 1; }
 }
 
 # The realistic mode with 3,000 idle connections: held at the start and at the end (the server counts them too), no k6 connection error, the
 # client's memory is measured, one row per second of the run with latency per endpoint and the server's readings and telemetry (the
 # telemetry's request count is the aggregator's within 3 %), the WAL's frames show the writes, and the copy was fully resident (no --cold).
 check_realistic_idle_run() {
-  local out rc=0 json left
+  local out rc=0 json left verdict
   json="$(mktemp -d)/realistic.json"
   out="$(bash "$LAB/realistic.sh" --image 8.5 --think-scale 0.1 --idle 3000 --hold 40,12 --label test --out "$json" 2>&1)" || rc=$?
   [ "$rc" = 0 ] || { echo "lab/realistic.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
@@ -731,18 +744,34 @@ check_realistic_idle_run() {
   grep -q '^idle connections: 3000 requested, 3000 held at the start and 3000 at the end, 0 closed by the server' <<<"$out" \
     || { echo "the table does not report 3,000 held at the start and at the end: ${out//$'\n'/ | }"; return 1; }
   grep -q '^k6 connection errors: 0$' <<<"$out" || { echo "the table does not say k6 had no connection error"; return 1; }
-  jq -e '.idle.requested == 3000 and .idle.held_at_start == 3000 and .idle.held_at_end == 3000
-         and .idle.server_established_at_start == 3000 and .idle.server_established_at_end == 3000
-         and .idle.server_fds_open_with_idle > 3000 and .idle.client.memory_current_mib_at_end > 1 and .idle.client.rss_mib > 1
-         and .k6_connection_errors == 0 and .cold.requested == false and .cold.resident_share > 0.95
-         and (.server.env | index("APP_TELEMETRY=1") != null)
-         and ([.results.series[].server.wal_frames] | max) > 0
-         and ([.results.series[].server.wal_bytes] | max) > 0
-         and ([.results.series[].telemetry.longest_callback_ms] | max) > 0
-         and ([.results.series[].endpoints | keys[]] | unique | index("GET /feed") != null)
-         and (([.results.series[].telemetry.requests | to_entries[].value] | add) as $t | ([.results.series[].requests] | add) as $a
-              | ($t - $a | fabs) <= 0.03 * $a)' "$json" >/dev/null \
-    || { echo "the JSON does not hold the idle run: $(jq -c '{idle, cold, k6_connection_errors, rows: (.results.series | length)}' "$json")"; return 1; }
+  # Every clause is a named boolean, so that a failure says which one (and the numbers behind the counting ones).
+  # The telemetry's count against the aggregator's is made on the seconds both sides cover whole: not the first row (the sampler starts in
+  # the middle of a second) nor the last (its telemetry line is printed a moment after the run's last reading). A line the server lost is a
+  # whole second (about 40 requests here), so the tolerance is 2 % and 8 requests: the requests that sit on the edges of the window
+  # (k6 stamps a request when it ends, the server counts it when it starts) can fall on either side.
+  verdict="$(jq -c '
+    .results.series as $rows
+    | ($rows | .[1:-1]) as $inner
+    | ([$inner[].telemetry.requests // {} | to_entries[].value] | add // 0) as $tel
+    | ([$inner[].requests] | add // 0) as $agg
+    | {clauses: {
+         idle_held_at_start_and_end: (.idle.requested == 3000 and .idle.held_at_start == 3000 and .idle.held_at_end == 3000),
+         server_counts_the_idle_connections: (.idle.server_established_at_start == 3000 and .idle.server_established_at_end == 3000),
+         fds_and_client_memory: (.idle.server_fds_open_with_idle > 3000 and .idle.client.memory_current_mib_at_end > 1 and .idle.client.rss_mib > 1),
+         no_k6_connection_error: (.k6_connection_errors == 0),
+         warm_copy: (.cold.requested == false and .cold.resident_share > 0.95),
+         telemetry_on: (.server.env | index("APP_TELEMETRY=1") != null),
+         wal_frames_seen: (([$rows[].server.wal_frames] | max) > 0),
+         wal_bytes_seen: (([$rows[].server.wal_bytes] | max) > 0),
+         longest_callback_seen: (([$rows[].telemetry.longest_callback_ms] | max) > 0),
+         feed_endpoint_seen: ([$rows[].endpoints | keys[]] | unique | index("GET /feed") != null),
+         telemetry_counts_the_requests: (($tel - $agg | fabs) <= 0.02 * $agg + 8)},
+       numbers: {rows: ($rows | length), telemetry_requests: $tel, aggregator_requests: $agg,
+                 rows_without_telemetry: [$rows[] | select(.telemetry == null) | .second],
+                 rows_without_server: [$rows[] | select(.server == null) | .second],
+                 wal_frames_max: ([$rows[].server.wal_frames] | max), longest_callback_max: ([$rows[].telemetry.longest_callback_ms] | max)}}' "$json")"
+  jq -e '.clauses | all' <<<"$verdict" >/dev/null \
+    || { echo "the JSON does not hold the idle run, failing clauses $(jq -c '[.clauses | to_entries[] | select(.value == false) | .key]' <<<"$verdict"), numbers $(jq -c '.numbers' <<<"$verdict"), idle $(jq -c '.idle' "$json")"; return 1; }
   check_series_rows "$json" '.results.series' || return 1
   left="$(docker ps -a --format '{{.Names}}' | grep '^lab-realistic-' || true)"
   [ -z "$left" ] || { echo "containers left behind: ${left//$'\n'/ }"; return 1; }
