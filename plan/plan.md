@@ -1,6 +1,6 @@
 # $12 server challenge in PHP
 
-**Status:** 🔄 Phase 3 running: the bake-off (scope 7) · 1 question (not blocking) · approved
+**Status:** 🔄 Phase 3 running: the bake-off (scope 7) · 2 questions (not blocking) · approved
 on 2026-11-21 · snapshot 2026-11-21-0920 · **Round:** 2
 **Since your last read:** scopes 1 to 6 and both final reviews are done; the bake-off itself waits for a quiet VM.
 Phase 3 is planned in [details/phase-3.md](details/phase-3.md), with its predictions
@@ -48,6 +48,36 @@ worth a try.
 
 **Trail:** 2026-11-21 16:29, phase 3 codes A as the hypothesis: Swoole runs on 8.5 (D17), and Workerman and DIY get
 one information run on 8.6 if ext-event builds there. Nothing is patched.
+
+**Answer:**
+
+### Q10 [run, stalls] : the posts route stalls 100 to 450 ms: what causes it, and does phase 4 measure it first?
+
+In the bake-off, 7 runs dropped iterations, **all on `posts.js`**, none of 28 on `/noop`, and 6 of the 7 cost more
+server CPU per request than the valid run of their pair (39.36 against 31.62 µs, for one). A paused host vCPU doesn't
+add CPU to the server's cgroup, so this looks like a **server-side** stall: SQLite reading from a cold page cache, the
+mmap of the 250 MB seed, or a GC pause. D25 doubled k6's VUs, which absorbs the stall: the bake-off's µs/req stays
+comparable, but **the real bench would see the stall in its p99**. Not blocking: the bake-off's ranking doesn't depend
+on it. No measurement tonight.
+
+**Question:** what do we do with it?
+
+- **A.** Phase 4 measures it first, before any posts optimization: posts at rate / 10 VUs with per-second latency, cold
+  versus warm page cache, `gc_status()` and SQLite's page-cache counters per run.
+  **For:** names the cause before we tune around it; the real bench's p99 is what scores.
+  **Against:** a few runs of setup before phase 4's main work.
+- **B.** Leave it until the full bench (phase with the 5 endpoints): measure it only if it shows up there.
+  **For:** no work on a stall the real load may not produce.
+  **Against:** if it's real, every posts number until then hides it.
+
+**Confidence:** A 80 % · B 20 %
+
+**Recommendation:** A: a 450 ms stall is longer than the bench's latency budget, and it's cheap to name now.
+
+**Flips if:** the stall doesn't reproduce at rate / 10 on a quiet VM with a quiet Mac: then it was the host, and B.
+
+**Trail:** 2026-11-21 22:16, raised by the pr-reviewer's delta on scope 7 (item 7) and the planning session; phase 3
+codes A as the hypothesis for phase 4's plan. D25 now says the cause isn't separated.
 
 **Answer:**
 

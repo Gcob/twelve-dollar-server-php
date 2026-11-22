@@ -68,10 +68,11 @@
   autotune to megabytes, so an end-to-end case could pass without one (plan review, settled by the project manager,
   phase 3, 2026-11-21).
 - **D25:** the bake-off runs every run with twice the default VUs (`--pre-vus` and `--max-vus` at rate / 5: 1,400 at
-  7,000 req/s, 1,900 at 9,500), on both routes and all runtimes. At rate / 10, host stalls of 100 to 300 ms dropped
-  iterations on `posts.js` (4 of 8 posts runs invalid, none of 11 `/noop` runs); the extra VUs absorb a stall without
-  changing what the server does per request. The first try at rate / 10 is kept and shown, not counted (scope 7,
-  settled by the project manager, phase 3, 2026-11-21).
+  7,000 req/s, 1,900 at 9,500), on both routes and all runtimes. At rate / 10, stalls of 100 to 300 ms dropped
+  iterations on `posts.js` (4 of 8 posts runs invalid, none of 11 `/noop` runs); their cause isn't separated (host, or
+  the server's database reads), and the extra VUs absorb a stall whatever its cause. The cost: twice the connections
+  under load, which moves Swoole's memory under load (a memory comparison must fix k6's connection count). The first
+  try at rate / 10 is kept and shown, not counted (scope 7, settled by the project manager, phase 3, 2026-11-21).
 
 ## History
 
