@@ -383,3 +383,35 @@ against 4 per post), the response write 20 %, JSON 10 %, parsing 8 %, the kernel
 
 **Verdict:** 🔶 Claude's take: phase 5 starts with the fd wall, the x86 calibration runs beside it once Jacob picks a
 VM, then the feed query and the syscall count. Open until Jacob plans phase 5.
+
+### 2026-11-22 18:01 · ❓ Question: what is the fd wall, and could we build our own way around it?
+
+**Jacob:** "What is FD? And one question that might sound stupid, could we build our own one to surpass this limit?
+Because your option B would be to have several processes that will use 27% more computer power per request. That is
+way too much."
+
+**The wall:** a file descriptor (fd) is the number the kernel gives a process for each thing it opens: a file, a
+pipe, a network connection. The server holds one per open connection. The bench starts it with `LimitNOFILE=65535`,
+the most fds one process may hold, and it can't raise that: it isn't root, and rule 11 forbids tuning the box. Every
+k6 user keeps its own connection, so one process serves about 65,500 users at once, and many entries stop near
+71,000.
+
+**Challenge:** not a stupid question: the entries past 71,000 all built their own way around it.
+
+- **io_uring direct descriptors** (csharp-kestrel 260,000, rust-iouring-kensac 310,000, HolyPHP's io_uring path):
+  accepted sockets live in a ring's own table instead of the process's fd table, and several rings give several
+  tables. ❌ for us: no io_uring for sockets from PHP without writing C.
+- **`Connection: close` near the limit (S1-d):** go-epoll-MegaPanchamZ, one process on raw epoll like our DIY loop,
+  held **185,000 users** (51 µs per request, 99 % CPU on the bench). Above a soft limit its responses carry
+  `Connection: close`, so the user reconnects on its next request, about 10 s later, and the seat is free meanwhile;
+  only at a hard limit does it evict the longest-idle connection. HolyPHP's classic path sheds the same way at
+  61,439 fds. A user's connection sits idle more than 99 % of the time: the fds are the scarce resource, not the CPU,
+  so the seats rotate. The cost is a reconnect (accept, TCP handshake, close) per request for the users past the
+  limit: about 57 % of the requests at 150,000 users. Unknown, to measure.
+- **Several processes (S1-b):** the +27 % is one measurement (tzimpel, Swoole, 2 workers), blamed on context switches
+  and SQLite's write lock shared by two processes. It's a prediction to re-measure (D5), not an answer, but it starts
+  behind S1-d.
+
+**Verdict:** ✅ S1-d first in phase 5, with its cost per reconnect measured; prior art shows one epoll process reaching
+185,000 that way. 🔶 S1-b only if S1-d's reconnects cost more than a second process. ❌ io_uring direct descriptors
+(needs C).
