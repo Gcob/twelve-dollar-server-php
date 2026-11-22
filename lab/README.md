@@ -949,3 +949,11 @@ bash lab/check.sh
 
 One line per check, `ok` or `FAIL`, non-zero exit if any fails. To add one, write a `check_<name>` function in the
 script and list it in `CHECKS`.
+
+`check_results_regenerate` keeps the results folders honest: it runs every `lab/results/*/summarize.sh` (from its
+folder, reading only the raw files next to it) and checks that every non-empty line it prints is a line of that
+folder's `README.md`, byte for byte, so a README cannot drift from its raw files. It prints `ok` per folder, or the
+first line the README lacks. A folder without a `summarize.sh` is named as skipped, not failed. A table is regenerated
+with `bash lab/results/<folder>/summarize.sh`, pasted into the README with the prose around it kept. The baseline's
+summary runs `lab/run.sh`, so this check needs Docker and the `php-lab:8.5` image. `check_results_check_catches_drift`
+proves the check can fail, on `lab/check/fixtures/results-drift/` (a README that holds a near copy of one line).

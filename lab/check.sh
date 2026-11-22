@@ -1005,6 +1005,69 @@ check_shellcheck_catches_warning() {
   fi
 }
 
+# results_check <root>: every <root>/*/summarize.sh is run from its folder, and every non-empty line it prints must be a
+# line of that folder's README.md, byte for byte (so a README cannot drift from its raw files). One line per folder on
+# stderr: `ok`, `skip` (no summarize.sh) or the first missing line. Returns 1 if any folder fails or none was checked.
+results_check() {
+  local root="$1" dir name out rc checked=0 failed=0 missing
+  out="$(mktemp)"
+  for dir in "$root"/*/; do
+    dir="${dir%/}"
+    name="${dir##*/}"
+    if [ ! -f "$dir/summarize.sh" ]; then
+      echo "  skip  $name (no summarize.sh)" >&2
+      continue
+    fi
+    checked=$((checked + 1))
+    rc=0
+    bash "$dir/summarize.sh" >"$out" 2>/dev/null </dev/null || rc=$?
+    if [ "$rc" != 0 ]; then
+      echo "  FAIL  $name: summarize.sh exited $rc" >&2; failed=1; continue
+    fi
+    if [ ! -s "$out" ]; then
+      echo "  FAIL  $name: summarize.sh prints nothing" >&2; failed=1; continue
+    fi
+    [ -f "$dir/README.md" ] || { echo "  FAIL  $name: no README.md" >&2; failed=1; continue; }
+    # Why: awk compares whole lines as bytes (a set lookup), which grep -x with a pattern would not do for `|` and `.`.
+    missing="$(awk 'NR == FNR { seen[$0] = 1; next } $0 != "" && !($0 in seen) { print; exit }' "$dir/README.md" "$out")"
+    if [ -n "$missing" ]; then
+      echo "  FAIL  $name: README.md lacks the line: $missing" >&2; failed=1
+    else
+      echo "  ok    $name ($(grep -c . "$out") lines)" >&2
+    fi
+  done
+  rm -f "$out"
+  [ "$checked" -gt 0 ] || { echo "  FAIL  no summarize.sh under $root" >&2; return 1; }
+  return "$failed"
+}
+
+# Every results folder with a summarize.sh still prints, line for line, tables that its README holds.
+check_results_regenerate() {
+  local report rc=0
+  report="$(results_check "$LAB/results" 2>&1)" || rc=$?
+  echo "$report" >&2
+  [ "$rc" = 0 ] || { echo "a README differs from its summarize.sh: ${report//$'\n'/ | }"; return 1; }
+}
+
+# The fixture folder's README misses one line of its summarize.sh (it holds a near copy): the check must fail and name
+# that line, skip the folder without a script, and a folder whose README holds every line must pass.
+check_results_check_catches_drift() {
+  local out rc=0 good
+  out="$(results_check "$LAB/check/fixtures/results-drift" 2>&1)" || rc=$?
+  [ "$rc" = 1 ] || { echo "expected exit 1 on the drifted fixture, got $rc: ${out//$'\n'/ | }"; return 1; }
+  grep -qxF '  FAIL  drifted: README.md lacks the line: | b | 2 | µs |' <<<"$out" || { echo "the missing line is not named: ${out//$'\n'/ | }"; return 1; }
+  grep -qxF '  skip  hand-written (no summarize.sh)' <<<"$out" || { echo "the folder without a script is not named as skipped: ${out//$'\n'/ | }"; return 1; }
+  grep -q 'FAIL  hand-written' <<<"$out" && { echo "the folder without a script fails"; return 1; }
+  good="$(mktemp -d)"
+  mkdir "$good/whole"
+  printf '%s\n' 'echo "| a | 1 |"' 'echo' 'echo "| b | 2 | µs |"' >"$good/whole/summarize.sh"
+  printf '%s\n' 'prose' '| a | 1 |' '| b | 2 | µs |' >"$good/whole/README.md"
+  rc=0
+  out="$(results_check "$good" 2>&1)" || rc=$?
+  rm -rf "$good"
+  [ "$rc" = 0 ] || { echo "a README that holds every line fails: ${out//$'\n'/ | }"; return 1; }
+}
+
 CHECKS=(
   check_seed_files_exist
   check_seed_has_posts
@@ -1063,6 +1126,8 @@ CHECKS=(
   check_macro_profile
   check_shellcheck
   check_shellcheck_catches_warning
+  check_results_check_catches_drift
+  check_results_regenerate
 )
 
 # Names given as arguments: only those checks (`bash lab/check.sh check_replay_keeps_up`).
