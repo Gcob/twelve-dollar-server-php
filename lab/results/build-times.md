@@ -17,3 +17,6 @@ second `8.5` (0 s) is a rebuild after a change to `php-info` only: every layer b
 | 2026-11-21 | 8.6 | 93 | Docker Desktop 4.76.0 (228118) |
 | 2026-11-21 | 8.4 | 166 | Docker Desktop 4.76.0 (228118) |
 | 2026-11-21 | 8.3 | 179 | Docker Desktop 4.76.0 (228118) |
+| 2026-11-22 | 8.5 | 16 | Docker Desktop 4.76.0 (228118) |
+| 2026-11-22 | 8.4 | 15 | Docker Desktop 4.76.0 (228118) |
+| 2026-11-22 | 8.3 | 14 | Docker Desktop 4.76.0 (228118) |

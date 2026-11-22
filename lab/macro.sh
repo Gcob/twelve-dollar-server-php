@@ -5,7 +5,7 @@
 #   bash lab/macro.sh --image 8.4 --server lab/servers/noop-swoole.php --rate 2000 --duration 30
 #                     [--warmup 10] [--script lab/macro/k6/fixed-rate.js] [--out <path>] [--port 18080]
 #                     [--path /] [--pre-vus <n>] [--max-vus <n>] [--php-ini key=value]... [--ext <name>]... [--env K=V]...
-#                     [--label <text>] [--fresh-db] [--cold] [--per-second]
+#                     [--label <text>] [--fresh-db] [--cold] [--per-second] [--profile <collapsed stacks file>]
 #
 # --fresh-db starts the CHALLENGE APP's way of running a server (lab_start_app: a fresh copy of the seed on the container's own disk, SQLITE_PATH
 # and JWT_SECRET set, APP_TELEMETRY=1, extensions `sockets event` unless --ext says otherwise) instead of a bake-off server that copies its own
@@ -14,6 +14,10 @@
 # (lab/macro/aggregate.php) that keeps a latency histogram per second and endpoint, and one sampler loop in the probe container reads the server
 # (CPU, Pss_Anon, memory.current, the WAL, fds, page faults) once a second; with the app the server's telemetry line of each second joins them.
 # The CSV costs k6 about 300 us of CPU per request: the server's numbers are not affected, k6's are.
+#
+# --profile <file> (needs --fresh-db) runs the app with the Excimer profiler on CPU time (see lab/realistic.sh for what it does and prints): the
+# collapsed stacks are copied to <file> once the load is over, folded into the steps S1 to S9 and printed with the cgroup's user and system CPU.
+# The profiled server's us/request is not a baseline: Excimer costs CPU.
 #
 # --ext names a PHP extension to load (`-d extension=<name>`, repeatable, default `swoole`); --env K=V is passed to the server
 # container (repeatable); --label goes in the JSON and in the default file name after the server's name.
@@ -41,6 +45,8 @@ source "$LAB/lib.sh"
 
 # shellcheck source=series.sh
 source "$LAB/series.sh"
+# shellcheck source=profile.sh
+source "$LAB/profile.sh"
 
 SERVER=lab-macro-server
 K6C=lab-macro-k6
@@ -54,7 +60,7 @@ usage() {
   echo "usage: lab/macro.sh --image <variant> --server <php file under lab/> --rate <req/s> --duration <s> [--warmup <s>]" >&2
   echo "                    [--script <k6 js under lab/>] [--out <path>] [--port <n>] [--path </url/path>]" >&2
   echo "                    [--pre-vus <n>] [--max-vus <n>] [--php-ini key=value]... [--ext <name>]... [--env K=V]..." >&2
-  echo "                    [--label <text>] [--fresh-db] [--cold] [--per-second]" >&2
+  echo "                    [--label <text>] [--fresh-db] [--cold] [--per-second] [--profile <collapsed stacks file>]" >&2
   exit 2
 }
 fail() { echo "macro: $*" >&2; exit 1; }
@@ -63,7 +69,7 @@ command_line="lab/macro.sh $*"
 command_line="${command_line//$REPO/.}"
 
 image="" server_file="" rate="" duration="" warmup=10 script="$LAB/macro/k6/fixed-rate.js" out="" port=18080 url_path=/
-pre_vus="" max_vus="" label="" fresh_db="" cold="" per_second=""
+pre_vus="" max_vus="" label="" fresh_db="" cold="" per_second="" profile_out=""
 LAB_EXT=() LAB_ENV=() LAB_INI=()
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -88,6 +94,7 @@ while [ "$#" -gt 0 ]; do
     --ext) LAB_EXT+=("$2") ;;
     --env) LAB_ENV+=("$2") ;;
     --label) label="$2" ;;
+    --profile) profile_out="$2" ;;
     *) echo "unknown option: $1" >&2; usage ;;
   esac
   shift 2
@@ -114,6 +121,10 @@ if [ "${#LAB_EXT[@]}" -eq 0 ]; then
   LAB_EXT=(swoole)
   [ -z "$fresh_db" ] || LAB_EXT=(sockets event)
 fi
+[ -z "$profile_out" ] || [ -n "$fresh_db" ] || { echo "--profile needs --fresh-db (only the challenge app writes a profile)" >&2; usage; }
+# --profile loads Excimer, sets APP_PROFILE and turns the telemetry off unless the caller sets it (lab/profile.sh).
+profile_prepare
+profile_json=null   # profile_collect (lab/profile.sh) sets it
 if [ -n "$fresh_db" ]; then
   # Telemetry is on in every run of the app unless the caller sets it (a later measurement compares on against off).
   telemetry_set=""
@@ -179,6 +190,7 @@ docker run -d --name "$PROBE" --network host --cgroupns host --pid host --cpuset
 if probe port-open "$port"; then
   fail "port $port is already in use on the VM's host network: pick another with --port"
 fi
+profile_check_image
 
 lab_build_php_flags
 # The app copies the seed (and syncs it) before it listens: up to about 30 s on a slow disk.
@@ -243,6 +255,7 @@ docker run -d --name "$K6C" --network host --cpuset-cpus "$LAB_CPUSET_K6" -v "$L
 [ -z "$per_second" ] || docker exec "$PROBE" mkfifo -m 666 /run/rt/csv
 k6_id="$(docker inspect -f '{{.Id}}' "$K6C")"
 k6_version="$(docker exec "$K6C" k6 version | head -n 1)"
+profile_begin
 target_url="http://127.0.0.1:$port$url_path"
 
 # run_k6 <label> <seconds>: the summary stays in the k6 container at /tmp/<label>.json.
@@ -309,6 +322,11 @@ memory="$(probe memory "$server_id" | lines_to_json)"
 server_running="$(docker inspect -f '{{.State.Running}}' "$SERVER")"
 [ "$server_running" = true ] || fail "the server container died during the run"
 
+# The profile: the requests of the profiled window are the warm-up's and the measured run's (k6's counts).
+if [ -n "$profile_out" ]; then
+  profile_collect "$(jq -s '[.[].metrics.http_reqs.count // 0] | add' "$tmp/warmup.json" "$tmp/measured.json")"
+fi
+
 # The per-second series: the sampler's lines, the aggregator's latency rows and the server's telemetry lines, joined by second.
 series_json=null
 series_note=null
@@ -345,7 +363,7 @@ jq -n \
   --argjson ext "$(json_array "${LAB_EXT[@]}")" --argjson env "$(json_array "${LAB_ENV[@]+"${LAB_ENV[@]}"}")" --arg label "$label" \
   --arg socket_line "$socket_line" --argjson other_containers "$other_json" --argjson memory_now "$memory_now" \
   --argjson memory "$memory" --argjson connections "$connections" --argjson cold "$cold_json" --argjson series "$series_json" \
-  --argjson series_agg "$series_note" --argjson lag_gate "$LAG_GATE_S" --slurpfile measured "$tmp/measured.json" --slurpfile warmup_summary "$tmp/warmup.json" '
+  --argjson series_agg "$series_note" --argjson profile "$profile_json" --argjson lag_gate "$LAG_GATE_S" --slurpfile measured "$tmp/measured.json" --slurpfile warmup_summary "$tmp/warmup.json" '
   def mib: . / 1048576 * 100 | round / 100;
   ($measured[0].metrics) as $m
   | ($m.http_reqs.count // 0) as $requests
@@ -374,7 +392,7 @@ jq -n \
                       else ($socket_line | split(" ") | map(split("=") | {(.[0]): (.[1] | tonumber? // .[1])}) | add) end)},
     k6: {image: $k6_image, version: $k6_version, script: $script, target_url: $url, rate: $rate, duration_s: $duration,
          warmup_s: $warmup, pre_allocated_vus: $pre_vus, max_vus: $max_vus},
-    cold: $cold,
+    cold: $cold, profile: $profile,
     results: {
       per_second: (if $series == null then null else {aggregator: $series_agg, rows: $series} end),
       requests: $requests,
@@ -451,6 +469,7 @@ if [ -n "$per_second" ]; then
   series_print "$tmp/series.json"
   echo
 fi
+profile_print
 [ -z "$other_warning" ] || echo "$other_warning"
 if [ "$valid" = true ]; then
   echo "VALID"

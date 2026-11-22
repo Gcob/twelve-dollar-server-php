@@ -54,20 +54,22 @@ An unknown variant exits non-zero and lists the known ones. `lab/run.sh` runs a 
 no swap, 65535 file descriptors, on the host network, pinned to CPU 2; `lab/` is mounted at `/lab` (read-only, except
 `lab/results/` and `lab/data/`). The CPU layout and the limits live in `lab/lib.sh`, shared by every lab script.
 `php-info` prints the PHP, Swoole and SQLite versions, OPcache and JIT, and which extensions are present (`swoole:
-not built` when the image has no Swoole), then `pcntl`, `sockets`, `event` (its version, or `not built`) and the Workerman
-version of its two trees (`workerman: 5.2.4 (stock, nocache)`).
+not built` when the image has no Swoole), then `pcntl`, `sockets`, `event` (its version, or `not built`), `excimer` (the same) and the
+Workerman version of its two trees (`workerman: 5.2.4 (stock, nocache)`).
 
 ### Extensions and Workerman
 
-The last layer of `Dockerfile.src` (`images/install-extras.sh`, about 12 to 14 s to build) comes after PHP and Swoole, so a
-change to it, or to `php-info`, reuses those two layers (a `php-info` change rebuilds in under a second). It adds, on every
-source image (8.3 to 8.6; `8.3-apt` is left as it was, nothing in the lab runs Workerman or the hand-written server on it):
+The layer of `Dockerfile.src` after Swoole (`images/install-extras.sh`, about 12 to 14 s to build) reuses PHP and Swoole's layers when it
+changes, and the profiler has a layer after it (`images/install-excimer.sh`, about 14 s) so that building Excimer does not rerun this
+script's `apt-get update` and could not move libevent between two measurements; a `php-info` change rebuilds in under a second. The extras add,
+on every source image (8.3 to 8.6; `8.3-apt` is left as it was, nothing in the lab runs Workerman or the hand-written server on it):
 
 | What | Version | Built from |
 | --- | --- | --- |
 | `pcntl`, `sockets` | the image's PHP | shared extensions, `phpize` on **the php.net tarball and sha256 the image's PHP was built from**, `CFLAGS=-O2` |
 | `event` (PECL) | 3.2.0 | shared extension, `phpize`, against Ubuntu's `libevent-dev`, with `sockets` support; no OpenSSL, no pthreads |
 | Workerman | 5.2.4 | the GitHub tag tarball, with `workerman/coroutine` 1.1.7 (the release its `composer.json` accepts) |
+| `excimer` (PECL) | 1.2.6 | shared extension, `phpize`, in a layer of its own after this one (`images/install-excimer.sh`, `WITH_EXCIMER`): see "The profile" |
 
 Every download is pinned by sha256 in the script, and the build stops on a mismatch. None of the three extensions is enabled
 globally: a server loads them with `-d extension=...` (`--ext` of `macro.sh`, `conformance.sh` and `conns.sh`), **in this
@@ -770,6 +772,91 @@ per request: the server's numbers do not change, k6's do.
 bash lab/macro.sh --image 8.5 --server lab/app/server.php --fresh-db --cold --per-second --rate 2000 --duration 30 \
   --script lab/macro/k6/posts.js --path /posts/1
 ```
+
+## The profile
+
+`--profile <file>` on `lab/realistic.sh` and `lab/macro.sh --fresh-db` runs the challenge app under **Excimer** (PECL 1.2.6, a sampling
+profiler on the CPU time of the thread) and folds its samples into the steps of a request, to tell which step costs the most per
+request and per endpoint. Excimer is in the 8.3, 8.4 and 8.5 images, never enabled globally (`--ext excimer`, which `--profile` adds), and
+`php-info` prints `excimer: 1.2.6`. **It does not build on PHP 8.6** (`results/excimer-on-php-8.6.md`: `XtOffsetOf` and `INI_INT` are gone):
+the 8.6 image is built with `WITH_EXCIMER=0` (`excimer: not built`) and `--profile` on it stops before anything starts.
+
+```bash
+bash lab/realistic.sh --image 8.5 --think-scale 0.1 --warmup 100,5 --hold 300,20 --profile /tmp/profile.collapsed
+php lab/profile/fold.php /tmp/profile.collapsed --us-per-req 240    # in a lab container: bash lab/run.sh 8.5 php /lab/profile/fold.php ...
+```
+
+### In the server
+
+`APP_PROFILE=<path in the container>` (and `APP_PROFILE_PERIOD`, seconds of CPU time between two samples, default 0.001) starts an
+`ExcimerProfiler` on `EXCIMER_CPU` before the first request (`lab/servers/diy-profile.php`, started by `DiyServer::run`). The servers have no
+signal handling and are removed with `docker rm -f`, and `/lab` is read-only, so a timer of the event loop writes the **collapsed stacks**
+(`frame;frame;frame <count>`, one line per distinct stack) to the container's own disk every 2 s, through a temporary file and a rename.
+The harness waits for the next write after the load, reads the cgroup, and copies the file out with `docker exec cat`. The profiler is
+stopped while the timer writes, so a profile never holds its own flush. With `--profile` the telemetry is off unless `--env APP_TELEMETRY=..`
+says otherwise (a profile of the server, not of the telemetry's timers). The loop's three callbacks are now named methods
+(`[$this, 'onReadable']`), not first-class closures: a profile names a first-class callable `{closure:file(line)}`, whose line moves with
+every edit, and the rules need a name.
+
+**The window** is the whole life of the server after its first answer: the idle connections, the warm-up, the ramps and the plateau, and an
+idle second or two. The JSON's `profile` key holds the samples, the cgroup's `user_usec` and `system_usec` over that window, the share
+of the CPU the samples cover (`samples_over_cgroup_cpu`, 0.97 to 1.0 in the smokes: the CPU timer counts the kernel's time too) and
+the fold. The `us/req` printed for a profiled run is the profiled server's: **Excimer costs CPU, so it is never a baseline**; it comes from the
+cgroup's CPU over the window divided by the requests of the window (the warm-up's, the run's and one `GET /health` per idle connection).
+
+### The fold and its rules
+
+`lab/profile/fold.php <collapsed file or -> [--rules <file>] [--us-per-req <n>]` prints one table: the rows are the steps S1 to S9, the
+event loop and unclassified, the columns are the five endpoints, `shared` and `all`. A sample takes the step of the **innermost frame**
+of its stack that `lab/profile/steps.rules` names (a frame name, or a prefix ending in `*`), and the endpoint of the route function found
+anywhere on its stack; a sample with no route function (reading, parsing, writing, the loop: the work done before the route is known) is
+`shared`. Every cell is a share of **all** the samples (the table sums to 100 %, a column's total is its weight in the run), and with
+`--us-per-req` the microseconds it adds to the average request. A second block gives each endpoint column as a share of its own samples,
+which is the one that answers "which step costs the most for `GET /feed`". A frame that no rule names makes the sample `unclassified`, and
+the innermost frames of those are listed under the table: a rename in the app shows up there, not as a wrong step. `lab/check/fold-test.php`
+tests the fold on a hand-written profile of 1,000 samples with known shares.
+
+| Step | Frames of `steps.rules` | What is in it |
+| --- | --- | --- |
+| S1 accept | `DiyServer::onAccept`, `DiyConnection::close` | `stream_socket_accept` and the new socket's setup, and `fclose` |
+| S2 read and parse | `DiyConnection::onReadable`, `::parse`, `::parseHead` | `fread` (the kernel's receive path), the header parse; `parse` also holds the response head's concatenation (S8 work, too small to split without a function of its own) |
+| S3 route | `handler_handle`, the `route_*` functions | the match on method and path |
+| S4 JWT, S5 validate | `jwt_verify` and its decoder, `id_validate`, `body_validate` | |
+| S6 query | `feed_query`, `post_query`, `post_insert`, `post_exists`, `like_insert`, `route_health` | `PDOStatement::execute` and the fetch; `route_health` runs its query inline |
+| S7 JSON | the `*_json` functions | `json_encode` |
+| S8 write | `response_json`, `response_error`, `DiyConnection::advance`, `::onWritable` | `fwrite` (the kernel's send path) |
+| S9 durability | none | SQLite commits inside `PDOStatement::execute` (autocommit), so a write's commit and its WAL checkpoint are in S6. The row stays at 0 to say so |
+| event loop | `DiyServer::run`, `::onReadable`, `::onWritable`, `::settle` | libevent's dispatch and `epoll_wait` (see the calibration), the events added and removed |
+
+### Where Excimer's samples land (the calibration)
+
+Excimer takes a sample at the next VM interrupt check, so the rules rest on a measurement: `lab/profile/calibrate.php`, run by
+`check_excimer_calibration` with the JIT on (`tracing`) and off.
+
+- **An internal function's time is its calling PHP function's.** The `hash` mode has one PHP function (`calib_hash_step`) whose time is
+  all in `hash('sha256')`, and one (`calib_loop_step`) of plain PHP. Timed with `hrtime` and no profiler, the hash is 28.3 % of the CPU with
+  the JIT on and 33.4 % with it off. Profiled for 6 s (CPU time, 1 ms), `calib_hash_step` holds **28.2 % and 33.8 %** of the samples (0.1 and
+  0.4 points off; the check allows 5), and no frame is named `hash`: internal functions never appear in a profile. The kernel's time inside
+  `fread`, `fwrite` and `stream_socket_accept` is therefore in the PHP function that called them, which is why each step has its own function.
+- **libevent's and `epoll_wait`'s time lands on the next callback's own frame.** Nothing in them can take a sample, so it is taken when the
+  callback's PHP starts. A persistent 0 s timer around an empty callback (libevent spinning, `epoll_wait(0)` each time) puts **97.9 %** of the
+  samples on the callback's frame and 2.1 % on the function that called `dispatch()`; a socket pair ping-pong (one `fread` and one `fwrite` per
+  callback) puts 66 % on the callback function that does them and 32 % on the closure that libevent calls (JIT off: 61 % and 37 %). In the
+  app that is `DiyServer::onReadable`'s own frame, which holds almost no PHP, so its own samples are the loop's.
+- **The kernel's time is counted.** The samples add up to the CPU the process used (`getrusage`, user and system): 3,969 samples against
+  3,985 ms of CPU for the spinning loop (43 % of it in the kernel), 3,974 against 3,978 for the ping-pong (70 % in the kernel). What
+  a sample cannot say is which syscall: `read` and `epoll_wait` share the frame they land on.
+
+### Reading the table
+
+The cgroup's user and system CPU of the window is printed under it. The system share is the kernel's work for the whole server (the
+sockets, the page faults, SQLite's `pwrite` and `fsync`), and it is inside the PHP frames above. A sample in `GET /feed` S6 is the
+statement's execution and the row fetch (`PDOStatement::execute`, `fetchAll`), SQLite's own C code. The `GET /health` column holds only
+the harness's own polls, because the bench's journey never asks for it.
+
+**Traps:** a profile from `macro.sh` is the app on one URL, so only that endpoint has samples; the telemetry's timers are not in the profile unless
+asked for; the 8.6 image has no Excimer; and the CPU of a profiled run is higher than an unprofiled one's (the cost is measured, not assumed:
+run the same load with and without `--profile` and compare the `us/req` of the plateau).
 
 ## Connection test
 

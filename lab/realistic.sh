@@ -11,6 +11,7 @@
 #                         [--server <php file under lab/>] [--ext <name>]... [--env K=V]... [--label <text>]
 #                         [--warmup <req/s>,<seconds>] [--vu-cap <n>] [--ramp <s>] [--out <path>] [--port <n>]
 #                         [--local-ips <range>] [--lag-gate <s>] [--k6-memory <MiB>] [--calibrate-vus <a>,<b>] [--calibrate-seconds <s>]
+#                         [--profile <collapsed stacks file>]
 #
 # The numbers of the journey: 2.17 requests per loop (1 + 1 + 0.15 + 0.02), 20.5 s of mean think time per loop (5 + 5.5 + 10), so one
 # VU offers 2.17 / (20.5 * scale) req/s, and a steady load is 9.45 users per req/s (20.5 / 2.17). Users are always mapped from the
@@ -21,6 +22,12 @@
 # count held at the start and at the end is in the table and the JSON; a connection the server closed makes the run INVALID. --cold starts
 # the server on a copy of the seed whose pages were evicted from the page cache (what the page cache holds of it is read before the
 # server opens it: `cold` in the JSON). The server runs with APP_TELEMETRY=1 unless --env sets it, and every run has its per-second series.
+#
+# --profile <file> runs the server with the Excimer profiler (CPU time, one sample every APP_PROFILE_PERIOD seconds, default 0.001: pass
+# `--env APP_PROFILE_PERIOD=<s>` to change it; telemetry off unless --env sets it), copies the collapsed stacks to <file> when the load is over
+# and prints the fold of lab/profile/fold.php (the table of steps S1 to S9 per endpoint) with the cgroup's user and system CPU of the same
+# window. The window is the whole life of the server after its first answer: warm-up, ramps and plateaus. A profiled run is for the shape
+# of the cost, never for a baseline: Excimer costs CPU, so the us/req printed is the profiled server's.
 #
 # Containers (all on the host network of Docker's VM, removed at the end whatever happens), started on a fresh copy of the seed:
 #   server  php-lab:<image> running the app, 1 CPU, 2 GiB, the server CPU (lab/lib.sh);
@@ -41,6 +48,8 @@ REPO="$(dirname "$LAB")"
 source "$LAB/lib.sh"
 # shellcheck source=series.sh
 source "$LAB/series.sh"
+# shellcheck source=profile.sh
+source "$LAB/profile.sh"
 
 SERVER=lab-realistic-server
 K6C=lab-realistic-k6
@@ -70,7 +79,7 @@ usage() {
 usage: lab/realistic.sh --image <variant> (--staircase <from>,<step>,<to>,<s> | --hold <rate>,<s> | --calibrate) [--think-scale <s>]
                         [--server <php file under lab/>] [--ext <name>]... [--env K=V]... [--label <text>] [--warmup <rate>,<s>]
                         [--vu-cap <n>] [--ramp <s>] [--out <path>] [--port <n>] [--local-ips <range>] [--lag-gate <s>] [--k6-memory <MiB>]
-                        [--calibrate-vus <a>,<b>] [--calibrate-seconds <s>] [--idle <n>] [--cold]
+                        [--calibrate-vus <a>,<b>] [--calibrate-seconds <s>] [--idle <n>] [--cold] [--profile <collapsed stacks file>]
 rates are in req/s, <s> is the seconds of one plateau; --think-scale is the share of the bench's think time (default 1)
 EOF
   exit 2
@@ -81,6 +90,7 @@ command_line="lab/realistic.sh $*"
 command_line="${command_line//$REPO/.}"
 
 image=8.5 server_file="$LAB/app/server.php" label="" think_scale=1 warmup="" staircase="" hold="" calibrate="" vu_cap=""
+profile_out=""
 ramp="" out="" port=18120 local_ips="127.0.1.1-127.0.1.4" lag_gate=4 k6_memory="" calibrate_vus="50,300" calibrate_seconds=60 idle="" cold=""
 LAB_EXT=() LAB_ENV=()
 while [ "$#" -gt 0 ]; do
@@ -107,6 +117,7 @@ while [ "$#" -gt 0 ]; do
     --calibrate-vus) calibrate_vus="$2" ;;
     --calibrate-seconds) calibrate_seconds="$2" ;;
     --idle) idle="$2" ;;
+    --profile) profile_out="$2" ;;
     *) echo "unknown option: $1" >&2; usage ;;
   esac
   shift 2
@@ -132,6 +143,10 @@ done
 [ -n "$vu_cap" ] || vu_cap="$LAB_VU_CAP_FDS"
 [ -z "$idle" ] || [[ "$idle" =~ ^[1-9][0-9]*$ ]] || { echo "--idle must be a whole number above 0, got '$idle'" >&2; usage; }
 [ -z "$idle" ] || [ -z "$calibrate" ] || { echo "--idle does not go with --calibrate (the calibration prices k6's VUs alone)" >&2; usage; }
+[ -z "$profile_out" ] || [ -z "$calibrate" ] || { echo "--profile does not go with --calibrate" >&2; usage; }
+# --profile loads Excimer, sets APP_PROFILE and turns the telemetry off unless the caller sets it (lab/profile.sh).
+profile_prepare
+profile_json=null   # profile_collect (lab/profile.sh) sets it
 # Telemetry is on in every run unless the caller sets it (a later measurement compares on against off).
 telemetry_set=""
 for kv in "${LAB_ENV[@]+"${LAB_ENV[@]}"}"; do [[ "$kv" != APP_TELEMETRY=* ]] || telemetry_set=1; done
@@ -246,6 +261,7 @@ docker run -d --name "$PROBE" --network host --cgroupns host --pid host --cpuset
 if probe port-open "$port"; then
   fail "port $port is already in use on the VM's host network: pick another with --port"
 fi
+profile_check_image
 
 lab_build_php_flags
 # Why disable SC2034: lab_start_app (lib.sh) reads LAB_COLD; shellcheck does not follow lib.sh from the repo root.
@@ -291,6 +307,7 @@ docker run -d --name "$K6C" --network host --cpuset-cpus "$LAB_CPUSET_K6" --memo
 k6_id="$(docker inspect -f '{{.Id}}' "$K6C")"
 k6_version="$(docker exec "$K6C" k6 version | head -n 1)"
 docker exec "$PROBE" mkfifo -m 666 /run/rt/csv
+profile_begin
 
 # --- the idle connections ----------------------------------------------------------------------------------------------------------
 # One client, in its own container on the load CPUs, opens <n> keep-alive connections one at a time (see lab/conns/client.php for why),
@@ -505,6 +522,13 @@ fi
 cpu_after="$(probe cpu "$server_id" "$k6_id" | lines_to_json)"
 [ "$(docker inspect -f '{{.State.Running}}' "$SERVER")" = true ] || fail "the server container died during the run"
 
+# The profile: the requests of the profiled window are the warm-up's, the measured run's and one GET /health per idle connection.
+if [ -n "$profile_out" ]; then
+  warm_requests=0
+  [ -z "$warmup" ] || warm_requests="$(docker exec "$K6C" cat /tmp/warmup.json | jq '.metrics.http_reqs.count // 0')"
+  profile_collect "$(( warm_requests + $(jq '.requests' "$tmp/main.agg.json") + ${idle:-0} ))"
+fi
+
 # The idle connections at the end of the run: what the server counts, then the client's own sweep (it ends the hold).
 if [ -n "$idle" ]; then
   idle_established_end="$(probe connections "$port" | lines_to_json | jq '.connections.established')"
@@ -610,7 +634,7 @@ jq -n \
   --argjson steps_vus "$(jq -nc '$ARGS.positional | map(tonumber)' --args "${steps_vus[@]}")" \
   --arg k6_image "$LAB_K6_IMAGE" --arg k6_version "$k6_version" --arg local_ips "$local_ips" --argjson k6_budget "$k6_budget_mib" \
   --argjson lag_gate "$lag_gate" --argjson before "$cpu_before" --argjson after "$cpu_after" --argjson idle "$idle_json" --argjson cold "$cold_json" \
-  --argjson runs "$runs_json" --argjson calibration "$calibration_json" --arg invalid "$invalid_all" '
+  --argjson runs "$runs_json" --argjson calibration "$calibration_json" --argjson profile "$profile_json" --arg invalid "$invalid_all" '
   def mib: . / 1048576 * 100 | round / 100;
   ($after.time.us - $before.time.us) as $window_us
   | ($runs[-1]) as $last
@@ -618,7 +642,7 @@ jq -n \
     date: $date, command: $command, mode: $mode, label: (if $label == "" then null else $label end),
     other_containers: $other_containers,
     valid: ($invalid == ""), invalid_reasons: (if $invalid == "" then [] else [$invalid] end),
-    idle: $idle, cold: $cold,
+    idle: $idle, cold: $cold, profile: $profile,
     host: {docker_desktop: $docker, engine: $engine, vm_kernel: $kernel, arch: $arch, limits: $limits},
     server: {variant: $variant, image_id: $image_id, php_version: $php_version, file: $server_file, port: $port, php_flags: $flags,
              ext: $ext, env: $env, fds_open_at_boot: $server_fds,
@@ -679,6 +703,7 @@ if [ -z "$calibrate" ]; then
   series_print "$tmp/series.json"
   echo
 fi
+profile_print
 if [ -z "$invalid_all" ]; then
   echo "VALID"
 else

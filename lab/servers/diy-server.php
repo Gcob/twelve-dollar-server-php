@@ -35,24 +35,29 @@ final class DiyServer
     private EventBase $base;
     private Event $listen;
     private bool $nodelayChecked = false;
-    private readonly Closure $onReadable;
-    private readonly Closure $onWritable;
+    /** @var array{object, string}|Closure the loop's callbacks: method names when nothing wraps them, so that a profile names the frame */
+    private readonly array|Closure $onReadable;
+    private readonly array|Closure $onWritable;
 
     /**
      * @param resource $listener
      * @param DiyTelemetry|null $telemetry when given, every callback of the loop is timed and a line is printed each second
      *                                      (lab/servers/diy-telemetry.php, loaded by the caller); null: nothing is added to the loop
+     * @param DiyProfile|null $profile when given, the profiler starts when the loop does (lab/servers/diy-profile.php, loaded by the
+     *                                 caller); null: nothing is added to the loop
      */
-    public function __construct($listener, private readonly ?object $telemetry = null)
+    public function __construct($listener, private readonly ?object $telemetry = null, private readonly ?object $profile = null)
     {
         $this->base = new EventBase();
-        $onReadable = $this->onReadable(...);
-        $onWritable = $this->onWritable(...);
-        $onAccept = $this->onAccept(...);
+        // Why: a first-class callable of a method shows in a profile as `{closure:file(line)}`, whose line moves with every edit; the
+        // callable array shows as `DiyServer::onReadable`, which a profile's rules can name.
+        $onReadable = [$this, 'onReadable'];
+        $onWritable = [$this, 'onWritable'];
+        $onAccept = [$this, 'onAccept'];
         if ($telemetry !== null) {
-            $onReadable = $telemetry->timed($onReadable);
-            $onWritable = $telemetry->timed($onWritable);
-            $onAccept = $telemetry->timed($onAccept);
+            $onReadable = $telemetry->timed($this->onReadable(...));
+            $onWritable = $telemetry->timed($this->onWritable(...));
+            $onAccept = $telemetry->timed($this->onAccept(...));
         }
         $this->onReadable = $onReadable;
         $this->onWritable = $onWritable;
@@ -68,6 +73,7 @@ final class DiyServer
     public function run(): void
     {
         $this->telemetry?->start($this->base);
+        $this->profile?->start($this->base);
         $this->base->dispatch();
     }
 

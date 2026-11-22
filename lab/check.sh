@@ -52,11 +52,11 @@ check_source_image() {
   grep -qxF "$apt_sqlite" <<<"$info" || { echo "SQLite differs from 8.3-apt ($apt_sqlite): ${info//$'\n'/ | }"; return 1; }
 }
 
-# check_source_extras <variant>: pcntl, sockets and Workerman 5.2.4 (both trees) are in the image; ext-event is there, or
-# `not built` when lab/lib.sh says this variant is built without it. The phase-2 lines are checked by check_source_image.
+# check_source_extras <variant>: pcntl, sockets and Workerman 5.2.4 (both trees) are in the image; ext-event and Excimer 1.2.6 are there, or
+# `not built` when lab/lib.sh says this variant is built without them. The phase-2 lines are checked by check_source_image.
 check_source_extras() {
-  local v="$1" with_event info
-  read -r _ _ _ with_event <<<"$(lab_source_release "$v")"
+  local v="$1" with_event with_excimer info
+  read -r _ _ _ with_event with_excimer <<<"$(lab_source_release "$v")"
   info="$(bash "$LAB/run.sh" "$v" php-info 2>&1)" || { echo "php-info failed: $info"; return 1; }
   grep -qx 'pcntl: present' <<<"$info" || { echo "pcntl is not present: ${info//$'\n'/ | }"; return 1; }
   grep -qx 'sockets: present' <<<"$info" || { echo "sockets is not present: ${info//$'\n'/ | }"; return 1; }
@@ -64,6 +64,11 @@ check_source_extras() {
     grep -qx 'event: 3.2.0' <<<"$info" || { echo "php-info does not report 'event: 3.2.0': ${info//$'\n'/ | }"; return 1; }
   else
     grep -qx 'event: not built' <<<"$info" || { echo "php-info does not report 'event: not built': ${info//$'\n'/ | }"; return 1; }
+  fi
+  if [ "$with_excimer" = 1 ]; then
+    grep -qx 'excimer: 1.2.6' <<<"$info" || { echo "php-info does not report 'excimer: 1.2.6': ${info//$'\n'/ | }"; return 1; }
+  else
+    grep -qx 'excimer: not built' <<<"$info" || { echo "php-info does not report 'excimer: not built': ${info//$'\n'/ | }"; return 1; }
   fi
   grep -qx 'workerman: 5.2.4 (stock, nocache)' <<<"$info" || { echo "php-info does not report the two Workerman trees: ${info//$'\n'/ | }"; return 1; }
 }
@@ -792,6 +797,119 @@ check_macro_cold_needs_fresh_db() {
   [ -z "$(docker ps -a --format '{{.Names}}' | grep '^lab-macro-' || true)" ] || { echo "a container was started"; return 1; }
 }
 
+# The fold of a profile into the steps (lab/profile/fold-lib.php) on a hand-written profile of 1,000 samples whose shares are known: the
+# innermost matching frame wins, a stack with no route function is shared, an unknown frame is unclassified, the rules refuse a bad line.
+# Then the command line: the table on the fixture (every row, the all row at 100 %, the unknown frame named), microseconds with
+# --us-per-req, and an empty profile or a missing file refused.
+check_fold_cases() {
+  local out ok rc=0 fixture=/lab/check/fixtures/profile-collapsed.txt table
+  out="$(bash "$LAB/run.sh" 8.5 php /lab/check/fold-test.php 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "fold-test.php exited $rc: ${out//$'\n'/ | }"; return 1; }
+  grep -q '^FAIL' <<<"$out" && { echo "a case failed: ${out//$'\n'/ | }"; return 1; }
+  ok="$(grep -c '^ok  ' <<<"$out")"
+  [ "$ok" -ge 24 ] || { echo "expected at least 24 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
+  table="$(bash "$LAB/run.sh" 8.5 php /lab/profile/fold.php "$fixture" --us-per-req 40 2>&1)" || { echo "fold.php failed on the fixture: ${table//$'\n'/ | }"; return 1; }
+  grep -q '^all .*100.0% 40.0us$' <<<"$table" || { echo "the all row is not 100.0% 40.0us: ${table//$'\n'/ | }"; return 1; }
+  grep -q '^unclassified .* 0.5% 0.2us$' <<<"$table" || { echo "the unknown frame is not 0.5 % unclassified: ${table//$'\n'/ | }"; return 1; }
+  grep -q 'unclassified: 5 samples (0.5%), innermost frames: mysteryFrame (5)' <<<"$table" || { echo "the unknown frame is not named: ${table//$'\n'/ | }"; return 1; }
+  rc=0
+  bash "$LAB/run.sh" 8.5 sh -c ': > /tmp/empty; php /lab/profile/fold.php /tmp/empty' >/dev/null 2>&1 || rc=$?
+  [ "$rc" = 1 ] || { echo "an empty profile should exit 1, got $rc"; return 1; }
+  rc=0
+  bash "$LAB/run.sh" 8.5 php /lab/profile/fold.php /lab/check/fixtures/not-there.txt >/dev/null 2>&1 || rc=$?
+  [ "$rc" = 1 ] || { echo "a missing file should exit 1, got $rc"; return 1; }
+}
+
+# Where Excimer's samples land (lab/profile/calibrate.php), JIT on and off: an internal function's time (hash) is its calling PHP
+# function's, within 5 points of the share measured without the profiler; the CPU time of a spinning libevent loop and of a socket
+# pair ping-pong is all in the callbacks, and the samples add up to the CPU the process used (the kernel's time is counted).
+check_excimer_calibration() {
+  local jit out rc
+  for jit in tracing disable; do
+    rc=0
+    out="$(bash "$LAB/run.sh" 8.5 php -d extension=sockets -d extension=event -d extension=excimer -d memory_limit=-1 -d opcache.enable_cli=1 -d "opcache.jit=$jit" \
+      -d opcache.jit_buffer_size=32M -d opcache.file_update_protection=0 -d zend.assertions=-1 /lab/profile/calibrate.php hash --seconds 4 2>&1)" || rc=$?
+    [ "$rc" = 0 ] || { echo "the hash calibration exited $rc with opcache.jit=$jit: ${out//$'\n'/ | }"; return 1; }
+    grep -q "^jit: $([ "$jit" = tracing ] && echo on || echo off)\$" <<<"$out" || { echo "the JIT is not as asked ($jit): ${out//$'\n'/ | }"; return 1; }
+    grep -q 'hash (the internal function) 0.0%' <<<"$out" || { echo "samples landed on a frame of the internal function: ${out//$'\n'/ | }"; return 1; }
+    rc=0
+    out="$(bash "$LAB/run.sh" 8.5 php -d extension=sockets -d extension=event -d extension=excimer -d memory_limit=-1 -d opcache.enable_cli=1 -d "opcache.jit=$jit" \
+      -d opcache.jit_buffer_size=32M -d opcache.file_update_protection=0 -d zend.assertions=-1 /lab/profile/calibrate.php loop --seconds 2 2>&1)" || rc=$?
+    [ "$rc" = 0 ] || { echo "the loop calibration exited $rc with opcache.jit=$jit: ${out//$'\n'/ | }"; return 1; }
+    [ "$(grep -c ': ok$' <<<"$out")" = 2 ] || { echo "the loop calibration did not pass its two cases with opcache.jit=$jit: ${out//$'\n'/ | }"; return 1; }
+  done
+}
+
+# check_profile_json <json> <step table text>: the JSON of a profiled run holds the profile (samples, the cgroup's user and system CPU,
+# unclassified under 5 %), and the table has a column for each of the five endpoints and a row for each step. The four endpoints of the
+# bench's journey have samples; S9 is empty (the commit is inside the write query).
+check_profile_json() {
+  local json="$1" fold="$2" row
+  jq -e '.profile.samples > 100 and .profile.cgroup.user_usec > 0 and .profile.cgroup.system_usec > 0 and .profile.unclassified_share < 0.05
+         and .profile.samples_over_cgroup_cpu > 0.8 and .profile.samples_over_cgroup_cpu < 1.2 and .server.ext == ["sockets", "event", "excimer"]
+         and (.server.env | index("APP_TELEMETRY=0") != null) and (.server.env | index("APP_PROFILE=/tmp/profile.collapsed") != null)' "$json" >/dev/null \
+    || { echo "the JSON does not hold a sound profile: $(jq -c '{profile: (.profile | del(.fold)), ext: .server.ext, env: .server.env}' "$json")"; return 1; }
+  grep -q '^step  *GET /health  *GET /feed  *GET /posts/:id  *POST /posts  *POST /posts/:id/like  *shared  *all$' <<<"$fold" || { echo "the table has not the five endpoints, shared and all: ${fold//$'\n'/ | }"; return 1; }
+  for row in 'S1 accept' 'S2 read' 'S3 route' 'S4 verify' 'S5 validate' 'S6 query' 'S7 build' 'S8 write' 'S9 durability' 'event loop' 'unclassified'; do
+    grep -q "^$row" <<<"$fold" || { echo "the table has no row '$row': ${fold//$'\n'/ | }"; return 1; }
+  done
+  grep -q '^all .*100.0%' <<<"$fold" || { echo "the all row is not 100.0 %: ${fold//$'\n'/ | }"; return 1; }
+  # The weight of each column in all the samples: health (only the harness's own polls), feed, post, create, like, shared.
+  row="$(awk '/^weight in all samples/ { print $5, $6, $7, $8, $9, $10 }' <<<"$fold")"
+  [ -n "$row" ] || { echo "the table has no weight row: ${fold//$'\n'/ | }"; return 1; }
+  read -r _ feed post create like shared <<<"$row"
+  for w in "$feed" "$post" "$create" "$like"; do
+    [ "$w" != 0.0% ] || { echo "an endpoint of the journey has no sample: weights feed $feed, post $post, create $create, like $like, shared $shared"; return 1; }
+  done
+  grep -q '^S9 durability  *0.0%' <<<"$fold" || { echo "S9 is not empty: ${fold//$'\n'/ | }"; return 1; }
+}
+
+# A 20 s profiled run of the realistic mode (the bench's journey, scaled): the collapsed stacks are copied out of the container, the fold
+# is printed with the cgroup's user and system CPU of the window, no container or volume is left, and an image with no Excimer is refused
+# before anything starts.
+check_realistic_profile_smoke() {
+  local out rc=0 dir json collapsed fold
+  dir="$(mktemp -d)"
+  json="$dir/realistic.json"
+  collapsed="$dir/profile.collapsed"
+  out="$(bash "$LAB/realistic.sh" --image 8.5 --think-scale 0.1 --warmup 100,5 --hold 300,20 --ramp 3 --profile "$collapsed" --out "$json" 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "lab/realistic.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
+  [ -s "$collapsed" ] || { echo "no collapsed stacks were copied out"; return 1; }
+  grep -q '^/lab/app/server.php;DiyServer::run;' "$collapsed" || { echo "the collapsed stacks do not look like the app's: $(head -n 2 "$collapsed")"; return 1; }
+  fold="$(jq -r '.profile.fold' "$json")"
+  check_profile_json "$json" "$fold" || return 1
+  grep -q '^cgroup CPU over the profiled window: user [0-9]* ms, system [0-9]* ms' <<<"$out" || { echo "the cgroup's user and system split is not printed: ${out//$'\n'/ | }"; return 1; }
+  grep -q '^S6 query SQLite ' <<<"$out" || { echo "the table is not printed: ${out//$'\n'/ | }"; return 1; }
+  [ -z "$(docker ps -a --format '{{.Names}}' | grep '^lab-realistic-' || true)" ] || { echo "containers left behind"; return 1; }
+  docker volume ls --format '{{.Name}}' | grep -x lab-realistic-run >/dev/null && { echo "the volume lab-realistic-run is left behind"; return 1; }
+  rc=0
+  out="$(bash "$LAB/realistic.sh" --image 8.6 --think-scale 0.1 --hold 100,5 --profile "$dir/none.collapsed" --out "$dir/none.json" 2>&1)" || rc=$?
+  [ "$rc" = 1 ] || { echo "an image with no Excimer should exit 1, got $rc: ${out//$'\n'/ | }"; return 1; }
+  grep -q 'this image has no Excimer' <<<"$out" || { echo "the message does not say why: ${out//$'\n'/ | }"; return 1; }
+  [ -z "$(docker ps -a --format '{{.Names}}' | grep '^lab-realistic-' || true)" ] || { echo "containers left behind after the refusal"; return 1; }
+  return 0
+}
+
+# macro.sh takes --profile too (with the app, --fresh-db): the same collapsed stacks and fold; without --fresh-db it is refused.
+check_macro_profile() {
+  local out rc=0 dir json
+  dir="$(mktemp -d)"
+  json="$dir/macro.json"
+  out="$(bash "$LAB/macro.sh" --image 8.5 --server "$LAB/app/server.php" --fresh-db --rate 300 --duration 8 --warmup 2 \
+    --script "$LAB/macro/k6/posts.js" --path /posts/1 --profile "$dir/profile.collapsed" --out "$json" 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "lab/macro.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
+  [ -s "$dir/profile.collapsed" ] || { echo "no collapsed stacks were copied out"; return 1; }
+  jq -e '.profile.samples > 100 and .profile.cgroup.user_usec > 0 and .profile.cgroup.system_usec > 0 and .profile.unclassified_share < 0.05
+         and (.profile.fold | test("GET /posts/:id")) and .server.ext == ["sockets", "event", "excimer"]' "$json" >/dev/null \
+    || { echo "the JSON does not hold a sound profile: $(jq -c '.profile | del(.fold)' "$json")"; return 1; }
+  grep -q '^S6 query SQLite ' <<<"$out" || { echo "the table is not printed: ${out//$'\n'/ | }"; return 1; }
+  [ -z "$(docker ps -a --format '{{.Names}}' | grep '^lab-macro-' || true)" ] || { echo "containers left behind"; return 1; }
+  rc=0
+  out="$(bash "$LAB/macro.sh" --image 8.5 --server "$LAB/servers/noop-swoole.php" --rate 100 --duration 2 --profile "$dir/x" 2>&1)" || rc=$?
+  [ "$rc" = 2 ] || { echo "expected exit 2 for --profile without --fresh-db, got $rc: ${out//$'\n'/ | }"; return 1; }
+  grep -q -- '--profile needs --fresh-db' <<<"$out" || { echo "the message does not say why: ${out//$'\n'/ | }"; return 1; }
+}
+
 # The aggregator keeps up with k6 at the rows of 40,000 req/s (about 12 rows a request): a recorded CSV, replayed at 480,000 rows a
 # second for 10 s, is read in full (every row, every request counted, none unparsed) with a lag under 3 s, and the feeder itself
 # was never more than a second late (a feeder that blocks on a full FIFO proves nothing).
@@ -907,6 +1025,10 @@ CHECKS=(
   check_realistic_idle_closed_by_the_server_fails
   check_macro_fresh_db_cold_per_second
   check_macro_cold_needs_fresh_db
+  check_fold_cases
+  check_excimer_calibration
+  check_realistic_profile_smoke
+  check_macro_profile
   check_shellcheck
   check_shellcheck_catches_warning
 )

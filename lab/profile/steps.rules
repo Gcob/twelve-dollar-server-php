@@ -1,0 +1,63 @@
+# The rules of lab/profile/fold.php: which step of a request a frame of a profile belongs to. A sample takes the step of the
+# INNERMOST (deepest) frame of its stack that a `step` rule names; no frame named: "unclassified".
+#
+#   step  <frame> <step>            a frame is its name in the collapsed stacks; a trailing * makes it a prefix
+#   route <frame> <endpoint name>   the endpoint a sample belongs to: the route function found on its stack (any depth); a sample with
+#                                   none is "shared" (reading, parsing, writing, the loop: work done before the route is known)
+#
+# Steps: S1 accept and close connections, S2 read and parse the request, S3 route, S4 verify the JWT, S5 validate the input, S6 query
+# SQLite, S7 build the JSON, S8 write the response, S9 durability, loop = the event loop's own code.
+#
+# What a frame holds, and why (Excimer takes a sample at the next VM interrupt check, and an internal function is never a frame of its
+# own: its time is the calling PHP function's, and the time spent in libevent between two callbacks lands on the next callback's frame;
+# lab/README.md has the calibration that shows it):
+#
+# - DiyServer::onReadable and ::onWritable hold almost no PHP of their own: their own samples are libevent's dispatch and epoll_wait's
+#   kernel time (the loop), and DiyServer::settle adds and removes events (libevent calls): loop.
+# - DiyServer::onAccept holds stream_socket_accept and the setup of the new socket: S1, like DiyConnection::close (fclose).
+# - DiyConnection::onReadable holds fread (the kernel's receive path is in the syscall): S2, like parse and parseHead. parse also
+#   holds the concatenation of the response head and body, which is S8 work, too small to split without a function of its own.
+# - DiyConnection::advance and ::onWritable hold fwrite (the kernel's send path): S8.
+# - S9 has no frame: SQLite commits inside PDOStatement::execute (autocommit), so a write's commit and its WAL checkpoint are in the
+#   write query function, S6. The row stays in the table, at 0, to say so.
+# - route_health runs its query inline (no query function of its own), so its own samples are S6.
+
+step DiyServer::run loop
+step DiyServer::onReadable loop
+step DiyServer::onWritable loop
+step DiyServer::settle loop
+step DiyServer::onAccept S1
+step DiyConnection::close S1
+step DiyConnection::onReadable S2
+step DiyConnection::parse S2
+step DiyConnection::parseHead S2
+step handler_handle S3
+step route_post_get S3
+step route_post_create S3
+step route_like S3
+step route_feed S3
+step route_health S6
+step jwt_verify S4
+step jwt_base64url_decode S4
+step id_validate S5
+step body_validate S5
+step feed_query S6
+step post_query S6
+step post_insert S6
+step post_exists S6
+step like_insert S6
+step feed_json S7
+step post_json S7
+step like_json S7
+step health_json S7
+step health_degraded_json S7
+step response_json S8
+step response_error S8
+step DiyConnection::advance S8
+step DiyConnection::onWritable S8
+
+route route_health GET /health
+route route_feed GET /feed
+route route_post_get GET /posts/:id
+route route_post_create POST /posts
+route route_like POST /posts/:id/like

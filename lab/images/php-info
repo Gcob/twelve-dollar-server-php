@@ -7,7 +7,7 @@ swoole_args=()
 ext_dir="$(php -r 'echo ini_get("extension_dir");')"
 if [ -f "$ext_dir/swoole.so" ]; then swoole_args=(-d extension=swoole); fi
 # The same for the extensions the event-loop runtimes load. Order matters: event depends on sockets, so sockets comes first.
-for ext in pcntl sockets event; do
+for ext in pcntl sockets event excimer; do
   if [ -f "$ext_dir/$ext.so" ]; then swoole_args+=(-d "extension=$ext"); fi
 done
 # Why: the JIT only starts with opcache enabled in the CLI, so the probe turns it on like the server will.
@@ -31,6 +31,8 @@ foreach (["pdo_sqlite", "mbstring", "sodium", "ffi", "ctype", "iconv"] as $ext) 
 echo "pcntl: ", extension_loaded("pcntl") ? "present" : "missing", "\n";
 echo "sockets: ", extension_loaded("sockets") ? "present" : "missing", "\n";
 echo "event: ", extension_loaded("event") ? phpversion("event") : (file_exists(ini_get("extension_dir") . "/event.so") ? "missing" : "not built"), "\n";
+// Excimer is loaded here only to read its version: a server loads it with `--ext excimer` when it profiles.
+echo "excimer: ", extension_loaded("excimer") ? phpversion("excimer") : (file_exists(ini_get("extension_dir") . "/excimer.so") ? "missing" : "not built"), "\n";
 $versions = [];
 foreach (["stock", "nocache"] as $tree) {
     $autoload = "/opt/workerman/$tree/autoload.php";
