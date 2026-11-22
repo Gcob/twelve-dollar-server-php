@@ -34,7 +34,7 @@ Skill defaults (`autonomous-run/pipeline.yml`), no run override file. Changes fr
 | 2     | a075911b200113f1b | done `47e4728`, pushed 12:31 (k6 ~300 µs CPU/req with the stream → D45) |
 | 3     | a1365daa1d690ecf0 | done `b47adcf` 13:12 (60k idle + 5,377 VUs, 19,565 req/s smoke; idle client 257 MiB; lag up to 3.9 s → D46) |
 | 4     | ac6145c4f718748e3 | done `4775db8` 13:53 (excimer 1.2.6, not on 8.6; calibration: C time goes to the caller, step functions carry it) |
-| 3 (fix) | a1365daa1d690ecf0 | flaky `check_realistic_idle_run` (failed once in a full run on `4775db8`, 3/3 alone), since 14:05 |
+| 3 (fix) | a1365daa1d690ecf0 | `fc73cee` (edge rows of the series check), `b18af33` (failing-step check's request count), pushed 14:50 |
 
 ## Verified
 
