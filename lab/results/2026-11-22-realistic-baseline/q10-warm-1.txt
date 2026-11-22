@@ -1,0 +1,61 @@
+warm-up: 10s at 7000 req/s
+measured run: 30s at 7000 req/s
+
+image 8.5 (PHP 8.5.13), server.php, k6 v1.8.3 (commit/58bbfd8e48, go1.26.4, linux/arm64)
+requested 7000 req/s for 30s (warm-up 10s), target http://127.0.0.1:18080/posts/1
+  requests                     200807
+  achieved req/s               6692.98
+  CPU us / request             35.15
+  latency ms p50 / p95 / p99   0.12 / 2 / 40.92
+  latency ms max               877.71
+  error rate                   0.00%
+  dropped iterations           9193
+  VUs running at once (max)    600 (of 700 max)
+  connections open (max of 3)  700 (k6 pre-allocated 700 VUs)
+  peak RSS, cgroup memory.peak 493.95 MiB (counts page cache)
+  peak RSS, VmHWM              131.49 MiB
+  memory under load (max of 3) Pss 122.88 MiB (with the mapped database), Pss_Anon 6.5 MiB, cgroup memory.current 258.93 MiB
+  socket settings (server's boot line) backlog=4096 tcp_nodelay=1
+  server CPU over the window   23.27 % of one CPU (30.34 s window, idle 249.61 us/s, throttled 325446 us)
+  k6 CPU over the window       197.97 % of one CPU (k6 is pinned to 8 CPUs)
+database copy in the page cache when the server opened it (fincore): 249843712 of 249843712 bytes, 100 %, --cold off
+per-second series: 200807 requests read by the aggregator (lag at most 2.356 s, 0 rows unparsed), 0 k6 connection errors
+
+per second (sec: seconds from the start of the run; per endpoint: requests, then p50/p99/max latency in ms; cpu: the server's CPU in us per second;
+memory in MiB at the end of the second; wal: the file's KiB and the frames in use; faults: minor and major in the second; cb max: the server's longest callback
+in ms; gc: runs/collected; - means no reading):
+sec  VUs  req   /posts/:id                    cpu us/s  PssAnon  mem.cur  wal KiB  frames  fds  minflt  majflt  cb max   gc
+0    -    2958  2958 0.105/11.752/13.183      106285    6.5      258.4    0        0       712  0       0       0.274    0/0
+1    0    6995  6995 0.106/0.564/1.544        185453    6.5      258.7    0        0       712  0       0       0.312    0/0
+2    1    7005  7005 0.103/1.069/2.135        166950    6.5      258.7    0        0       712  0       0       0.227    0/0
+3    10   6999  6999 0.108/2.059/8.145        169877    6.5      258.7    0        0       712  0       0       0.244    0/0
+4    1    6992  6992 0.103/1.169/4.718        172497    6.5      259.2    0        0       712  0       0       0.267    0/0
+5    4    6999  6999 0.129/30.476/64.545      255969    6.5      258.7    0        0       712  0       0       21.6     0/0
+6    4    6996  6996 0.115/2.943/9.887        164233    6.5      258.9    0        0       712  0       0       5.222    0/0
+7    0    7009  7009 0.105/0.921/3.508        162682    6.5      258.7    0        0       712  0       0       0.238    0/0
+8    1    7004  7004 0.099/0.425/2.915        156340    6.5      258.2    0        0       712  0       0       2.436    0/0
+9    1    6993  6993 0.108/0.963/3.037        165488    6.5      258.2    0        0       712  0       0       0.294    0/0
+10   0    7007  7007 0.108/0.486/1.09         191237    6.5      258.7    0        0       712  0       0       0.335    0/0
+11   0    6990  6990 0.113/1.671/3.514        183632    6.5      258.2    0        0       712  0       0       0.338    0/0
+12   2    7003  7003 0.11/0.34/0.695          186753    6.5      258.9    0        0       712  0       0       0.218    0/0
+13   10   6996  6996 0.193/10.748/33.661      292052    6.5      258.5    0        0       712  0       0       9.119    0/0
+14   6    6375  6375 0.616/195.98/307.364     477898    6.5      258.9    0        0       712  0       0       72.694   0/0
+15   4    7000  7000 0.131/1.484/2.921        197058    6.5      258.4    0        0       712  0       0       1.014    0/0
+16   1    6995  6995 0.123/1.484/2.792        197196    6.5      258.9    0        0       712  0       0       0.863    0/0
+17   10   7006  7006 0.129/3.17/7.462         216093    6.5      258.9    0        0       712  0       0       0.935    0/0
+18   1    7001  7001 0.102/0.35/0.837         168464    6.5      258.5    0        0       712  0       0       0.207    0/0
+19   2    7001  7001 0.106/0.431/0.879        172019    6.5      258.9    0        0       712  0       0       0.201    0/0
+20   5    6999  6999 0.108/0.523/9.292        179290    6.5      258.7    0        0       712  0       0       0.357    0/0
+21   0    7000  7000 0.129/2.857/9.317        199710    6.5      259.4    0        0       712  0       0       1.624    0/0
+22   5    7004  7004 0.102/0.345/0.602        179017    6.5      259.2    0        0       712  0       0       0.161    0/0
+23   5    6999  6999 0.113/2.028/5.628        162604    6.5      258.4    0        0       712  1       0       0.871    0/0
+24   25   3911  3911 0.264/6.576/257.203      617379    6.5      257.8    0        0       712  0       0       180.953  0/0
+25   600  1017  1017 284.356/759.664/877.709  643042    6.5      259.1    0        0       712  0       0       180.685  0/0
+26   11   7890  7890 0.412/44.882/611.412     402114    6.5      257.7    0        0       712  0       0       6.342    0/0
+27   0    6604  6604 0.694/95.905/173.038     325548    6.5      258.5    0        0       712  0       0       6.5      0/0
+28   4    7004  7004 0.115/0.645/1.849        150551    6.5      258.4    0        0       712  0       0       0.396    0/0
+29   3    7000  7000 0.137/0.589/4.472        147469    6.5      258.4    0        0       712  0       0       0.429    0/0
+30   7    4055  4055 0.123/0.694/1.491        107399    6.5      255.4    0        0       12   0       0       0.319    0/0
+
+INVALID: 9193 dropped iterations: k6 had no free VU to start them (700 VUs absorb a stall of 100 ms at 7000 req/s; latency max was 877 ms)
+wrote lab/results/2026-11-22-realistic-baseline/q10-warm-1.json

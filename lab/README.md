@@ -617,6 +617,12 @@ k6 does not slow down when its CSV reader falls behind: it buffers the samples i
 - **k6's memory** has a budget: the VM's memory minus 2 GiB (the server), 512 MiB (the client that holds the idle connections:
   257 MiB measured with 60,000 of them, so a margin of 2 times) and 1 GiB of margin, set as the container's `--memory`
   (`--k6-memory <MiB>` sets it by hand, a test hook). A run whose k6 reaches 95 % of it, or is killed for it, is **invalid**.
+- **k6's memory also grows with the request count:** about 190 bytes a request on top of 0.34 MiB a VU (k6 keeps every sample of its
+  trend metrics for the end-of-run percentiles). A run of about 12 million requests with 5,134 VUs reached the budget at 4.1 GiB and was
+  killed (`INVALID`): at 18,000 req/s that is 11 minutes. A long staircase is cut into runs, each started from a rate it does not need
+  to climb to; a 5-minute hold at 24,000 req/s (7.3 million requests, 4,535 VUs) peaked at 2.8 GiB.
+- **The lag printed at the end can pass the gate in a valid run:** the gate is judged every second while k6 runs; after k6 stops, the
+  newest sample's second stops advancing and the lag grows until the aggregator is told to end, and `max_lag_s` keeps that tail.
 - **The replay case** (`check_replay_keeps_up`): `lab/macro/replay.php` feeds a recorded CSV (`lab/check/fixtures/k6-rows.csv`,
   real k6 rows) to the aggregator at 480,000 rows a second (40,000 req/s at 12 rows a request) for 10 s. The aggregator reads
   every row and request, none unparsed, with a lag of 1.0 s; the feeder was never more than 0.1 s late. At 1,500,000 rows a second

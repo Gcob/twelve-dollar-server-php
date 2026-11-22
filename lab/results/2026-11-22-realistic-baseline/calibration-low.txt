@@ -1,0 +1,15 @@
+calibration: 50 VUs for 60s, then 300 VUs for 60s (think scale 0.0286)
+
+image 8.5 (PHP 8.5.13), server.php, k6 v1.8.3 (commit/58bbfd8e48, go1.26.4, linux/arm64), k6 from 127.0.1.1-127.0.1.4
+think scale 0.0286: one VU offers 3.701177 req/s, 9.45 users per req/s, ramp 10 s, plateau 60 s, VU cap 5400
+VUs 50 / 300: k6 memory 79.48 / 150.57 MiB, achieved over offered 0.997 / 0.996, k6 CPU 13.88 / 43.9 % of one CPU (752 / 397 us per request), aggregator lag 2.362 / 2.988 s
+k6 memory per VU: 0.284 MiB (and 65.26 MiB at rest)
+VU cap: 5400 (memory 15301 of the VM's 7935 MiB less the server, the idle client and a margin, file descriptors 5400; bound by file descriptors)
+scale for 20,000 req/s under the cap: 0.02858 (5400 VUs; the 97 % rule leaves 8.35 ms of mean latency per request)
+lag gate to use: 4.99 s (the lag at low load plus 2 s)
+k6 connection errors: 0
+database copy in the page cache when the server opened it (fincore): 249843712 of 249843712 bytes, 100 %, --cold off
+k6 peak memory 157.61 MiB of its 4351 MiB budget, k6 CPU 26.63 % of one CPU, aggregator max lag 2.988 s (gate 4 s), server Pss_Anon peak 7.6 MiB, memory.current peak 263.43 MiB
+VALID
+wrote lab/results/2026-11-22-realistic-baseline/calibration-low.json
+rc=0
