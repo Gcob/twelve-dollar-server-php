@@ -615,11 +615,15 @@ if [ -n "$calibrate" ]; then
        lag_gate_to_use_s: ([$a[0].lag_max_s, $b[0].lag_max_s] | max | . + 2 | . * 100 | round / 100)}')"
 fi
 
-runs_json="[]"
+# Why files and not --argjson: a run of several minutes holds thousands of per-second rows, and one argument over the OS limit (1 MiB on
+# macOS, for all the arguments together) made jq fail with "Argument list too long" after a 25 minute staircase.
+echo '[]' >"$tmp/runs.json"
 for r in "${runs_for_json[@]}"; do
-  runs_json="$(jq -c --argjson run "$(run_json "$r")" '. + [$run]' <<<"$runs_json")"
+  run_json "$r" >"$tmp/$r.run.json"
+  jq -c --slurpfile run "$tmp/$r.run.json" '. + [$run[0]]' "$tmp/runs.json" >"$tmp/runs.next.json"
+  mv "$tmp/runs.next.json" "$tmp/runs.json"
 done
-invalid_all="$(jq -r --arg extra "$extra_invalid" '(map(select(.invalid != "") | .invalid) + (if $extra == "" then [] else [$extra] end)) | join("; ")' <<<"$runs_json")"
+invalid_all="$(jq -r --arg extra "$extra_invalid" '(map(select(.invalid != "") | .invalid) + (if $extra == "" then [] else [$extra] end)) | join("; ")' "$tmp/runs.json")"
 
 jq -n \
   --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg command "$command_line" --arg mode "$mode" \
@@ -634,9 +638,10 @@ jq -n \
   --argjson steps_vus "$(jq -nc '$ARGS.positional | map(tonumber)' --args "${steps_vus[@]}")" \
   --arg k6_image "$LAB_K6_IMAGE" --arg k6_version "$k6_version" --arg local_ips "$local_ips" --argjson k6_budget "$k6_budget_mib" \
   --argjson lag_gate "$lag_gate" --argjson before "$cpu_before" --argjson after "$cpu_after" --argjson idle "$idle_json" --argjson cold "$cold_json" \
-  --argjson runs "$runs_json" --argjson calibration "$calibration_json" --argjson profile "$profile_json" --arg invalid "$invalid_all" '
+  --slurpfile runs_file "$tmp/runs.json" --argjson calibration "$calibration_json" --argjson profile "$profile_json" --arg invalid "$invalid_all" '
   def mib: . / 1048576 * 100 | round / 100;
   ($after.time.us - $before.time.us) as $window_us
+  | ($runs_file[0]) as $runs
   | ($runs[-1]) as $last
   | {
     date: $date, command: $command, mode: $mode, label: (if $label == "" then null else $label end),
