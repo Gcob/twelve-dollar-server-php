@@ -31,6 +31,7 @@ Skill defaults (`autonomous-run/pipeline.yml`), no run override file. Changes fr
 |-------|----------|-------|
 | plan-reviewer | a480e25853b51eccf | full NOT_OK 11:09; delta NOT_OK 11:14; delta 2 + final full OK 11:17 |
 | 1     | afe8ff70047c6f1a9 | done `64af809`, pushed 11:38 (tools image built locally: no pull allowed; handler gets a 4th arg) |
+| 2     | a075911b200113f1b | done `47e4728`, pushed 12:31 (k6 ~300 µs CPU/req with the stream → D45) |
 
 ## Verified
 

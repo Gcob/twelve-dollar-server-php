@@ -162,6 +162,11 @@
   aggregator runs in its own container on k6's CPUs, outside k6's memory budget. If the replay is too slow, the
   reader skips every line but `http_req_duration` and `http_reqs` before parsing (plan review delta, settled by the
   project manager, phase 4, 2026-11-22, [PLAN-2026-11-22-1116-delta](reviews/PLAN-2026-11-22-1116-delta.md)).
+- **D45:** a realistic step is generator-bound, and invalid, when k6 and the aggregator use more than 80 % of their
+  8 CPUs on it. Scope 2 measured k6 at about 300 µs of CPU per request with the CSV stream on (falling with the rate,
+  measured up to 2,000 req/s): 20,000 req/s could need 5 to 6 CPUs. If the baseline's top steps cross the line, k6
+  sends fewer tags per CSV row (`systemTags`) before the top rate is lowered (project manager, phase 4, 2026-11-22,
+  scope 2's question).
 
 ## History
 

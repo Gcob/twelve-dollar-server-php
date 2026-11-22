@@ -252,6 +252,8 @@ layout in `lab/lib.sh`, pinned versions with sha256, no absolute `/Users/...` pa
 - **Staircase:** a fresh run, 60,000 idle connections, warm-up at about 10 % of the expected capacity for 60 s, then
   steps of 1,000 req/s from 3,000 req/s, 60 s plateaus, stopping at the first failing step; then a second staircase of
   250 req/s steps from the last passing step to the failing one.
+- **Every measured step** stays under D45's line (k6 and the aggregator under 80 % of their 8 CPUs), or it's
+  generator-bound and invalid.
 - **Every measured run** passes D44's gate (aggregator lag under its calibrated gate, k6 under its memory budget) or is invalid and
   rerun.
 - **Holds:** 3 holds of 5 minutes at the highest passing rate of the fine staircase, each a fresh run (new seed copy,
