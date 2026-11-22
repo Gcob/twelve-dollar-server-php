@@ -164,5 +164,41 @@ check('the run total counts every request per endpoint', $t['GET /feed']['count'
 $seconds = agg_per_second($a);
 check('the per second table has one entry per second with its requests', count($seconds) === 2 && $seconds[0]['second'] === 10 && $seconds[0]['requests'] === 100, json_encode($seconds));
 
+// --- the per second view: each endpoint's count, p50, p99 and exact max, the errors by k6 error code ------------------------------
+$a = new Aggregate();
+$lines = [];
+foreach ([1, 2, 3, 4, 5, 6, 7, 8, 9, 100] as $ms) {
+    $lines[] = duration_row(20, (float) $ms, 'GET /feed');
+}
+$lines[] = duration_row(20, 40.0, 'GET /posts/:id');
+$lines[] = duration_row(22, 2.0, 'GET /posts/:id');
+$a->feed(implode("\n", $lines) . "\n");
+$seconds = agg_per_second($a);
+check('the per second view has an entry for each second with a request, none for a second without', array_column($seconds, 'second') === [20, 22], json_encode(array_column($seconds, 'second')));
+$feed = $seconds[0]['endpoints']['GET /feed'] ?? [];
+check('an endpoint of a second has its count', ($feed['count'] ?? null) === 10 && ($seconds[0]['endpoints']['GET /posts/:id']['count'] ?? null) === 1, json_encode($seconds[0]['endpoints'] ?? null));
+check('its p50 is the 5th of 10 latencies, within 1 %', abs(($feed['p50'] ?? 0) - 5.0) / 5.0 <= 0.01, json_encode($feed));
+check('its p99 is the 10th of 10 latencies, within 1 %', abs(($feed['p99'] ?? 0) - 100.0) / 100.0 <= 0.01, json_encode($feed));
+check('its max is the exact slowest latency, not a bucket', ($feed['max'] ?? null) === 100.0, json_encode($feed));
+check('the second keeps the totals too', $seconds[0]['requests'] === 11 && $seconds[1]['requests'] === 1);
+
+$a = new Aggregate();
+$a->feed(duration_row(30, 1.0, 'GET /feed') . "\n"
+    . duration_row(30, 2.0, 'GET /feed', false, 0) . "\n"
+    . 'http_req_duration,30,3.000000,,,1212,false,,GET,GET /feed,HTTP/1.1,users,,0,,,GET /feed,,' . "\n"
+    . 'http_req_duration,30,3.000000,,,1212,false,,GET,GET /feed,HTTP/1.1,users,,0,,,GET /feed,,' . "\n"
+    . 'http_req_duration,31,3.000000,,,1050,false,,GET,GET /feed,HTTP/1.1,users,,0,,,GET /feed,,' . "\n");
+check('rows with a k6 error code are counted by code', $a->errorCodes === ['1404' => 1, '1212' => 2, '1050' => 1], json_encode($a->errorCodes));
+check('a connection error is a code of the 12xx family (dial, reset, broken pipe): a 1404, a 1050 timeout are not', agg_connection_errors($a->errorCodes) === 2, (string) agg_connection_errors($a->errorCodes));
+
+// k6 names a request by its URL when the script does not: for a run of lab/macro.sh the endpoint is the path with its numbers as `:id`.
+$a = new Aggregate(true);
+$a->feed(duration_row(40, 1.0, 'http://127.0.0.1:18080/posts/123') . "\n" . duration_row(40, 2.0, 'http://127.0.0.1:18080/posts/45678?x=1') . "\n"
+    . duration_row(40, 3.0, 'http://127.0.0.1:18080/') . "\n");
+check('names are normalized to the path with :id for numbers', array_keys($a->bins[40]) === ['/posts/:id', '/'] && $a->bins[40]['/posts/:id']['n'] === 2, json_encode(array_keys($a->bins[40])));
+$a = new Aggregate();
+$a->feed(duration_row(40, 1.0, 'GET /posts/:id') . "\n");
+check('a named request keeps its name when normalizing is off', array_keys($a->bins[40]) === ['GET /posts/:id']);
+
 echo $failures === 0 ? "all ok\n" : "$failures failed\n";
 exit($failures === 0 ? 0 : 1);

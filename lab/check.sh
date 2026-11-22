@@ -375,7 +375,7 @@ check_app_cases() {
   out="$(bash "$LAB/run.sh" 8.5 php /lab/check/app-test.php 2>&1)" || rc=$?
   [ "$rc" = 0 ] || { echo "app-test.php exited $rc: ${out//$'\n'/ | }"; return 1; }
   ok="$(grep -c '^ok  ' <<<"$out")"
-  [ "$ok" = 57 ] || { echo "expected 57 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
+  [ "$ok" = 60 ] || { echo "expected 60 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
   grep -q 'FAIL' <<<"$out" && { echo "a case failed: ${out//$'\n'/ | }"; return 1; }
   return 0
 }
@@ -414,7 +414,7 @@ check_aggregate_cases() {
   [ "$rc" = 0 ] || { echo "aggregate-test.php exited $rc: ${out//$'\n'/ | }"; return 1; }
   grep -q '^FAIL' <<<"$out" && { echo "a case failed: ${out//$'\n'/ | }"; return 1; }
   ok="$(grep -c '^ok  ' <<<"$out")"
-  [ "$ok" -ge 45 ] || { echo "expected at least 45 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
+  [ "$ok" -ge 55 ] || { echo "expected at least 55 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
   return 0
 }
 
@@ -568,6 +568,230 @@ check_realistic_calibrates() {
          and (.runs | length == 2)' "$json" >/dev/null || { echo "the JSON does not hold the calibration: $(jq -c .calibration "$json")"; return 1; }
 }
 
+# The per-second series' pieces on real data: mxFrame read from the -shm file of a real WAL (written, checkpointed, written again), the page
+# faults read from a /proc stat line, the telemetry lines read back from a log, and the merge of latency, readings and telemetry into one
+# row per second (a missed reading leaves a null, never a delta over two seconds).
+check_series_cases() {
+  local out ok rc=0
+  out="$(bash "$LAB/run.sh" 8.5 php /lab/check/series-test.php 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "series-test.php exited $rc: ${out//$'\n'/ | }"; return 1; }
+  grep -q '^FAIL' <<<"$out" && { echo "a case failed: ${out//$'\n'/ | }"; return 1; }
+  ok="$(grep -c '^ok  ' <<<"$out")"
+  [ "$ok" -ge 23 ] || { echo "expected at least 23 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
+  return 0
+}
+
+# The telemetry line: the longest callback, the GC and fault deltas, the app's fields, and which second each line is for.
+check_telemetry_cases() {
+  local out ok rc=0
+  out="$(bash "$LAB/run.sh" 8.5 php /lab/check/telemetry-test.php 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "telemetry-test.php exited $rc: ${out//$'\n'/ | }"; return 1; }
+  grep -q '^FAIL' <<<"$out" && { echo "a case failed: ${out//$'\n'/ | }"; return 1; }
+  ok="$(grep -c '^ok  ' <<<"$out")"
+  [ "$ok" -ge 14 ] || { echo "expected at least 14 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
+  return 0
+}
+
+# start_app_for_check <container> <port> <cold 0|1> [K=V]...: the app on a fresh copy of the seed through lab_start_app, waited on until it
+# listens. Prints the failure and returns 1 when it never does.
+# Why disable SC2034: LAB_COLD, LAB_EXT and LAB_ENV are read by lab_start_app and lab_build_php_flags (lib.sh), which shellcheck does not follow.
+# shellcheck disable=SC2034
+start_app_for_check() {
+  local name="$1" port="$2"
+  LAB_COLD="$3"
+  shift 3
+  LAB_EXT=(sockets event)
+  LAB_ENV=("$@")
+  lab_build_php_flags
+  docker rm -f "$name" >/dev/null 2>&1
+  lab_start_app "$name" 8.5 "$port" /lab/app/server.php || { echo "lab_start_app failed"; return 1; }
+  for _ in $(seq 1 120); do
+    docker logs "$name" 2>&1 | grep -q '^listening on' && return 0
+    [ "$(docker inspect -f '{{.State.Running}}' "$name")" = true ] || { echo "the app exited: $(docker logs "$name" 2>&1 | tr '\n' ' ')"; return 1; }
+    sleep 0.5
+  done
+  echo "the app did not listen within 60 s"
+  return 1
+}
+
+# The page cache and the copy of the seed: after a plain copy the whole file is resident, with LAB_COLD=1 almost none of it is (read by
+# lab/macro/fincore.php just before the app opens the copy), and the cold app reads the database from disk (major faults) the warm one does
+# not. The two readings are of the same file, a few seconds apart.
+check_cold_start_evicts_the_copy() {
+  local warm cold res size rc=0 majors
+  start_app_for_check lab-check-warm 18160 0 || return 1
+  warm="$(lab_fincore_line lab-check-warm)"
+  docker rm -f lab-check-warm >/dev/null 2>&1
+  start_app_for_check lab-check-cold 18160 1 APP_TELEMETRY=1 || { docker rm -f lab-check-cold >/dev/null 2>&1; return 1; }
+  cold="$(lab_fincore_line lab-check-cold)"
+  # Reads that need the pages: the feed and a few posts.
+  docker exec lab-check-cold sh -c 'for i in 1 2 3 4 5 6 7 8; do curl -s -o /dev/null http://127.0.0.1:18160/posts/$((i * 50000)); done; curl -s -o /dev/null http://127.0.0.1:18160/feed'
+  sleep 2.5
+  majors="$(docker logs lab-check-cold 2>&1 | sed -n 's/^telemetry .*"majflt":\([0-9]*\)}$/\1/p' | awk '{ s += $1 } END { print s + 0 }')"
+  docker rm -f lab-check-cold >/dev/null 2>&1
+  size="$(sed -n 's/.*size_bytes=\([0-9]*\).*/\1/p' <<<"$warm")"
+  res="$(sed -n 's/.*resident_bytes=\([0-9]*\).*/\1/p' <<<"$warm")"
+  [ -n "$size" ] && [ "$size" -gt 100000000 ] && [ "$res" -ge $(( size * 95 / 100 )) ] || { echo "the warm copy is not (almost) all resident: $warm"; return 1; }
+  res="$(sed -n 's/.*resident_bytes=\([0-9]*\).*/\1/p' <<<"$cold")"
+  [ -n "$res" ] && [ "$res" -le $(( size / 20 )) ] || { echo "the cold copy is more than 5 % resident: $cold"; return 1; }
+  [ "$majors" -gt 0 ] || { echo "the cold app made no major page fault reading the database ($majors)"; return 1; }
+  return 0
+}
+
+# The app's telemetry: off by default (no line), and with APP_TELEMETRY=1 one line a second with the requests per endpoint that the app was
+# asked for (known requests sent here), the loop's longest callback, GC and faults, and a different second on every line.
+check_app_telemetry() {
+  local log lines seconds distinct total
+  start_app_for_check lab-check-tel 18161 0 || return 1
+  docker exec lab-check-tel sh -c 'curl -s -o /dev/null http://127.0.0.1:18161/feed'
+  sleep 2.2
+  log="$(docker logs lab-check-tel 2>&1)"
+  docker rm -f lab-check-tel >/dev/null 2>&1
+  ! grep -q '^telemetry ' <<<"$log" || { echo "a telemetry line was printed with APP_TELEMETRY unset"; return 1; }
+  start_app_for_check lab-check-tel 18161 0 APP_TELEMETRY=1 || return 1
+  docker exec lab-check-tel sh -c 'for i in 1 2 3; do curl -s -o /dev/null http://127.0.0.1:18161/feed; done; curl -s -o /dev/null http://127.0.0.1:18161/posts/7; sleep 3.5; curl -s -o /dev/null http://127.0.0.1:18161/health'
+  sleep 1.2
+  log="$(docker logs lab-check-tel 2>&1 | grep '^telemetry ')"
+  docker rm -f lab-check-tel >/dev/null 2>&1
+  lines="$(wc -l <<<"$log" | tr -d ' ')"
+  seconds="$(sed -n 's/^telemetry {"second":\([0-9]*\),.*/\1/p' <<<"$log")"
+  distinct="$(sort -u <<<"$seconds" | wc -l | tr -d ' ')"
+  [ "$lines" -ge 4 ] && [ "$lines" = "$distinct" ] || { echo "expected 4 or more lines with a different second each, got $lines lines, $distinct seconds: ${seconds//$'\n'/ }"; return 1; }
+  [ "$(awk 'NR > 1 && $1 != prev + 1 { bad = 1 } { prev = $1 } END { print bad + 0 }' <<<"$seconds")" = 0 ] || { echo "the seconds are not consecutive: ${seconds//$'\n'/ }"; return 1; }
+  total="$(sed -n 's/^telemetry {"second":[0-9]*,"requests":{\(.*\)},"wal_bytes".*/\1/p' <<<"$log" | tr ',' '\n' | awk -F: 'NF > 1 { s += $NF } END { print s + 0 }')"
+  [ "$total" = 5 ] || { echo "5 requests were sent (3 feed, 1 post, 1 health), the lines count $total: $(tr '\n' ' ' <<<"$log")"; return 1; }
+  grep -q '^telemetry {"second":[0-9]*,"requests":{"GET /feed":3,"GET /posts/:id":1},"wal_bytes":[0-9]*,"longest_callback_ms":[0-9.]*,"gc_runs":[0-9]*,"gc_collected":[0-9]*,"minflt":[0-9]*,"majflt":[0-9]*}$' <<<"$log" \
+    || { echo "no line holds the first four requests under their endpoints: $(tr '\n' ' ' <<<"$log")"; return 1; }
+}
+
+# idle_client_run <port> <path> <body regex> <seconds before the end file>: runs the idle client's hold mode against the idle-timeout fixture
+# (it closes every connection that sat idle for 2 s) with 50 connections; prints the client's events, one JSON object per line.
+# shellcheck disable=SC2034
+idle_client_run() {
+  local port="$1" client="lab-check-idle-client" events
+  docker rm -f lab-check-idle-server "$client" >/dev/null 2>&1
+  LAB_EXT=(sockets event)
+  LAB_ENV=()
+  lab_build_php_flags
+  lab_start_server lab-check-idle-server 8.5 "$port" /lab/check/fixtures/idle-timeout-app.php || return 1
+  for _ in $(seq 1 60); do docker logs lab-check-idle-server 2>&1 | grep -q '^listening on' && break; sleep 0.5; done
+  docker run -d --name "$client" --network host --ulimit nofile=20000:20000 -v "$LAB:/lab:ro" "$LAB_IMAGE:8.5" sleep 300 >/dev/null
+  # The end file appears after $4 seconds, from outside.
+  ( sleep "$4"; docker exec "$client" touch /tmp/idle-end ) &
+  events="$(docker exec "$client" php -d display_errors=stderr /lab/conns/client.php "$port" --hold 50 --path "$2" --body-regex "$3" --end-file /tmp/idle-end 2>&1)"
+  wait
+  docker rm -f lab-check-idle-server "$client" >/dev/null 2>&1
+  echo "$events"
+}
+
+# The idle client's hold mode (the seam of --idle): against a server that closes connections idle for 2 s, the client holds 50 and reports
+# them held at the start; ended at once they are all still there, ended 4 s later the server has closed every one of them and the client says
+# so; an answer whose body does not match the pattern is a failure with its reason, nothing is held.
+check_idle_client_hold_mode() {
+  local out
+  out="$(idle_client_run 18170 /health '^\{"status":"ok",.*\}$' 0)" || { echo "the client run failed: $out"; return 1; }
+  jq -es '(map(select(.event == "held")) | .[0]) as $h | (map(select(.event == "ended")) | .[0]) as $e
+    | $h.held == 50 and $h.closed_by_server == 0 and $h.failure == null and $h.rss_kb > 0 and $e.held == 50 and $e.closed_by_server == 0' <<<"$out" >/dev/null \
+    || { echo "held and ended at once: expected 50 held, none closed: $(tr '\n' ' ' <<<"$out")"; return 1; }
+  out="$(idle_client_run 18170 /health '^\{"status":"ok",.*\}$' 4)" || { echo "the client run failed: $out"; return 1; }
+  jq -es '(map(select(.event == "held")) | .[0]) as $h | (map(select(.event == "ended")) | .[0]) as $e
+    | $h.held == 50 and $e.held == 0 and $e.closed_by_server == 50' <<<"$out" >/dev/null \
+    || { echo "ended 4 s later: expected all 50 closed by the server: $(tr '\n' ' ' <<<"$out")"; return 1; }
+  out="$(idle_client_run 18170 /health '^nothing like this$' 0)" || { echo "the client run failed: $out"; return 1; }
+  jq -es '(map(select(.event == "held")) | .[0]) as $h | $h.held == 0 and $h.failure == "bad answer" and ($h.detail | contains("status"))' <<<"$out" >/dev/null \
+    || { echo "a body that does not match the pattern: expected the failure 'bad answer': $(tr '\n' ' ' <<<"$out")"; return 1; }
+}
+
+# check_series_rows <json> <jq path of the rows>: the rows are one per second with no gap, every row has the server's readings and its
+# endpoints as an object. Prints why not, returns 1.
+check_series_rows() {
+  jq -e "$2"' as $rows
+    | ($rows | length) > 5
+    and ($rows | map(.second) | . as $s | [range(1; length)] | all($s[.] == $s[. - 1] + 1))
+    and ($rows | map(.endpoints | type == "object") | all)
+    and ($rows | map(.server != null and .server.cpu_usec > 0 and .server.pss_anon_kb > 0 and .server.memory_current > 0 and .server.fds > 0) | all)
+    and ($rows | map(.telemetry != null) | all)' "$1" >/dev/null \
+    || { echo "the per-second rows have a gap, a missing reading or no telemetry: $(jq -c "$2"' | map({second, requests, server: (.server != null), telemetry: (.telemetry != null)})' "$1" | cut -c1-600)"; return 1; }
+}
+
+# The realistic mode with 3,000 idle connections: held at the start and at the end (the server counts them too), no k6 connection error, the
+# client's memory is measured, one row per second of the run with latency per endpoint and the server's readings and telemetry (the
+# telemetry's request count is the aggregator's within 3 %), the WAL's frames show the writes, and the copy was fully resident (no --cold).
+check_realistic_idle_run() {
+  local out rc=0 json left
+  json="$(mktemp -d)/realistic.json"
+  out="$(bash "$LAB/realistic.sh" --image 8.5 --think-scale 0.1 --idle 3000 --hold 40,12 --label test --out "$json" 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "lab/realistic.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
+  grep -qx 'VALID' <<<"$out" || { echo "the run is not marked VALID: ${out//$'\n'/ | }"; return 1; }
+  grep -q '^idle connections: 3000 requested, 3000 held at the start and 3000 at the end, 0 closed by the server' <<<"$out" \
+    || { echo "the table does not report 3,000 held at the start and at the end: ${out//$'\n'/ | }"; return 1; }
+  grep -q '^k6 connection errors: 0$' <<<"$out" || { echo "the table does not say k6 had no connection error"; return 1; }
+  jq -e '.idle.requested == 3000 and .idle.held_at_start == 3000 and .idle.held_at_end == 3000
+         and .idle.server_established_at_start == 3000 and .idle.server_established_at_end == 3000
+         and .idle.server_fds_open_with_idle > 3000 and .idle.client.memory_current_mib_at_end > 1 and .idle.client.rss_mib > 1
+         and .k6_connection_errors == 0 and .cold.requested == false and .cold.resident_share > 0.95
+         and (.server.env | index("APP_TELEMETRY=1") != null)
+         and ([.results.series[].server.wal_frames] | max) > 0
+         and ([.results.series[].server.wal_bytes] | max) > 0
+         and ([.results.series[].telemetry.longest_callback_ms] | max) > 0
+         and ([.results.series[].endpoints | keys[]] | unique | index("GET /feed") != null)
+         and (([.results.series[].telemetry.requests | to_entries[].value] | add) as $t | ([.results.series[].requests] | add) as $a
+              | ($t - $a | fabs) <= 0.03 * $a)' "$json" >/dev/null \
+    || { echo "the JSON does not hold the idle run: $(jq -c '{idle, cold, k6_connection_errors, rows: (.results.series | length)}' "$json")"; return 1; }
+  check_series_rows "$json" '.results.series' || return 1
+  left="$(docker ps -a --format '{{.Names}}' | grep '^lab-realistic-' || true)"
+  [ -z "$left" ] || { echo "containers left behind: ${left//$'\n'/ }"; return 1; }
+}
+
+# A server that closes connections idle for 2 s: the run is INVALID with the reason (every one of the 200 idle connections was closed), exits 3,
+# and leaves no container behind.
+check_realistic_idle_closed_by_the_server_fails() {
+  local out rc=0 json left
+  json="$(mktemp -d)/realistic.json"
+  out="$(bash "$LAB/realistic.sh" --image 8.5 --server "$LAB/check/fixtures/idle-timeout-app.php" --think-scale 0.1 --idle 200 --hold 20,10 --out "$json" 2>&1)" || rc=$?
+  [ "$rc" = 3 ] || { echo "expected exit 3 when the server closes idle connections, got $rc: ${out//$'\n'/ | }"; return 1; }
+  grep -q '^INVALID: .*the server closed 200 of the 200 idle connections during the run: 0 held at the end' <<<"$out" \
+    || { echo "the reason is not reported: ${out//$'\n'/ | }"; return 1; }
+  jq -e '.valid == false and .idle.held_at_start == 200 and .idle.held_at_end == 0 and .idle.closed_by_server_at_end == 200' "$json" >/dev/null \
+    || { echo "the JSON does not say 200 held then 0: $(jq -c '{valid, idle}' "$json")"; return 1; }
+  left="$(docker ps -a --format '{{.Names}}' | grep '^lab-realistic-' || true)"
+  [ -z "$left" ] || { echo "containers left behind: ${left//$'\n'/ }"; return 1; }
+}
+
+# macro.sh on the app: --fresh-db starts it through lab_start_app, --cold evicts the copy (almost none of it resident, and the app reads the
+# database from disk: major faults), --per-second gives one row per second with the latency of /posts/:id and the server's readings, and the
+# aggregator saw exactly the requests k6's own summary counted.
+check_macro_fresh_db_cold_per_second() {
+  local out rc=0 json
+  json="$(mktemp -d)/macro.json"
+  out="$(bash "$LAB/macro.sh" --image 8.5 --server "$LAB/app/server.php" --fresh-db --cold --per-second --rate 400 --duration 8 --warmup 0 \
+    --script "$LAB/macro/k6/posts.js" --path /posts/1 --label app --out "$json" 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "lab/macro.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
+  grep -qx 'VALID' <<<"$out" || { echo "the run is not marked VALID: ${out//$'\n'/ | }"; return 1; }
+  jq -e '.valid == true and .cold.requested == true and .cold.resident_share < 0.05 and .server.ext == ["sockets", "event"]
+         and (.server.env | index("APP_TELEMETRY=1") != null) and .results.error_rate == 0
+         and .results.per_second.aggregator.requests == .results.requests and .results.per_second.aggregator.unparsed == 0
+         and .results.per_second.aggregator.connection_errors == 0
+         and ([.results.per_second.rows[].server.majflt] | add) > 0
+         and ([.results.per_second.rows[].endpoints | keys[]] | unique == ["/posts/:id"])
+         and ([.results.per_second.rows[].requests] | add) == .results.requests' "$json" >/dev/null \
+    || { echo "the JSON does not hold the cold per-second run: $(jq -c '{valid, cold, requests: .results.requests, per_second: (.results.per_second | {aggregator, rows: (.rows | length)})}' "$json")"; return 1; }
+  check_series_rows "$json" '.results.per_second.rows' || return 1
+  grep -q '^sec  VUs  req  /posts/:id ' <<<"$out" || { echo "the table has no per-second header: ${out//$'\n'/ | }"; return 1; }
+  [ -z "$(docker ps -a --format '{{.Names}}' | grep '^lab-macro-' || true)" ] || { echo "containers left behind"; return 1; }
+  docker volume ls --format '{{.Name}}' | grep -x lab-macro-run >/dev/null && { echo "the volume lab-macro-run is left behind"; return 1; }
+  return 0
+}
+
+# Without --fresh-db the bake-off server keeps copying its own seed: --cold alone is refused before any container starts.
+check_macro_cold_needs_fresh_db() {
+  local out rc=0
+  out="$(bash "$LAB/macro.sh" --image 8.5 --server "$LAB/servers/noop-swoole.php" --rate 100 --duration 2 --cold 2>&1)" || rc=$?
+  [ "$rc" = 2 ] || { echo "expected exit 2 for --cold without --fresh-db, got $rc: ${out//$'\n'/ | }"; return 1; }
+  grep -q -- '--cold needs --fresh-db' <<<"$out" || { echo "the message does not say why: ${out//$'\n'/ | }"; return 1; }
+  [ -z "$(docker ps -a --format '{{.Names}}' | grep '^lab-macro-' || true)" ] || { echo "a container was started"; return 1; }
+}
+
 # The aggregator keeps up with k6 at the rows of 40,000 req/s (about 12 rows a request): a recorded CSV, replayed at 480,000 rows a
 # second for 10 s, is read in full (every row, every request counted, none unparsed) with a lag under 3 s, and the feeder itself
 # was never more than a second late (a feeder that blocks on a full FIFO proves nothing).
@@ -666,6 +890,8 @@ CHECKS=(
   check_challenge_test_passes_on_app
   check_challenge_test_fails_on_wrong_golden
   check_aggregate_cases
+  check_series_cases
+  check_telemetry_cases
   check_realistic_script_is_the_benchs
   check_replay_keeps_up
   check_realistic_staircase_passes
@@ -674,6 +900,13 @@ CHECKS=(
   check_realistic_marks_invalid_run
   check_realistic_cleans_up_after_failure
   check_realistic_calibrates
+  check_cold_start_evicts_the_copy
+  check_app_telemetry
+  check_idle_client_hold_mode
+  check_realistic_idle_run
+  check_realistic_idle_closed_by_the_server_fails
+  check_macro_fresh_db_cold_per_second
+  check_macro_cold_needs_fresh_db
   check_shellcheck
   check_shellcheck_catches_warning
 )

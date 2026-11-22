@@ -2,12 +2,19 @@
 // The client of lab/conns.sh: opens idle keep-alive connections to a server, one at a time, and holds them.
 //
 //   php client.php <port>
+//   php client.php <port> --hold <n> [--path <path>] [--body-regex <pcre>] [--end-file <file>]
 //
-// It is driven through stdin and answers on stdout, one JSON object per line (lab/conns.sh reads them). Commands on stdin:
+// Without --hold it is driven through stdin and answers on stdout, one JSON object per line (lab/conns.sh reads them). Commands on stdin:
 //   step <total>   open connections until <total> are held, then sweep the held ones for a close by the server
 //   quit           close everything and exit
 // Events on stdout: log (a message for the person running the lab), baseline_ready (one request done on one connection, now
 // closed), step, harness_error (the client itself failed, exit 1: a bind that fails, no file descriptor left, no free port).
+//
+// With --hold <n> (lab/realistic.sh --idle) it takes no command: it opens <n> connections one at a time, each with one request
+// (GET <path>, default /noop; the answer must be a 200 whose body is the exact `{"status":"ok"}`, or matches --body-regex), sweeps
+// them once and prints the `held` event, then holds them until <end-file> exists (checked every 200 ms), sweeps them again and prints
+// the `ended` event, with how many the server closed in between: a connection the server closed is the run's failure, whatever the
+// reason. Both events carry the client's own memory (VmRSS and VmHWM in kB).
 //
 // Why one at a time: the server's accept queue never fills, so a connection that does not get an answer is the server's limit
 // (its fds, its max_connection, its memory) and not a burst the kernel dropped.
@@ -17,8 +24,8 @@
 // 127.x addresses (loopback accepts the whole 127.0.0.0/8). The next address is one nothing uses, TIME_WAIT sockets of an
 // earlier run included, so a second run right after a first one never fails on bind.
 
-const PATH = '/noop';
-const BODY = '{"status":"ok"}';
+const DEFAULT_PATH = '/noop';
+const DEFAULT_BODY = '{"status":"ok"}';
 const TIMEOUT_S = 2.0;
 // Ports of an address kept free: the baseline's connection, and what other processes may take.
 const PORT_MARGIN = 500;
@@ -158,11 +165,11 @@ final class Source
 }
 
 /**
- * Opens a connection, sends GET /noop and reads the whole answer.
+ * Opens a connection, sends GET <path> and reads the whole answer.
  *
  * @return array{resource|null, string|null, string|null} the connection (null when it failed), the failure and its detail
  */
-function open_and_request(int $port, Source $source): array
+function open_and_request(int $port, Source $source, string $path, ?string $bodyRegex): array
 {
     $ctx = $source->context();
     $fp = @stream_socket_client("tcp://127.0.0.1:$port", $errno, $errstr, TIMEOUT_S, STREAM_CLIENT_CONNECT, $ctx);
@@ -179,7 +186,7 @@ function open_and_request(int $port, Source $source): array
     // Why: a read buffer would hold 8 KiB per connection in the client, 500 MiB for 65 000 of them.
     stream_set_read_buffer($fp, 0);
     notice_errno();
-    $request = 'GET ' . PATH . " HTTP/1.1\r\nHost: 127.0.0.1:$port\r\n\r\n";
+    $request = 'GET ' . $path . " HTTP/1.1\r\nHost: 127.0.0.1:$port\r\n\r\n";
     if (fwrite($fp, $request) !== strlen($request)) {
         $errno = notice_errno();
         fclose($fp);
@@ -208,7 +215,8 @@ function open_and_request(int $port, Source $source): array
         }
     }
     $body = substr($buf, $end + 4);
-    if (!str_starts_with($buf, 'HTTP/1.1 200 ') || $body !== BODY) {
+    $bodyOk = $bodyRegex === null ? $body === DEFAULT_BODY : preg_match($bodyRegex, $body) === 1;
+    if (!str_starts_with($buf, 'HTTP/1.1 200 ') || !$bodyOk) {
         fclose($fp);
         return [null, 'bad answer', json_encode(substr($buf, 0, 200))];
     }
@@ -247,7 +255,7 @@ function sweep(array &$held): int
 /** One request on one connection, then close it: what the server allocates for its first request is in the baseline. */
 function baseline(int $port, Source $source): void
 {
-    [$fp, $failure, $detail] = open_and_request($port, $source);
+    [$fp, $failure, $detail] = open_and_request($port, $source, DEFAULT_PATH, null);
     if ($fp === null) {
         harness_error("the baseline request failed ($failure: $detail)");
     }
@@ -256,19 +264,85 @@ function baseline(int $port, Source $source): void
     usleep(300_000);
 }
 
+/** The client's own memory in kB from /proc/self/status: [VmRSS, VmHWM]. */
+function own_memory_kb(): array
+{
+    $status = (string) @file_get_contents('/proc/self/status');
+    return [
+        preg_match('/^VmRSS:\s+(\d+) kB$/m', $status, $m) ? (int) $m[1] : null,
+        preg_match('/^VmHWM:\s+(\d+) kB$/m', $status, $m) ? (int) $m[1] : null,
+    ];
+}
+
 $port = (int) ($argv[1] ?? 0);
 if ($port < 1) {
-    harness_error('usage: client.php <port>');
+    harness_error('usage: client.php <port> [--hold <n> [--path <path>] [--body-regex <pcre>] [--end-file <file>]]');
+}
+$options = ['hold' => null, 'path' => DEFAULT_PATH, 'body-regex' => null, 'end-file' => null];
+for ($i = 2; $i < count($argv); $i += 2) {
+    $key = ltrim($argv[$i], '-');
+    if (!array_key_exists($key, $options) || !isset($argv[$i + 1])) {
+        harness_error('unknown option or missing value: ' . $argv[$i]);
+    }
+    $options[$key] = $argv[$i + 1];
+}
+$holdMode = $options['hold'] !== null;
+if ($holdMode && (!ctype_digit($options['hold']) || (int) $options['hold'] < 1 || $options['end-file'] === null)) {
+    harness_error('--hold wants a whole number above 0 and --end-file');
+}
+$bodyRegex = null;
+if ($options['body-regex'] !== null) {
+    $bodyRegex = '~' . str_replace('~', '\\~', $options['body-regex']) . '~';
+    if (@preg_match($bodyRegex, '') === false) {
+        harness_error('--body-regex is not a valid pattern: ' . $options['body-regex']);
+    }
 }
 [$low, $high] = port_range();
 $source = new Source($high - $low + 1);
 $nofile = function_exists('posix_getrlimit') ? (posix_getrlimit()['soft openfiles'] ?? null) : null;
 
+/** @var array<int, resource> $held */
+$held = [];
+
+if ($holdMode) {
+    $target = (int) $options['hold'];
+    $failure = $detail = null;
+    $started = microtime(true);
+    while (count($held) < $target) {
+        [$fp, $failure, $detail] = open_and_request($port, $source, $options['path'], $bodyRegex);
+        if ($fp === null) {
+            break;
+        }
+        $held[] = $fp;
+    }
+    $closed = sweep($held);
+    [$rss, $hwm] = own_memory_kb();
+    emit([
+        'event' => 'held',
+        'target' => $target,
+        'held' => count($held),
+        'closed_by_server' => $closed,
+        'failure' => $failure,
+        'detail' => $detail,
+        'seconds' => round(microtime(true) - $started, 2),
+        'source_addresses' => $source->used,
+        'ports_per_address' => $source->perAddress(),
+        'nofile' => $nofile,
+        'rss_kb' => $rss,
+        'hwm_kb' => $hwm,
+    ]);
+    while (!file_exists($options['end-file'])) {
+        usleep(200_000);
+    }
+    $closed = sweep($held);
+    [$rss, $hwm] = own_memory_kb();
+    emit(['event' => 'ended', 'held' => count($held), 'closed_by_server' => $closed, 'rss_kb' => $rss, 'hwm_kb' => $hwm]);
+    exit(0);
+}
+
 baseline($port, $source);
 emit(['event' => 'baseline_ready']);
 
-/** @var array<int, resource> $held */
-$held = [];
 while (($line = fgets(STDIN)) !== false) {
     $cmd = preg_split('/\s+/', trim($line));
     if ($cmd[0] === 'quit') {
@@ -281,7 +355,7 @@ while (($line = fgets(STDIN)) !== false) {
     $failure = $detail = null;
     $started = microtime(true);
     while (count($held) < $target) {
-        [$fp, $failure, $detail] = open_and_request($port, $source);
+        [$fp, $failure, $detail] = open_and_request($port, $source, DEFAULT_PATH, null);
         if ($fp === null) {
             break;
         }

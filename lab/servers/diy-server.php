@@ -38,13 +38,25 @@ final class DiyServer
     private readonly Closure $onReadable;
     private readonly Closure $onWritable;
 
-    /** @param resource $listener */
-    public function __construct($listener)
+    /**
+     * @param resource $listener
+     * @param DiyTelemetry|null $telemetry when given, every callback of the loop is timed and a line is printed each second
+     *                                      (lab/servers/diy-telemetry.php, loaded by the caller); null: nothing is added to the loop
+     */
+    public function __construct($listener, private readonly ?object $telemetry = null)
     {
         $this->base = new EventBase();
-        $this->onReadable = $this->onReadable(...);
-        $this->onWritable = $this->onWritable(...);
-        $this->listen = new Event($this->base, $listener, Event::READ | Event::PERSIST, $this->onAccept(...), $listener);
+        $onReadable = $this->onReadable(...);
+        $onWritable = $this->onWritable(...);
+        $onAccept = $this->onAccept(...);
+        if ($telemetry !== null) {
+            $onReadable = $telemetry->timed($onReadable);
+            $onWritable = $telemetry->timed($onWritable);
+            $onAccept = $telemetry->timed($onAccept);
+        }
+        $this->onReadable = $onReadable;
+        $this->onWritable = $onWritable;
+        $this->listen = new Event($this->base, $listener, Event::READ | Event::PERSIST, $onAccept, $listener);
         $this->listen->add();
     }
 
@@ -55,6 +67,7 @@ final class DiyServer
 
     public function run(): void
     {
+        $this->telemetry?->start($this->base);
         $this->base->dispatch();
     }
 

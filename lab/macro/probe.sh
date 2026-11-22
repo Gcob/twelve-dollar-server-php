@@ -14,6 +14,7 @@
 #   probe.sh poll <server id> <k6 id> <status file>          k6's memory, the server's memory now, the aggregator's status line
 #   probe.sh fds <server container id>                       open file descriptors of the server's processes (`fds open <n>`)
 #   probe.sh client-ips <port>                               established connections to <port> by the client's address (`clients <ip> <n>`)
+#   probe.sh cgroup-memory <container id>                    memory of any container's cgroup: current, peak, anon, socket buffers and kernel (bytes)
 set -euo pipefail
 
 CG=/sys/fs/cgroup/docker
@@ -111,8 +112,18 @@ case "${1:-}" in
         echo "clients $((16#${h:6:2})).$((16#${h:4:2})).$((16#${h:2:2})).$((16#${h:0:2})) $count"
       done
     ;;
+  cgroup-memory)
+    # Why anon, sock and kernel: the idle client's memory is its heap (anon), the socket buffers (sock) and the kernel's structures for its
+    # sockets (kernel: slab and the like), all charged to its cgroup.
+    c="$(cgroup_dir "$2")"
+    echo "cgroup current $(cat "$c/memory.current")"
+    echo "cgroup peak $(cat "$c/memory.peak")"
+    echo "cgroup anon $(awk '$1 == "anon" {print $2}' "$c/memory.stat")"
+    echo "cgroup sock $(awk '$1 == "sock" {print $2}' "$c/memory.stat")"
+    echo "cgroup kernel $(awk '$1 == "kernel" {print $2}' "$c/memory.stat")"
+    ;;
   *)
-    echo "usage: probe.sh cpu|memory|memory-now|connections|memory-events|fresh-request|port-open|http-answers|poll|fds|client-ips ..." >&2
+    echo "usage: probe.sh cpu|memory|memory-now|connections|memory-events|fresh-request|port-open|http-answers|poll|fds|client-ips|cgroup-memory ..." >&2
     exit 2
     ;;
 esac

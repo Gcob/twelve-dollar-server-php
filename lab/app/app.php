@@ -21,11 +21,14 @@ const APP_POST_SELECT = 'SELECT p.id, p.body, p.created_at, u.username AS author
 $app_db = null;
 $app_secret = '';
 $app_started_at = 0;
+$app_path = '';
+/** @var array<string, int>|null requests per endpoint since the last telemetry line; null (the default) counts nothing */
+$app_requests = null;
 
 /** Opens the database at $path (it must exist: SQLite would create an empty one) and prepares every statement once. */
 function app_boot(string $path, string $secret): void
 {
-    global $app_db, $app_secret, $app_started_at;
+    global $app_db, $app_secret, $app_started_at, $app_path;
     if (!is_file($path)) {
         throw new RuntimeException("the database file does not exist: $path");
     }
@@ -47,6 +50,34 @@ function app_boot(string $path, string $secret): void
     ];
     $app_secret = $secret;
     $app_started_at = time();
+    $app_path = $path;
+}
+
+/** Starts counting requests per endpoint (APP_TELEMETRY=1, see lab/servers/diy-telemetry.php). */
+function app_telemetry_enable(): void
+{
+    global $app_requests;
+    $app_requests = [];
+}
+
+/** The app's part of a telemetry line: the requests of the second per endpoint (and the count starts over) and the WAL's size. */
+function app_telemetry_fields(): array
+{
+    global $app_requests, $app_path;
+    $requests = $app_requests ?? [];
+    $app_requests = [];
+    clearstatcache(true, $app_path . '-wal');
+    return ['requests' => (object) $requests, 'wal_bytes' => @filesize($app_path . '-wal') ?: 0];
+}
+
+/** Counts a request that reached $endpoint when telemetry is on; hands the response back untouched. */
+function app_count(string $endpoint, array $response): array
+{
+    global $app_requests;
+    if ($app_requests !== null) {
+        $app_requests[$endpoint] = ($app_requests[$endpoint] ?? 0) + 1;
+    }
+    return $response;
 }
 
 // S3, route. A plain match on the method and the path (a `?query` is cut off first).
@@ -60,20 +91,20 @@ function handler_handle(string $method, string $path, string $body, string $auth
     }
     if ($method === 'GET') {
         if ($path === '/health') {
-            return route_health();
+            return app_count('GET /health', route_health());
         }
         if ($path === '/feed') {
-            return route_feed();
+            return app_count('GET /feed', route_feed());
         }
         if (strncmp($path, '/posts/', 7) === 0 && !str_contains(substr($path, 7), '/')) {
-            return route_post_get(substr($path, 7));
+            return app_count('GET /posts/:id', route_post_get(substr($path, 7)));
         }
     } elseif ($method === 'POST') {
         if ($path === '/posts') {
-            return route_post_create($authorization, $body);
+            return app_count('POST /posts', route_post_create($authorization, $body));
         }
         if (strncmp($path, '/posts/', 7) === 0 && str_ends_with($path, '/like') && !str_contains(substr($path, 7, -5), '/')) {
-            return route_like($authorization, substr($path, 7, -5));
+            return app_count('POST /posts/:id/like', route_like($authorization, substr($path, 7, -5)));
         }
     }
     return response_error(404, 'not found');

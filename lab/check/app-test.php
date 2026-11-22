@@ -231,6 +231,36 @@ check_case('feed: 20 newest, ties by id, key order of a post', function () use (
     });
 });
 
+// Telemetry (APP_TELEMETRY=1): requests are counted per endpoint, the count starts over each time the telemetry line reads it, and nothing is
+// counted before it is switched on.
+check_case('telemetry: off by default, requests are not counted', function () {
+    global $app_requests;
+    call('GET', '/feed');
+    return $app_requests === null && app_telemetry_fields()['requests'] == (object) [] ? null : 'something was counted: ' . json_encode($app_requests);
+});
+check_case('telemetry: on, every endpoint that answers is counted under its own name, a 404 under none', function () {
+    app_telemetry_enable();
+    call('GET', '/feed');
+    call('GET', '/feed');
+    call('GET', '/posts/1');
+    call('GET', '/health');
+    call('POST', '/posts', '{"body":"counted"}', token(claims()));
+    call('POST', '/posts/1/like', '', token(claims()));
+    call('GET', '/nowhere');
+    $got = (array) app_telemetry_fields()['requests'];
+    $want = ['GET /feed' => 2, 'GET /posts/:id' => 1, 'GET /health' => 1, 'POST /posts' => 1, 'POST /posts/:id/like' => 1];
+    return $got === $want ? null : 'counted ' . json_encode($got) . ', expected ' . json_encode($want);
+});
+check_case('telemetry: reading the counts starts them over, and the WAL size is in the same fields', function () {
+    global $path;
+    $first = app_telemetry_fields();
+    call('GET', '/feed');
+    $second = app_telemetry_fields();
+    clearstatcache(true, $path . '-wal');
+    return (array) $first['requests'] === [] && (array) $second['requests'] === ['GET /feed' => 1]
+        && $second['wal_bytes'] === (@filesize($path . '-wal') ?: 0) ? null : 'got ' . json_encode([$first, $second]);
+});
+
 // Last: it breaks the health statement. A query that fails (here, a table dropped after the statement was prepared) is the 503.
 check_case('health: a failing SELECT is a 503 with the error', function () use ($path) {
     global $app_db;

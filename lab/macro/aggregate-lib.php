@@ -67,8 +67,10 @@ function agg_quantile(array $hist, float $q): ?float
 
 final class Aggregate
 {
-    /** @var array<int, array<string, array{n: int, err: int, h: array<int, int>}>> second => endpoint => counts */
+    /** @var array<int, array<string, array{n: int, err: int, max: float, h: array<int, int>}>> second => endpoint => counts, slowest latency, histogram */
     public array $bins = [];
+    /** @var array<string, int> k6's error_code of the failed requests => how many */
+    public array $errorCodes = [];
     /** @var array<int, int> second => k6's `vus` gauge */
     public array $vus = [];
     /** @var array<int, array{0: int, 1: float}> second boundary => [the server's usage_usec, the time it was read] */
@@ -78,6 +80,14 @@ final class Aggregate
     public int $unparsed = 0;
     public ?int $newestTs = null;
     private string $carry = '';
+
+    /**
+     * @param bool $normalizeNames name an endpoint by the path of its URL with the numbers as `:id` (`/posts/:id`): a script that does
+     *                             not name its requests (lab/macro.sh's) has the URL for name, a different one for every post
+     */
+    public function __construct(private readonly bool $normalizeNames = false)
+    {
+    }
 
     /**
      * Reads what came from the stream: any number of complete rows, and maybe the start of the next one (kept for the next call).
@@ -113,22 +123,32 @@ final class Aggregate
 
         // `http_req_duration,<ts>,<ms>,<check>,<error>,<error_code>,<expected_response>,<group>,<method>,<name>,...`
         $matched = preg_match_all(
-            '/^http_req_duration,(\d+),([^,]+),[^,]*,[^,]*,[^,]*,(true|false),[^,]*,[^,]*,([^,]+),/m',
+            '/^http_req_duration,(\d+),([^,]+),[^,]*,[^,]*,([^,]*),(true|false),[^,]*,[^,]*,([^,]+),/m',
             $chunk,
             $m,
             PREG_SET_ORDER
         );
         $seen = substr_count($chunk, "\nhttp_req_duration,") + (str_starts_with($chunk, 'http_req_duration,') ? 1 : 0);
         $this->unparsed += $seen - (int) $matched;
-        foreach ($m as [, $ts, $ms, $expected, $name]) {
+        foreach ($m as [, $ts, $ms, $errorCode, $expected, $name]) {
             $sec = (int) $ts;
+            if ($this->normalizeNames) {
+                $name = preg_replace(['~^https?://[^/]+~', '~\?.*$~', '~/\d+(?=/|$)~'], ['', '', '/:id'], $name);
+            }
             $bin = &$this->bins[$sec][$name];
-            $bin ??= ['n' => 0, 'err' => 0, 'h' => []];
+            $bin ??= ['n' => 0, 'err' => 0, 'max' => 0.0, 'h' => []];
             $bin['n']++;
             if ($expected === 'false') {
                 $bin['err']++;
             }
-            $b = agg_bucket((float) $ms);
+            if ($errorCode !== '') {
+                $this->errorCodes[$errorCode] = ($this->errorCodes[$errorCode] ?? 0) + 1;
+            }
+            $latency = (float) $ms;
+            if ($latency > $bin['max']) {
+                $bin['max'] = $latency;
+            }
+            $b = agg_bucket($latency);
             $bin['h'][$b] = ($bin['h'][$b] ?? 0) + 1;
             unset($bin);
             if ($this->newestTs === null || $sec > $this->newestTs) {
@@ -295,8 +315,21 @@ function agg_run_total(Aggregate $a): array
     return $out;
 }
 
+/** How many of the failed requests failed on the connection: k6's codes 1200 to 1299 (dial, reset by the peer, broken pipe ...). */
+function agg_connection_errors(array $errorCodes): int
+{
+    $n = 0;
+    foreach ($errorCodes as $code => $count) {
+        if ((int) $code >= 1200 && (int) $code <= 1299) {
+            $n += $count;
+        }
+    }
+    return $n;
+}
+
 /**
- * One entry per second that has a request, the second's requests, errors, percentiles overall, VUs and server CPU: a table to print.
+ * One entry per second that has a request: its requests, errors, percentiles overall, VUs and server CPU, and for each endpoint its
+ * count, p50, p99 and slowest latency (exact). A second with no request has no entry.
  *
  * @return list<array<string, mixed>>
  */
@@ -309,10 +342,20 @@ function agg_per_second(Aggregate $a): array
         $hist = [];
         $n = 0;
         $err = 0;
-        foreach ($a->bins[$sec] as $bin) {
+        $endpoints = [];
+        $names = array_keys($a->bins[$sec]);
+        sort($names);
+        foreach ($names as $name) {
+            $bin = $a->bins[$sec][$name];
             agg_hist_merge($hist, $bin['h']);
             $n += $bin['n'];
             $err += $bin['err'];
+            $endpoints[$name] = [
+                'count' => $bin['n'],
+                'p50' => agg_round(agg_quantile($bin['h'], 0.50)),
+                'p99' => agg_round(agg_quantile($bin['h'], 0.99)),
+                'max' => round($bin['max'], 3),
+            ];
         }
         $cpu = isset($a->cpu[$sec], $a->cpu[$sec + 1]) && $a->cpu[$sec + 1][1] > $a->cpu[$sec][1]
             ? ($a->cpu[$sec + 1][0] - $a->cpu[$sec][0]) / ($a->cpu[$sec + 1][1] - $a->cpu[$sec][1])
@@ -322,6 +365,7 @@ function agg_per_second(Aggregate $a): array
             'vus' => $a->vus[$sec] ?? null,
             'requests' => $n,
             'errors' => $err,
+            'endpoints' => $endpoints,
             'p95' => agg_round(agg_quantile($hist, 0.95)),
             'p99' => agg_round(agg_quantile($hist, 0.99)),
             'server_cpu_usec_per_s' => $cpu === null ? null : round($cpu),

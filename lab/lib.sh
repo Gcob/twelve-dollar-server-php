@@ -109,13 +109,28 @@ LAB_APP_DB=/tmp/feed.db
 # that the page cache it fills is charged to the server's cgroup like the bake-off's copy was, and `sync <file>` writes it to disk
 # before the app starts: the first requests then do not wait on a dirty copy. The app only opens SQLITE_PATH. Needs LAB,
 # LAB_PHP_FLAGS (lab_build_php_flags); LAB_ENV is passed too, after JWT_SECRET and SQLITE_PATH.
+#
+# LAB_COLD=1 (set by the caller, default 0) starts the app on a cold copy: after the `sync` (a dirty page is not evicted) the copy's pages
+# are evicted from the page cache with posix_fadvise(DONTNEED) on that file only (`dd iflag=nocache count=0`; never a VM-wide
+# drop_caches), so the app's first reads come from disk. Either way, just before the app opens the copy, lab/macro/fincore.php reads
+# how much of it the page cache holds and prints it as the container's first line, `fincore: resident_bytes=... size_bytes=...`
+# (lab_fincore_line reads it back): the whole file after a plain copy, near 0 when cold.
 lab_start_app() {
   local name="$1" variant="$2" port="$3" server_in="$4" extra=("JWT_SECRET=$LAB_JWT_SECRET" "SQLITE_PATH=$LAB_APP_DB")
   local own_env=("${extra[@]}" "${LAB_ENV[@]+"${LAB_ENV[@]}"}")
   local LAB_ENV
   LAB_ENV=("${own_env[@]}")
-  lab_run_server_container "$name" "$variant" "$port" sh -c 'cp "$1" "$2" && sync "$2" && shift 2 && exec php "$@"' \
-    lab-app /lab/data/feed.db "$LAB_APP_DB" "${LAB_PHP_FLAGS[@]}" "$server_in"
+  lab_run_server_container "$name" "$variant" "$port" sh -c '
+    src="$1"; dst="$2"; cold="$3"; shift 3
+    cp "$src" "$dst" && sync "$dst" || exit 1
+    [ "$cold" != 1 ] || dd if="$dst" iflag=nocache count=0 2>/dev/null || exit 1
+    php -d ffi.enable=1 /lab/macro/fincore.php "$dst" || exit 1
+    exec php "$@"' lab-app /lab/data/feed.db "$LAB_APP_DB" "${LAB_COLD:-0}" "${LAB_PHP_FLAGS[@]}" "$server_in"
+}
+
+# lab_fincore_line <container>: the `fincore: ...` line lab_start_app printed (the text after `fincore: `), empty when there is none.
+lab_fincore_line() {
+  docker logs "$1" 2>&1 | sed -n 's/^fincore: //p' | head -n 1
 }
 
 # The image of lab/challenge-test.sh's test container: the four programs the challenge's test/test.sh needs (bash, curl, jq,

@@ -8,6 +8,7 @@
 //   stop_on_fail               true: the first failing step ends the judging and is reported in the status (the harness stops k6)
 //   users_per_rps, limits      the mapping and the pass rule (see agg_summarize)
 //   server_cgroup, k6_cgroup   cgroup directories whose cpu.stat is read on every whole second (null: not read)
+//   normalize_names            name an endpoint by its URL's path with numbers as `:id` (for a k6 script that does not name its requests)
 // The stream ends with the line `#END` that the harness writes after k6 exits (the FIFO is opened read-write, so the reader never
 // sees an end of file by itself, and a second keeps ticking while k6 starts).
 //
@@ -47,7 +48,7 @@ if ($fifo === false) {
 stream_set_blocking($fifo, false);
 stream_set_read_buffer($fifo, 0);
 
-$agg = new Aggregate();
+$agg = new Aggregate((bool) ($config['normalize_names'] ?? false));
 $steps = $config['steps'];
 $done = [];            // judged steps, in order
 $failed = null;
@@ -157,6 +158,8 @@ write_json($config['result'], [
     'rows' => $agg->rows,
     'requests' => $agg->requests,
     'unparsed' => $agg->unparsed,
+    'error_codes' => $agg->errorCodes,
+    'connection_errors' => agg_connection_errors($agg->errorCodes),
     'bytes' => $bytes,
     'lag_max_s' => $lagMax,
     'vus_by_second' => $agg->vus,
