@@ -1,6 +1,6 @@
 # Developer: phase 4, the realistic baseline
 
-**State:** scope 2 done (commit 47e4728, on top of scope 1's `64af809`): `lab/realistic.sh` (staircase, hold, calibrate), the aggregator, the k6 copy of the bench's load.js, 8 new checks in `lab/check.sh` (full `bash lab/check.sh` 44/44 ok). Scope 1 stays as it was (challenge suite `passed=42 failed=0`, shellcheck clean).
+**State:** scope 3 done (commit b47adcf, on top of scope 2's `47e4728`): `--idle` and `--cold` in `lab/realistic.sh`, the per-second series and the sampler, `APP_TELEMETRY`, `macro.sh --fresh-db --cold --per-second`, the client's hold mode, 9 new checks (full `bash lab/check.sh` **53/53 ok**, shellcheck clean). Scopes 1 and 2 stay as they were.
 
 ## Verified
 
@@ -51,8 +51,9 @@
 
 ## Next steps
 
-1. Scope 3 (idle connections, eviction option in `lab_start_app`) and the measuring scopes build on `lab/realistic.sh`: `run_measured` is the one function that runs a k6 stream with its aggregator; the per-second table is `results.per_second` in the JSON (`agg_per_second` in `lab/macro/aggregate-lib.php`).
-2. Before any measurement that counts: re-run `--calibrate` on a quiet VM (23 other projects' containers were running during these smoke runs) and set `--lag-gate`, `--vu-cap` and the scale from it.
+1. Scope 4 (the profiler) can start its server with `lab_start_app` (it takes `LAB_COLD=1`, prints a `fincore:` line) and read the per-second pieces from `lab/series.sh` (`sampler_start`, `sampler_stop`, `series_build`, `series_print`).
+2. Before any measurement that counts: re-run `--calibrate` on a quiet VM (it now reserves 512 MiB for the idle client, not 1 GiB), set `--lag-gate`, `--vu-cap` and the scale from it, and **read the aggregator's lag at the top steps**: at 18,000 req/s it peaked at 3.3 to 3.9 s against the gate of 4 (see "Raw learnings (scope 3)").
+3. The telemetry's cost (on against off) is not measured: `--env APP_TELEMETRY=0` turns it off in `realistic.sh` and in `macro.sh --fresh-db`.
 
 ## Handover of scope 2 (the realistic mode, commit 47e4728)
 
@@ -120,9 +121,70 @@
 - `lab/macro/k6/realistic.js` (the bench's script, header names the commit), `lab/check.sh` (`check_realistic_*`, `check_replay_keeps_up`, `realistic_script_diff`), `lab/macro/probe.sh` (`poll`, `fds`, `client-ips`). `@47e4728`
 - `lab/README.md` section "The realistic mode" (numbers, pass rule, calibration). `@47e4728`
 
+## Handover of scope 3 (idle connections, time, cold start, commit b47adcf)
+
+### Verified (scope 3)
+
+- **Aggregator additions, red then green:** 10 new cases in `lab/check/aggregate-test.php` (55 ok in all) first failed on the missing `endpoints` of a second, `$a->errorCodes` and `agg_connection_errors()`, then passed. One case I got wrong myself (my row with `expected=false` carries code 1404): fixed the expectation, not the code. **Proof:** `bash lab/run.sh 8.5 php /lab/check/aggregate-test.php`.
+- **Series library, red then green:** `lab/check/series-test.php` (23 cases) failed on the missing `series-lib.php`, then passed. `mxFrame` against a real WAL: the frames read from `-shm` equal `(wal bytes - 32) / (page size + 24)` after 400 rows, and after `wal_checkpoint(RESTART)` plus one row they are 1 to 3 while the file keeps its size (the brief's claim holds). **The byte order is native (little-endian here), not big-endian as the brief said:** the native read matched the file-size arithmetic. **Proof:** same command with `series-test.php`.
+- **Telemetry, red then green:** `lab/check/telemetry-test.php` (14 cases) failed on the missing class, then on `nextBoundary()` (written after a real bug, see "Raw learnings"). The app's counting (3 cases added to `app-test.php`, 60 ok in all) was written AFTER the code; I checked it bites by removing one `app_count(` call (the `GET /posts/:id` case failed with the missing endpoint) and restoring it.
+- **Checks bite:** with the `dd iflag=nocache` line of `lab_start_app` disabled `check_cold_start_evicts_the_copy` fails (`the cold copy is more than 5 % resident: resident_bytes=249843712 ...`); with the fixture's idle timeout set to 200 s `check_idle_client_hold_mode` and `check_realistic_idle_closed_by_the_server_fails` fail (exit 0, nothing closed). Both restored.
+- **The Done-when run** (skeleton on 8.5, `--think-scale 0.0286 --idle 60000 --staircase 2000,2000,18000,20`, 24 other containers running, exit 0): 60,000 held at the start and at the end (the server counted 60,000 and 60,000 established, 60,012 fds open with them), **0 k6 connection errors**, 9 steps all pass up to 4,864 VUs / 17,816 req/s (p95 6.1 ms, p99 13.4 ms at the top), 229 per-second rows, peak fds 64,876. A second run at the cap (`--hold 19900,25`: 5,377 VUs, 19,565 req/s, p95 9.0 ms) peaked at **65,389 open fds** of 65,535, no connection error, lag 2.4 s. JSON: none committed (smoke runs, `lab/results/` untouched).
+- **Idle client's memory, measured:** 60,000 connections take **257 MiB** of the client container's `memory.current` (peak 257.4): 44 MiB of heap, 213 MiB of kernel memory (`kernel` in `memory.stat`), the PHP process's RSS is 56 MiB (77 MiB peak during the sweeps), about 4.4 KiB per connection; opening them takes 9.9 s from 6 source addresses. `memory.stat`'s `sock` stays 0. The budget in the k6 memory is now `LAB_IDLE_CLIENT_MIB=512`.
+- **Cold and warm `fincore`:** warm 249,843,712 of 249,843,712 bytes (100 %), `--cold` **0 of 249,843,712**; in `macro.sh --fresh-db --cold --per-second` (400 req/s, 8 s, `posts.js`) the series shows 20 to 31 major faults a second and `memory.current` growing from 14 to 25 MiB (the page cache refilling). **Proof:** `check_cold_start_evicts_the_copy`, `check_macro_fresh_db_cold_per_second`.
+- **Telemetry against the aggregator:** the telemetry's request count per second matches the aggregator's within about 100 requests a second (19,500 against 19,500 at the cap), and over a run within 3 % (`check_realistic_idle_run`); before the `nextBoundary` fix one line was lost per run (see below).
+- **Full suite:** `bash lab/check.sh` 53/53 ok (44 before, 9 new: `check_series_cases`, `check_telemetry_cases`, `check_cold_start_evicts_the_copy`, `check_app_telemetry`, `check_idle_client_hold_mode`, `check_realistic_idle_run`, `check_realistic_idle_closed_by_the_server_fails`, `check_macro_fresh_db_cold_per_second`, `check_macro_cold_needs_fresh_db`). `conns.sh`'s three checks passed unchanged. shellcheck clean.
+
+### Assumed (scope 3)
+
+- **That `dd if=<copy> iflag=nocache count=0` is enough on the bench VM:** on this VM (Linux 6.12, overlayfs on the container's disk) it drops the whole copy; an older kernel without `fadvise` support on overlayfs would leave it resident, and the 5 % guard would make a `--cold` run invalid, not wrong.
+- **That the `kernel` field of the client's `memory.stat` is mostly its sockets:** I did not split it; the number that matters is `memory.current`.
+- **The telemetry's cost** (two `hrtime` per callback, one timer a second, one `app_count` call per request) is not measured, the brief leaves it to a later run.
+- **A step at 6 s plateaus at 50 req/s is noisy:** my first smoke run failed step 1 at 96.5 % achieved (49 against 50.8); `check_realistic_idle_run` uses `--hold 40,12` and asserts nothing about the step.
+
+### Dead ends (scope 3)
+
+- **Reading the WAL index through PHP and `/proc/<pid>/root`:** `fopen` failed with "No such file" while `stat` and `head` worked: PHP resolves the `root` link to `/` and opens the probe's own `/tmp`. The sampler reads the 96 bytes with `head` (one fork a second).
+- **`fincore` of util-linux:** not in any lab image (Ubuntu 24.04 moved it to `util-linux-extra`), and I did not touch the shared images. `lab/macro/fincore.php` does the same `mincore(2)` through FFI (`php -d ffi.enable=1`).
+- **`select()` in the idle-timeout fixture** is limited to 1,024 descriptors: the checks that use it stay under (200 idle connections).
+
+### Decisions on the way (scope 3)
+
+- **A closed idle connection is INVALID (exit 3), a client that cannot open them all is exit 1:** the brief says "fails the run with that reason". Exit 3 matches the other "printed but invalid" cases and keeps the JSON and the table; failing to open is a harness stop before any load.
+- **Hold mode = the same client file with options**, not a new script: `client.php <port> --hold <n> --path <p> --body-regex <pcre> --end-file <f>`; the harness ends the hold by touching the file (no FIFO), the client prints `held` then `ended`. `conns.sh`'s protocol and baseline are untouched.
+- **The series rows come from one sampler (`lab/macro/sampler.php`, in the probe container), a merge in PHP (`series-lib.php`, run in the probe container) and shared bash in `lab/series.sh`:** `realistic.sh` and `macro.sh` both source it. The first sample is read at once (the second already running), so the first row is partial and the rows' request counts add up to the aggregator's exactly (checked in `check_macro_fresh_db_cold_per_second`).
+- **Rows are per second from `[first sample, last sample)`; a row needs both boundary samples** or `server` is null (never a delta over two seconds). Gauges are the reading at the end of the second, CPU and faults are deltas (CPU scaled to us per second).
+- **Telemetry design:** `DiyTelemetry` (`lab/servers/diy-telemetry.php`) wraps the loop's callbacks only when given (null: nothing added to the loop); the app counts per endpoint in `app_count()` (one call per request, a null check when off). A line is for the second its timer was set for (`nextBoundary`), not the clock's.
+- **Endpoint names for `macro.sh --per-second`:** the aggregator takes `normalize_names` (URL path, numbers as `:id`) because `posts.js` does not name its requests and the URL differs per post (500,000 names otherwise). `posts.js` is untouched.
+- **`error_code` is now captured by the aggregator** (one more group in the duration regexp): `connection_errors` are the 12xx codes. Reported, not a validity rule.
+- **`--cold` is invalid above 5 % resident**; telemetry is on unless `--env APP_TELEMETRY=...` is given; `--cold` needs `--fresh-db` in `macro.sh` (exit 2).
+- **`macro.sh --fresh-db` defaults `--ext` to `sockets event`** (the app needs them) and waits up to 60 s for the copy.
+- **The VU cap and the memory budget use `LAB_IDLE_CLIENT_MIB` (512)** instead of 1 GiB, in the budget and in the calibration's memory cap. The cap stays 5,400 (fds).
+- **SQLite's cache counters are not read** (stated in the README): `pdo_sqlite` does not expose `sqlite3_db_status`, and the handle is not reachable from PHP.
+
+### Raw learnings (scope 3)
+
+- **A timer that fires early duplicated a second:** the first telemetry labelled a line `floor(now) - 1`; libevent's timer runs on the loop's clock, so a line fired a fraction of a ms before the boundary took the previous second, `telemetry_parse` (keyed by second) kept the later line and one second of requests (19,492 of 572,873) vanished from the run. Found by summing the telemetry per row against the aggregator's. Fix: the line takes the boundary it was set for. Proof: `big2.json` before (row 21: 137 against 19,695) and `check_realistic_idle_run` after.
+- **The aggregator's lag grows with the rate, not with the aggregator:** 3.88 s at 17.7 k req/s (gate 4 s) in one run, 3.3 s and 2.4 s in the others, 1.2 to 1.9 s at low load. The replay at 480,000 rows a second reads in 1.0 s with the old and the new library (checked both), so it is k6's CSV flush under load. Not fixed; a gate of 4 s is close at the top steps.
+- **The server does 17,800 req/s on one CPU in this VM:** 29 us of server CPU a request at 18 k req/s (60 us at 2 k), p95 6 ms; the staircase to 4,864 VUs passed every step. The 20,000 req/s the scale targets is within reach of the app, so the first failing step of a later run will tell something.
+- **Idle connections cost the server about 1.4 KiB of `Pss_Anon` each** (91 MiB at 60,000, 6 MiB at none) and a `memory.current` peak of 385 to 613 MiB depending on how much of the database's page cache is charged to the cgroup: the 2 GiB are not close.
+- **The transparent huge pages** make 40 MiB of new memory 21 minor faults in this VM (the telemetry test says so): a minor-fault count is not a byte count.
+- **`docker stats` shows 257 MiB for the client, `ps` 56 MiB:** the kernel's socket structures are in the container's cgroup, not in the process.
+- **bash 3.2:** no `mapfile`, `column -t -s` needs a real tab (`$(printf '\t')`), and `shellcheck` run from the repo root does not follow `source=` to `lib.sh` (the check's way): a variable only read in `lib.sh` or `series.sh` needs `# shellcheck disable=SC2034` with its reason; run the local shellcheck from `lab/` AND via `bash lab/check.sh check_shellcheck`.
+
+### Where to look (scope 3)
+
+- `lab/realistic.sh` (`--idle`, `--cold`, `idle_wait`, the `cold_json` and `idle_json` blocks, `run_measured`'s sampler and series), `lab/series.sh` (`sampler_start/stop`, `series_build`, `series_print`). `@b47adcf`
+- `lab/macro/sampler.php`, `lab/macro/series-lib.php` (`wal_frames`, `wal_header_frames`, `proc_stat_faults`, `telemetry_parse`, `series_merge`), `lab/macro/series.php`, `lab/macro/fincore.php`. `@b47adcf`
+- `lab/servers/diy-telemetry.php` (`DiyTelemetry`, `nextBoundary`), `lab/servers/diy-server.php` (the optional telemetry), `lab/app/app.php` (`app_count`, `app_telemetry_*`), `lab/app/server.php`. `@b47adcf`
+- `lab/lib.sh` -> `lab_start_app` (`LAB_COLD`, the `fincore:` line), `lab_fincore_line`; `lab/conns/client.php` (hold mode); `lab/macro.sh` (`--fresh-db`, `--cold`, `--per-second`). `@b47adcf`
+- `lab/check/fixtures/idle-timeout-app.php` (a select-loop server that closes connections idle for 2 s). README sections "Idle connections, the per-second series, telemetry and a cold start" and "The challenge app on `macro.sh`". `@b47adcf`
+
 ## Questions for the project manager
 
 - Nothing blocking. To settle before the measuring scope: k6 costs about 300 us of CPU per request with the CSV stream on (it falls with the rate), so 20,000 req/s takes about 5 to 6 of the 8 CPUs that k6 and the aggregator share. I did not measure above 2,000 req/s. If it does not fit on a quiet VM, the options are fewer tags per CSV row (k6's `systemTags`), or a lower top rate for the staircase; the cap and the scale ignore k6's CPU today.
+
+- **From scope 3, nothing blocking.** Two for the measuring scope: (1) the aggregator's lag peaked at 3.9 s of the 4 s gate at 18,000 req/s (2.4 to 3.3 s in the other runs): a measurement at the top steps may come out INVALID on the lag, and a gate of 6 s or fewer CSV rows per request (k6's `systemTags`) are the options, not tried. (2) The deviations from the brief: native byte order for `mxFrame`, `mincore` through FFI instead of util-linux's `fincore`, a closed idle connection is exit 3.
 
 ## Retro
 
@@ -145,3 +207,13 @@
 - **Deterministic:** `shellcheck` caught two unused variables (`LAB_INI`, a loop counter) that I would otherwise have read as fine: the local shellcheck run before `lab/check.sh` saved a 10 minute suite round trip. The hard-coded floor of 45 in `check_aggregate_cases` has the same fragility scope 1 noted (it needs an edit per case).
 - **Plan should have decided:** whether `s` in `--staircase` is the plateau or the step; whether a failing step is exit 0 or non-zero; whether the first scale measured (0.02858) must keep k6's CPU, not only its memory and the fds, under its budget.
 - **Blind spot:** nothing measures k6's own CPU as a limit of the realistic mode: the calibration prints it but the cap and the scale ignore it (impression, from 297 us per request at 2,000 req/s).
+
+### Scope 3
+
+- **Missing:** two facts in the brief were wrong or unavailable: `fincore` (util-linux) is in no lab image (`which fincore` empty in `php-lab:8.5` and the tools image; Ubuntu 24.04 ships it in `util-linux-extra`), and the `mxFrame` byte order (the brief says big-endian, the `-shm` file is native; the WAL test with file-size arithmetic showed it). I found both by running the thing, not in the reading.
+- **Guessed:** that a closed idle connection is exit 3 with the JSON kept (the brief says "fails the run"), and that 512 MiB is a fair reserve for the idle client (257 MiB measured, no confirmation).
+- **Lost time:** about 20 minutes on `fopen('/proc/<pid>/root/...')` returning "No such file" while `stat` and `head` worked (PHP resolves the magic link, `realpath` showed `/tmp/feed.db-shm` of the probe); about 15 minutes on one telemetry second missing from the runs, found only by summing the telemetry per row against the aggregator's (the timer fired early, two lines shared a second); about 10 minutes of blocked standalone `sleep`s, solved with `until` loops.
+- **Useless or contradictory instruction:** the brief says "see every case fail first"; the harness checks (bash around 4 containers) could only be written after their first run, the pure libraries (aggregator, series, telemetry line) did get a red step (stated in "Verified").
+- **Deterministic:** `shellcheck` run from `lab/` passed while the check's own run (from the repo root, pinned image) failed on 8 SC2034 (a variable read only in `lib.sh` or `series.sh`, which it does not follow from there): `bash lab/check.sh check_shellcheck` is the reference and takes 10 s, but the brief and `common.md` tell developers to run the local one. Branch it where the brief says "run it locally": the same invocation as `check_shellcheck` (from the repo root, `-w`), e.g. a `lab/shellcheck.sh` that the check and the developers both call. Also the hard-coded floors in `check.sh` (60 and 55 ok cases) need an edit per case again (impression, same as scopes 1 and 2).
+- **Plan should have decided:** exit 3 or exit 1 for a closed idle connection; what to do when the aggregator's lag nears its gate at the top steps (3.9 s of 4 s at 18,000 req/s), since a scope 5 measurement would turn INVALID there.
+- **Blind spot:** the cost of the telemetry itself and of the sampler is only argued (two `hrtime`, one timer, one fork a second on CPUs 0-1), nobody has measured it yet; and the aggregator's lag at high rates is read once a second in a status file nobody plots (it is in `results.aggregator.max_lag_s` only).

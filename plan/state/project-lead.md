@@ -32,6 +32,7 @@ Skill defaults (`autonomous-run/pipeline.yml`), no run override file. Changes fr
 | plan-reviewer | a480e25853b51eccf | full NOT_OK 11:09; delta NOT_OK 11:14; delta 2 + final full OK 11:17 |
 | 1     | afe8ff70047c6f1a9 | done `64af809`, pushed 11:38 (tools image built locally: no pull allowed; handler gets a 4th arg) |
 | 2     | a075911b200113f1b | done `47e4728`, pushed 12:31 (k6 ~300 µs CPU/req with the stream → D45) |
+| 3     | a1365daa1d690ecf0 | done `b47adcf` 13:12 (60k idle + 5,377 VUs, 19,565 req/s smoke; idle client 257 MiB; lag up to 3.9 s → D46) |
 
 ## Verified
 
@@ -52,6 +53,12 @@ Skill defaults (`autonomous-run/pipeline.yml`), no run override file. Changes fr
 ## Dead ends
 
 Rien.
+
+## Note for scope 5's README
+
+- The predictions were written (10:57, revised 11:12) before any measurement, but scope 3's smoke runs (busy VM,
+  13:00) already showed the skeleton passing 17,816 req/s with 60,000 idle: the README must say the predictions predate
+  these smoke runs and were not revised after them.
 
 ## Decisions on the way
 

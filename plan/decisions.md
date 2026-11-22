@@ -167,6 +167,14 @@
   measured up to 2,000 req/s): 20,000 req/s could need 5 to 6 CPUs. If the baseline's top steps cross the line, k6
   sends fewer tags per CSV row (`systemTags`) before the top rate is lowered (project manager, phase 4, 2026-11-22,
   scope 2's question).
+- **D46:** two settings for the baseline, from scope 3's smoke runs (busy VM, not measurements): the skeleton passed
+  every step up to 17,816 req/s with 60,000 idle connections, and 19,565 req/s at the VU cap, so its knee may sit above
+  the 20,000 req/s that D39's scale reaches. **The scale:** if the staircase reaches the cap with no failing step, `s`
+  is lowered (more req/s per VU, same VUs) until it fails, within D45's line; if k6 hits D45 before the server fails,
+  the baseline is reported as "at least" that rate, and a second load generator becomes a question for Jacob. **The lag
+  gate:** k6's CSV flush lags 2.4 to 3.9 s at 18,000 req/s (the replay reads 480,000 rows/s in 1 s, so the reader isn't
+  the cause), so D44's gate is the lag calibrated at the top rate plus 2 s: 6 s. A lag that keeps growing is what the
+  gate is for, not a steady one (project manager, phase 4, 2026-11-22, scope 3's questions).
 
 ## History
 

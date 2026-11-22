@@ -3,10 +3,10 @@
 **Pace:** 🟢 full · 5-hour 3 % · weekly 23 % at 10:52 · 5-hour resets 15:19 · away
 
 **Status:** 🔵 Running
-**Progress:** step 1/7, scope 3 running since 12:33 · started 2026-11-22 10:50
-**Since your last read:** scope 2 done (`47e4728`, pushed): the realistic mode runs the bench's journey; calibration gives k6 0.3 MiB per VU, a cap of 5,400 VUs (fds) and a think scale of 0.0286. Scope 1 done (`64af809`): the skeleton passes the challenge's 42 tests. Plan review OK at 11:17 (D38 to D44). Phase 4 planned in [details/phase-4.md](details/phase-4.md): 5 scopes, predictions written
-before any measurement. Q7 and Q10 recorded (D26, D28), D27 to D43 added. D40 corrects the users per req/s: 9.45 on a steady load, not the leaderboard's 10.8 (its rate includes the ramps), so 7,000 req/s is about 66,000 users. Phase 3's run archived in
-[runs/phase-3/](runs/phase-3/run.md).
+**Progress:** step 1/7, scope 4 running since 13:22 · started 2026-11-22 10:50
+**Since your last read:** scope 3 done (`b47adcf`, pushed): 60,000 idle connections held for a whole run, per-second
+series, cold starts. A smoke on the busy VM already passed 17,816 req/s with 60,000 idle, so the knee may sit above the
+lab's 20,000 req/s: D46 says how the baseline reaches it. Scopes 1 and 2 done (`64af809`, `47e4728`).
 **👉 Your turn:** nothing new. The Docker VM restarted at 11:18 and the 23 other containers came back (restart policy `always`): scope 5 needs them stopped again (D15); scopes 1 to 4 go on.
 
 ## Steps
@@ -14,7 +14,7 @@ before any measurement. Q7 and Q10 recorded (D26, D28), D27 to D43 added. D40 co
 | #   | Step              | State   | Start | End | Detail |
 |-----|-------------------|---------|-------|-----|--------|
 | 0   | Plan review       | done    | 10:59 | 11:17 |     | full NOT_OK at 11:10 (1 🔴, 5 🟠), settled as D38 to D43; delta NOT_OK at 11:14 (1 🟠), settled as D44; delta 2 and final full OK at 11:17 |
-| 1   | Scopes            | running | 11:19 |     | 2/6    |
+| 1   | Scopes            | running | 11:19 |     | 3/6    |
 | 2   | Questions         | to do   |       |     |        |
 | 3   | Lab suite         | to do   |       |     |        |
 | 4   | `pr-reviewer`     | to do   |       |     |        |
@@ -27,8 +27,8 @@ before any measurement. Q7 and Q10 recorded (D26, D28), D27 to D43 added. D40 co
 |-----|-------|-------|-----|-------|--------|-----|-------|
 | 1   | done | 11:19 | 11:37 | +1060 -156 | 42/42 twice, broken fixture fails, check.sh 35/35 (PM rerun) | `64af809` |       |
 | 2   | done | 11:40 | 12:28 | +8059 -3 | staircase 3/3 pass, slow fixture stops on the 97 % rule, cap 5,400 VUs, s = 0.0286, replay at 480k rows/s, check.sh 44/44 (PM rerun) | `47e4728` |       |
-| 3   | running | 12:33 |     |       |        |     |       |
-| 4   | to do |       |     |       |        |     |       |
+| 3   | done | 12:33 | 13:12 | +1632 -80 | 60,000 idle held start to end with 5,377 VUs (19,565 req/s, smoke), cold `fincore` 0 % vs 100 %, macro `--fresh-db --cold --per-second`, check.sh 53/53 (PM rerun) | `b47adcf` |       |
+| 4   | running | 13:22 |     |       |        |     |       |
 | 5   | to do |       |     |       |        |     |       |
 | 6   | to do |       |     |       |        |     |       |
 
