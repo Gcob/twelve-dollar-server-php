@@ -1,0 +1,22 @@
+warm-up: 10s at 7000 req/s
+measured run: 30s at 7000 req/s
+
+image 8.5 (PHP 8.5.13), bake-workerman.php, k6 v1.8.3 (commit/58bbfd8e48, go1.26.4, linux/arm64)
+requested 7000 req/s for 30s (warm-up 10s), target http://127.0.0.1:18080/posts/1
+  requests                     209507
+  achieved req/s               6983.19
+  CPU us / request             41.64
+  latency ms p50 / p95 / p99   0.22 / 2.94 / 22.93
+  latency ms max               149.89
+  error rate                   0.00%
+  dropped iterations           494
+  VUs running at once (max)    257 (of 700 max)
+  connections open (max of 3)  700 (k6 pre-allocated 700 VUs)
+  peak RSS, cgroup memory.peak 496.15 MiB (counts page cache)
+  peak RSS, VmHWM              260.32 MiB
+  memory under load (max of 3) Pss 135.55 MiB (with the mapped database), Pss_Anon 10.22 MiB, cgroup memory.current 264.22 MiB
+  socket settings (server's boot line) backlog=4096 tcp_nodelay=1
+  server CPU over the window   28.69 % of one CPU (30.41 s window, idle 0 us/s, throttled 4798 us)
+  k6 CPU over the window       148.39 % of one CPU (k6 is pinned to 8 CPUs)
+INVALID: 494 dropped iterations: k6 had no free VU to start them (700 VUs absorb a stall of 100 ms at 7000 req/s; latency max was 149 ms)
+wrote lab/results/2026-11-21-bake-off/run-2-workerman-stock-posts-7000.json

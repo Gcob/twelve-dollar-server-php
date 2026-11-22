@@ -1,0 +1,551 @@
+{
+  "date": "2026-11-22T03:24:33Z",
+  "command": "lab/macro.sh --image 8.5 --server lab/servers/bake-workerman.php --ext pcntl --ext sockets --ext event --env WORKERMAN_TREE=nocache --label workerman-nocache --path /posts/1 --script lab/macro/k6/posts.js --rate 9500 --pre-vus 1900 --max-vus 1900 --duration 30 --warmup 10 --out lab/results/2026-11-21-bake-off/run-2-workerman-nocache-posts-9500.json",
+  "label": "workerman-nocache",
+  "other_containers": {
+    "count": 0,
+    "names": []
+  },
+  "valid": true,
+  "invalid_reasons": [],
+  "host": {
+    "docker_desktop": "Docker Desktop 4.76.0 (228118)",
+    "engine": "29.5.2",
+    "vm_kernel": "6.12.76-linuxkit",
+    "arch": "arm64",
+    "cpuset_server": "2",
+    "cpuset_k6": "4-11",
+    "cpuset_probe": "0-1",
+    "limits": "--cpus=1 --memory=2g --memory-swap=2g --ulimit nofile=65535:65535"
+  },
+  "server": {
+    "variant": "8.5",
+    "image_id": "sha256:a26d560527d715e977560151d208365dcf0ab6b99ba9aa4bab89d1ff9ec388eb",
+    "php_version": "8.5.13",
+    "swoole_version": "",
+    "file": "servers/bake-workerman.php",
+    "port": 18080,
+    "php_flags": "-d extension=pcntl -d extension=sockets -d extension=event -d memory_limit=-1 -d opcache.enable_cli=1 -d opcache.jit=tracing -d opcache.jit_buffer_size=32M -d opcache.file_update_protection=0 -d zend.assertions=-1",
+    "ini": {
+      "opcache.enable_cli": "1",
+      "opcache.jit": "tracing",
+      "opcache.jit_buffer_size": "32M",
+      "opcache.file_update_protection": "0",
+      "zend.assertions": "-1",
+      "memory_limit": "-1",
+      "jit_on": true
+    },
+    "ext": [
+      "pcntl",
+      "sockets",
+      "event"
+    ],
+    "env": [
+      "WORKERMAN_TREE=nocache"
+    ],
+    "socket": {
+      "backlog": 4096,
+      "tcp_nodelay": 1
+    }
+  },
+  "k6": {
+    "image": "grafana/k6:1.8.3@sha256:2cd9cd09e4119340a122aaf06f30cf3009c19db23b87954909fba0d3eda58e08",
+    "version": "k6 v1.8.3 (commit/58bbfd8e48, go1.26.4, linux/arm64)",
+    "script": "macro/k6/posts.js",
+    "target_url": "http://127.0.0.1:18080/posts/1",
+    "rate": 9500,
+    "duration_s": 30,
+    "warmup_s": 10,
+    "pre_allocated_vus": 1900,
+    "max_vus": 1900
+  },
+  "results": {
+    "requests": 285002,
+    "requested_req_per_s": 9500,
+    "achieved_req_per_s": 9490.152330782785,
+    "server_cpu_usec": 8379512,
+    "cpu_usec_per_request": 29.40159016427955,
+    "latency_ms": {
+      "avg": 0.40329079006813473,
+      "min": 0.0245,
+      "p50": 0.137375,
+      "p90": 0.385791,
+      "p95": 0.597208,
+      "p99": 6.044824259999998,
+      "max": 72.970583
+    },
+    "error_rate": 0,
+    "dropped_iterations": 0,
+    "vus_used": 23,
+    "connections_open": 1900,
+    "connections_samples": {
+      "q1": 1900,
+      "q2": 1900,
+      "q3": 1900
+    },
+    "window_s": 30.653629,
+    "server_cpu_percent_of_one_cpu": 27.336117364766178,
+    "server_throttled_usec": 0,
+    "server_idle_usec_per_s": 0,
+    "k6_cpu_percent_of_one_cpu": 153.53176291133425,
+    "memory": {
+      "cgroup_memory_peak_mib": 496.5,
+      "cgroup_memory_current_mib": 262.2,
+      "vmhwm_mib": 260.33,
+      "note": "memory.peak counts page cache, VmHWM does not; both cover the whole life of the server, warm-up included",
+      "under_load": {
+        "samples": {
+          "q1": {
+            "pss_kb": 141066,
+            "pss_anon_kb": 12756,
+            "cgroup_current": 283164672
+          },
+          "q2": {
+            "pss_kb": 141064,
+            "pss_anon_kb": 12756,
+            "cgroup_current": 283410432
+          },
+          "q3": {
+            "pss_kb": 141130,
+            "pss_anon_kb": 12756,
+            "cgroup_current": 282636288
+          }
+        },
+        "max_pss_mib": 137.82,
+        "max_pss_anon_mib": 12.46,
+        "max_cgroup_current_mib": 270.28,
+        "note": "read at 1/4, 1/2 and 3/4 of the measured run; Pss and Pss_Anon are sums over the server processes (/proc/<pid>/smaps_rollup), a shared page split between the processes that map it. Pss includes the mapped SQLite database pages (they grow with the rows the requests touched); Pss_Anon does not: compare runtimes on Pss_Anon and cgroup memory.current"
+      }
+    }
+  },
+  "raw": {
+    "cpu_stat_before": {
+      "time": {
+        "us": 1795317842378183
+      },
+      "server": {
+        "usage_usec": 3132021,
+        "user_usec": 1550044,
+        "system_usec": 1581976,
+        "nice_usec": 0,
+        "nr_periods": 110,
+        "nr_throttled": 0,
+        "throttled_usec": 0,
+        "nr_bursts": 0,
+        "burst_usec": 0
+      },
+      "k6": {
+        "usage_usec": 16297094,
+        "user_usec": 13765971,
+        "system_usec": 2531122,
+        "nice_usec": 0,
+        "nr_periods": 0,
+        "nr_throttled": 0,
+        "throttled_usec": 0,
+        "nr_bursts": 0,
+        "burst_usec": 0
+      }
+    },
+    "cpu_stat_after": {
+      "time": {
+        "us": 1795317873031812
+      },
+      "server": {
+        "usage_usec": 11511533,
+        "user_usec": 6470453,
+        "system_usec": 5041080,
+        "nice_usec": 0,
+        "nr_periods": 414,
+        "nr_throttled": 0,
+        "throttled_usec": 0,
+        "nr_bursts": 0,
+        "burst_usec": 0
+      },
+      "k6": {
+        "usage_usec": 63360151,
+        "user_usec": 53629798,
+        "system_usec": 9730353,
+        "nice_usec": 0,
+        "nr_periods": 0,
+        "nr_throttled": 0,
+        "throttled_usec": 0,
+        "nr_bursts": 0,
+        "burst_usec": 0
+      }
+    },
+    "cpu_stat_idle_before": {
+      "time": {
+        "us": 1795317840129826
+      },
+      "server": {
+        "usage_usec": 3132021,
+        "user_usec": 1550044,
+        "system_usec": 1581976,
+        "nice_usec": 0,
+        "nr_periods": 109,
+        "nr_throttled": 0,
+        "throttled_usec": 0,
+        "nr_bursts": 0,
+        "burst_usec": 0
+      },
+      "k6": {
+        "usage_usec": 16297094,
+        "user_usec": 13765971,
+        "system_usec": 2531122,
+        "nice_usec": 0,
+        "nr_periods": 0,
+        "nr_throttled": 0,
+        "throttled_usec": 0,
+        "nr_bursts": 0,
+        "burst_usec": 0
+      }
+    },
+    "cpu_stat_idle_after": {
+      "time": {
+        "us": 1795317842243900
+      },
+      "server": {
+        "usage_usec": 3132021,
+        "user_usec": 1550044,
+        "system_usec": 1581976,
+        "nice_usec": 0,
+        "nr_periods": 110,
+        "nr_throttled": 0,
+        "throttled_usec": 0,
+        "nr_bursts": 0,
+        "burst_usec": 0
+      },
+      "k6": {
+        "usage_usec": 16297094,
+        "user_usec": 13765971,
+        "system_usec": 2531122,
+        "nice_usec": 0,
+        "nr_periods": 0,
+        "nr_throttled": 0,
+        "throttled_usec": 0,
+        "nr_bursts": 0,
+        "burst_usec": 0
+      }
+    },
+    "memory": {
+      "memory": {
+        "peak": 520617984,
+        "current": 274931712,
+        "max": 2147483648
+      },
+      "memory_stat": {
+        "anon": 13062144,
+        "file": 253550592,
+        "kernel": 8273920,
+        "kernel_stack": 32768,
+        "pagetables": 499712,
+        "sec_pagetables": 0,
+        "percpu": 952,
+        "sock": 0,
+        "vmalloc": 8192,
+        "shmem": 3665920,
+        "zswap": 0,
+        "zswapped": 0,
+        "file_mapped": 117035008,
+        "file_dirty": 0,
+        "file_writeback": 0,
+        "swapcached": 0,
+        "anon_thp": 4194304,
+        "file_thp": 0,
+        "shmem_thp": 0,
+        "inactive_anon": 0,
+        "active_anon": 16773120,
+        "inactive_file": 249884672,
+        "active_file": 0,
+        "unevictable": 0,
+        "slab_reclaimable": 7563744,
+        "slab_unreclaimable": 141784,
+        "slab": 7705528,
+        "workingset_refault_anon": 0,
+        "workingset_refault_file": 0,
+        "workingset_activate_anon": 0,
+        "workingset_activate_file": 0,
+        "workingset_restore_anon": 0,
+        "workingset_restore_file": 0,
+        "workingset_nodereclaim": 0,
+        "pgdemote_kswapd": 0,
+        "pgdemote_direct": 0,
+        "pgdemote_khugepaged": 0,
+        "pgscan": 0,
+        "pgsteal": 0,
+        "pgscan_kswapd": 0,
+        "pgscan_direct": 0,
+        "pgscan_khugepaged": 0,
+        "pgsteal_kswapd": 0,
+        "pgsteal_direct": 0,
+        "pgsteal_khugepaged": 0,
+        "pgfault": 12086,
+        "pgmajfault": 1,
+        "pgrefill": 0,
+        "pgactivate": 0,
+        "pgdeactivate": 0,
+        "pglazyfree": 0,
+        "pglazyfreed": 0,
+        "swpin_zero": 0,
+        "swpout_zero": 0,
+        "zswpin": 0,
+        "zswpout": 0,
+        "zswpwb": 0,
+        "thp_fault_alloc": 9,
+        "thp_collapse_alloc": 0,
+        "thp_swpout": 0,
+        "thp_swpout_fallback": 0
+      },
+      "vmhwm_kb": {
+        "27120": 266580,
+        "27171": 134588
+      }
+    },
+    "k6_summary_measured": {
+      "metrics": {
+        "http_req_blocked": {
+          "p(95)": 0.005709,
+          "p(99)": 0.018208,
+          "max": 37.8765,
+          "avg": 0.014858187984637521,
+          "min": 0.000458,
+          "med": 0.001666,
+          "p(90)": 0.004
+        },
+        "vus_max": {
+          "max": 1900,
+          "value": 1900,
+          "min": 1900
+        },
+        "http_req_receiving": {
+          "p(90)": 0.047083,
+          "p(95)": 0.057167,
+          "p(99)": 0.11854058999999989,
+          "max": 54.806458,
+          "avg": 0.0216571703145943,
+          "min": 0.002292,
+          "med": 0.0075
+        },
+        "data_sent": {
+          "count": 23596343,
+          "rate": 785723.923058084
+        },
+        "http_reqs": {
+          "count": 285002,
+          "rate": 9490.152330782785
+        },
+        "iteration_duration": {
+          "med": 0.182834,
+          "p(90)": 0.4510789000000003,
+          "p(95)": 0.698375,
+          "p(99)": 7.013197329999997,
+          "max": 73.808333,
+          "avg": 0.4715647525385858,
+          "min": 0.047375
+        },
+        "http_req_duration": {
+          "p(95)": 0.597208,
+          "p(99)": 6.044824259999998,
+          "max": 72.970583,
+          "avg": 0.40329079006813473,
+          "min": 0.0245,
+          "med": 0.137375,
+          "p(90)": 0.385791
+        },
+        "http_req_connecting": {
+          "p(99)": 0,
+          "max": 37.85325,
+          "avg": 0.006827750061403081,
+          "min": 0,
+          "med": 0,
+          "p(90)": 0,
+          "p(95)": 0
+        },
+        "http_req_tls_handshaking": {
+          "avg": 0,
+          "min": 0,
+          "med": 0,
+          "p(90)": 0,
+          "p(95)": 0,
+          "p(99)": 0,
+          "max": 0
+        },
+        "http_req_failed": {
+          "passes": 0,
+          "fails": 285002,
+          "value": 0
+        },
+        "http_req_duration{expected_response:true}": {
+          "avg": 0.40329079006813473,
+          "min": 0.0245,
+          "med": 0.137375,
+          "p(90)": 0.385791,
+          "p(95)": 0.597208,
+          "p(99)": 6.044824259999998,
+          "max": 72.970583
+        },
+        "http_req_sending": {
+          "avg": 0.08124402806997771,
+          "min": 0.001125,
+          "med": 0.003792,
+          "p(90)": 0.014042,
+          "p(95)": 0.055622949999999484,
+          "p(99)": 0.4714949999999987,
+          "max": 59.343791
+        },
+        "http_req_waiting": {
+          "p(90)": 0.3434959000000003,
+          "p(95)": 0.506041,
+          "p(99)": 4.432062329999995,
+          "max": 35.3825,
+          "avg": 0.30038959168357365,
+          "min": 0.018125,
+          "med": 0.112833
+        },
+        "iterations": {
+          "count": 285002,
+          "rate": 9490.152330782785
+        },
+        "data_received": {
+          "count": 97252136,
+          "rate": 3238354.766401655
+        },
+        "vus": {
+          "value": 23,
+          "min": 0,
+          "max": 23
+        }
+      },
+      "root_group": {
+        "path": "",
+        "id": "d41d8cd98f00b204e9800998ecf8427e",
+        "groups": {},
+        "checks": {},
+        "name": ""
+      }
+    },
+    "k6_summary_warmup": {
+      "metrics": {
+        "http_req_duration": {
+          "p(99)": 6.880073249999999,
+          "max": 38.846958,
+          "avg": 0.3729924950739918,
+          "min": 0.027125,
+          "med": 0.1415415,
+          "p(90)": 0.39825,
+          "p(95)": 0.6488122499999996
+        },
+        "http_req_tls_handshaking": {
+          "p(90)": 0,
+          "p(95)": 0,
+          "p(99)": 0,
+          "max": 0,
+          "avg": 0,
+          "min": 0,
+          "med": 0
+        },
+        "http_req_sending": {
+          "avg": 0.07902456983768948,
+          "min": 0.001042,
+          "med": 0.003709,
+          "p(90)": 0.022666500000000003,
+          "p(95)": 0.080667,
+          "p(99)": 1.6750701999999964,
+          "max": 29.205125
+        },
+        "vus": {
+          "value": 0,
+          "min": 0,
+          "max": 12
+        },
+        "http_req_receiving": {
+          "max": 28.123417,
+          "avg": 0.017316507904764408,
+          "min": 0.002125,
+          "med": 0.007292,
+          "p(90)": 0.045333,
+          "p(95)": 0.05673974999999983,
+          "p(99)": 0.119333
+        },
+        "http_req_failed": {
+          "passes": 0,
+          "fails": 95006,
+          "value": 0
+        },
+        "http_req_duration{expected_response:true}": {
+          "p(90)": 0.39825,
+          "p(95)": 0.6488122499999996,
+          "p(99)": 6.880073249999999,
+          "max": 38.846958,
+          "avg": 0.3729924950739918,
+          "min": 0.027125,
+          "med": 0.1415415
+        },
+        "iteration_duration": {
+          "p(99)": 10.208261849999985,
+          "max": 64.646583,
+          "avg": 0.5365101479801088,
+          "min": 0.045333,
+          "med": 0.1871045,
+          "p(90)": 0.4658545000000001,
+          "p(95)": 0.7750527499999994
+        },
+        "data_sent": {
+          "count": 7865888,
+          "rate": 786358.8192192905
+        },
+        "http_reqs": {
+          "count": 95006,
+          "rate": 9497.82223936419
+        },
+        "iterations": {
+          "count": 95006,
+          "rate": 9497.82223936419
+        },
+        "vus_max": {
+          "value": 1900,
+          "min": 1900,
+          "max": 1900
+        },
+        "http_req_blocked": {
+          "min": 0.000583,
+          "med": 0.001709,
+          "p(90)": 0.004083,
+          "p(95)": 0.006655749999999827,
+          "p(99)": 1.6439541499999972,
+          "max": 56.211333,
+          "avg": 0.12048455654380064
+        },
+        "http_req_waiting": {
+          "p(99)": 4.708054149999996,
+          "max": 18.54175,
+          "avg": 0.27665141733153426,
+          "min": 0.020959,
+          "med": 0.117542,
+          "p(90)": 0.3491460000000001,
+          "p(95)": 0.5266357499999994
+        },
+        "data_received": {
+          "count": 32406174,
+          "rate": 3239669.916741107
+        },
+        "http_req_connecting": {
+          "max": 28.749667,
+          "avg": 0.05115944164579087,
+          "min": 0,
+          "med": 0,
+          "p(90)": 0,
+          "p(95)": 0,
+          "p(99)": 0.9436898999999962
+        }
+      },
+      "root_group": {
+        "name": "",
+        "path": "",
+        "id": "d41d8cd98f00b204e9800998ecf8427e",
+        "groups": {},
+        "checks": {}
+      }
+    }
+  }
+}

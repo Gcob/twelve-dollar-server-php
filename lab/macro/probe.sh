@@ -5,7 +5,10 @@
 #
 #   probe.sh cpu <server container id> <k6 container id>     time (us) and cpu.stat of both cgroups
 #   probe.sh memory <server container id>                    memory.* of the server's cgroup and VmHWM of its processes
+#   probe.sh memory-now <server container id>               Pss and Pss_Anon (kB, summed over the server's processes) and memory.current now
 #   probe.sh connections <port>                              established connections whose local port is <port> (server side)
+#   probe.sh memory-events <server container id>             memory.events of the server's cgroup (oom_kill, max, ...)
+#   probe.sh fresh-request <port> <path>                     one request from 127.0.0.1 with a 1 s limit: `fresh http_code <n>`, `fresh ms <n>`
 #   probe.sh port-open <port>                                exit 0 if something accepts connections on 127.0.0.1:<port>
 #   probe.sh http-answers <port> <path>                      exit 0 if 127.0.0.1:<port><path> answers any HTTP status
 set -euo pipefail
@@ -36,12 +39,40 @@ case "${1:-}" in
       [ -z "$hwm" ] || echo "vmhwm_kb $pid $hwm"
     done
     ;;
+  memory-now)
+    # Why Pss: it splits a shared page between the processes that map it, so the sum is what the server costs, where VmHWM counts
+    # the shared libraries in full and memory.peak counts page cache. Read while the server works, it is the memory under load.
+    # Why also Pss_Anon: Pss counts the file pages a process maps, and the handler maps the SQLite database (mmap_size), so Pss
+    # grows with the rows the requests touched. Pss_Anon (heap and stacks, no file pages) is what separates one runtime from
+    # another; compare runtimes on it and on memory.current.
+    s="$(cgroup_dir "$2")"
+    total=0
+    anon=0
+    for pid in $(cat "$s/cgroup.procs"); do
+      read -r pss pss_anon < <(awk '/^Pss:/ {p=$2} /^Pss_Anon:/ {a=$2} END {print p+0, a+0}' "/proc/$pid/smaps_rollup" 2>/dev/null || echo "0 0")
+      total=$(( total + ${pss:-0} ))
+      anon=$(( anon + ${pss_anon:-0} ))
+    done
+    echo "memory_now pss_kb $total"
+    echo "memory_now pss_anon_kb $anon"
+    echo "memory_now cgroup_current $(cat "$s/memory.current")"
+    ;;
   connections)
     # Why: the host network namespace is shared (--network host), so /proc/net/tcp lists the server's sockets. Column 2 is
     # the local address (`0100007F:4650`), column 4 the state (01 = ESTABLISHED).
     hex="$(printf '%04X' "$2")"
     n="$(awk -v p=":$hex" '$4 == "01" && substr($2, index($2, ":")) == p' /proc/net/tcp /proc/net/tcp6 2>/dev/null | wc -l)"
     echo "connections established $(( n ))"
+    ;;
+  memory-events)
+    sed 's/^/memory_events /' "$(cgroup_dir "$2")/memory.events"
+    ;;
+  fresh-request)
+    # Why a new curl each time: a new connection, so a server at its limit shows as a request that does not answer.
+    out="$(curl -s -o /dev/null --max-time 1 -w '%{http_code} %{time_total}' "http://127.0.0.1:$2$3" || true)"
+    read -r code seconds <<<"${out:-000 0}"
+    echo "fresh http_code $code"
+    echo "fresh ms $(awk -v s="${seconds:-0}" 'BEGIN { printf "%.1f", s * 1000 }')"
     ;;
   port-open)
     (exec 3<>"/dev/tcp/127.0.0.1/$2") 2>/dev/null
@@ -51,7 +82,7 @@ case "${1:-}" in
     [ -n "$code" ] && [ "$code" != 000 ]
     ;;
   *)
-    echo "usage: probe.sh cpu|memory|connections|port-open|http-answers ..." >&2
+    echo "usage: probe.sh cpu|memory|memory-now|connections|memory-events|fresh-request|port-open|http-answers ..." >&2
     exit 2
     ;;
 esac

@@ -4,7 +4,12 @@
 set -uo pipefail
 # Why: loading a swoole.so that does not exist prints a startup warning; a build without Swoole just reports "not built".
 swoole_args=()
-if [ -f "$(php -r 'echo ini_get("extension_dir");')/swoole.so" ]; then swoole_args=(-d extension=swoole); fi
+ext_dir="$(php -r 'echo ini_get("extension_dir");')"
+if [ -f "$ext_dir/swoole.so" ]; then swoole_args=(-d extension=swoole); fi
+# The same for the extensions the event-loop runtimes load. Order matters: event depends on sockets, so sockets comes first.
+for ext in pcntl sockets event; do
+  if [ -f "$ext_dir/$ext.so" ]; then swoole_args+=(-d "extension=$ext"); fi
+done
 # Why: the JIT only starts with opcache enabled in the CLI, so the probe turns it on like the server will.
 exec php -d display_errors=0 "${swoole_args[@]}" \
   -d opcache.enable_cli=1 -d opcache.jit=tracing -d opcache.jit_buffer_size=32M -r '
@@ -21,5 +26,23 @@ $status = function_exists("opcache_get_status") ? opcache_get_status(false) : fa
 echo "jit: ", ($status["jit"]["on"] ?? false) ? "available" : "missing", "\n";
 foreach (["pdo_sqlite", "mbstring", "sodium", "ffi", "ctype", "iconv"] as $ext) {
     echo "$ext: ", extension_loaded($ext) ? "present" : "missing", "\n";
+}
+// Workerman is read from each tree with its own autoloader, in a child process (both trees declare the same classes).
+echo "pcntl: ", extension_loaded("pcntl") ? "present" : "missing", "\n";
+echo "sockets: ", extension_loaded("sockets") ? "present" : "missing", "\n";
+echo "event: ", extension_loaded("event") ? phpversion("event") : (file_exists(ini_get("extension_dir") . "/event.so") ? "missing" : "not built"), "\n";
+$versions = [];
+foreach (["stock", "nocache"] as $tree) {
+    $autoload = "/opt/workerman/$tree/autoload.php";
+    $versions[$tree] = is_file($autoload)
+        ? trim((string)shell_exec(PHP_BINARY . " -d display_errors=0 -r " . escapeshellarg("require \"$autoload\"; echo \\Workerman\\Worker::VERSION;")))
+        : "";
+}
+if ($versions["stock"] !== "" && $versions["stock"] === $versions["nocache"]) {
+    echo "workerman: ", $versions["stock"], " (stock, nocache)\n";
+} elseif ($versions["stock"] === "" && $versions["nocache"] === "") {
+    echo "workerman: not built\n";
+} else {
+    echo "workerman: stock ", $versions["stock"] ?: "missing", ", nocache ", $versions["nocache"] ?: "missing", "\n";
 }
 '

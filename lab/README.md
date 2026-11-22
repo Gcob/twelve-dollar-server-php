@@ -54,7 +54,58 @@ An unknown variant exits non-zero and lists the known ones. `lab/run.sh` runs a 
 no swap, 65535 file descriptors, on the host network, pinned to CPU 2; `lab/` is mounted at `/lab` (read-only, except
 `lab/results/` and `lab/data/`). The CPU layout and the limits live in `lab/lib.sh`, shared by every lab script.
 `php-info` prints the PHP, Swoole and SQLite versions, OPcache and JIT, and which extensions are present (`swoole:
-not built` when the image has no Swoole).
+not built` when the image has no Swoole), then `pcntl`, `sockets`, `event` (its version, or `not built`) and the Workerman
+version of its two trees (`workerman: 5.2.4 (stock, nocache)`).
+
+### Extensions and Workerman
+
+The last layer of `Dockerfile.src` (`images/install-extras.sh`, about 12 to 14 s to build) comes after PHP and Swoole, so a
+change to it, or to `php-info`, reuses those two layers (a `php-info` change rebuilds in under a second). It adds, on every
+source image (8.3 to 8.6; `8.3-apt` is left as it was, nothing in the lab runs Workerman or the hand-written server on it):
+
+| What | Version | Built from |
+| --- | --- | --- |
+| `pcntl`, `sockets` | the image's PHP | shared extensions, `phpize` on **the php.net tarball and sha256 the image's PHP was built from**, `CFLAGS=-O2` |
+| `event` (PECL) | 3.2.0 | shared extension, `phpize`, against Ubuntu's `libevent-dev`, with `sockets` support; no OpenSSL, no pthreads |
+| Workerman | 5.2.4 | the GitHub tag tarball, with `workerman/coroutine` 1.1.7 (the release its `composer.json` accepts) |
+
+Every download is pinned by sha256 in the script, and the build stops on a mismatch. None of the three extensions is enabled
+globally: a server loads them with `-d extension=...` (`--ext` of `macro.sh`, `conformance.sh` and `conns.sh`), **in this
+order**, because `event` declares `sockets` as a dependency and PHP refuses to load it first:
+
+```bash
+php -d extension=pcntl -d extension=sockets -d extension=event server.php
+```
+
+`event` builds on PHP 8.6 as well (the switch `WITH_EVENT` in `lab_source_release` stays, in case a later PHP breaks it).
+Workerman needs `pcntl` and `posix` to start (`posix` is built in), and runs on ext-event because its fallback, the `select()`
+loop, is capped at 1,024 descriptors.
+
+**Two Workerman trees**, so a run can show what its request caches buy:
+
+- `/opt/workerman/stock`: Workerman as released.
+- `/opt/workerman/nocache`: the same tree with `images/workerman-nocache.patch` applied. The 5 request caches are
+  function-local `static` variables: `static $requests` in `TcpConnection::baseRead()`, and `static $cache` in `Http::input()`
+  and in `Request::parseHeaders()`, `parseGet()` and `parsePost()`. The patch deletes them and their lookups; the code
+  computes what it would have cached, every time, and nothing else changes. **The build fails** if the patch does not apply
+  without fuzz, if the stock tree does not hold exactly those 5 statics, or if one is left in the patched tree.
+
+Each tree has `<tree>/autoload.php`, a small PSR-4 autoloader with no Composer (`require '/opt/workerman/stock/autoload.php';`).
+It follows the two `composer.json` files: `Workerman\Coroutine\` is the coroutine package's `src/`, and `Workerman\` is
+looked up in Workerman's `src/`, then in the coroutine package's `src/`. A server file picks its tree and requires that file.
+Both trees declare the same classes, so one PHP process can load only one of them.
+
+`bash lab/run.sh 8.5 php /lab/servers/workerman-caches.php` proves the patch: a child process per tree pushes the same
+request (a query string and a form body) through Workerman's HTTP protocol twice, over a socket pair, then reads the 5
+statics with `ReflectionMethod::getStaticVariables()`. It prints `filled` or `empty` per cache and tree, and exits 0 only
+if all 5 are filled on `stock` and all 5 empty on `nocache`.
+
+A trap: Workerman ignores a request's `Connection: close` (it answers `Connection: keep-alive` and keeps the connection open),
+so a client that reads until the server closes (PHP's `file_get_contents('http://...')`) waits for its own timeout (PHP's
+`default_socket_timeout`, 60 s). Checked with a raw socket that sent `Connection: close` and waited 100 s: the answer came at
+once, then nothing, and the client's timeout ended the wait, with no close from the server. Close from the handler
+(`$connection->close($response)`) when a client needs it. `servers/bake-workerman.php` does not need it: the harnesses' clients
+keep their connections open and never read until the server closes.
 
 ## Micro benchmarks
 
@@ -189,7 +240,11 @@ rate), and reports what a request costs the server. Needs `jq` on the Mac. Optio
 rate, not measured), `--script <k6 js under lab/>` (default `lab/macro/k6/fixed-rate.js`), `--out <path>`,
 `--port` (default 18080), `--path` (the URL path, default `/`), `--pre-vus` / `--max-vus` (default both `rate / 10`, at
 least 50: see "VUs and connections"),
-`--php-ini key=value` (added after the server's PHP flags, repeatable).
+`--php-ini key=value` (added after the server's PHP flags, repeatable), `--ext <name>` (a PHP extension to load with
+`-d extension=<name>`, repeatable, default `swoole`; giving one replaces the default), `--env K=V` (passed to the server
+container with `-e`, repeatable) and `--label <text>` (letters, digits, `.`, `_`, `-`; goes in the JSON and in the default
+file name after the server's name: `macro-<server>-<label>-<image>-...`). The JSON records `server.ext`, `server.env` and `label`;
+Swoole's version is probed only when `swoole` is among the extensions.
 
 `lab/servers/noop-swoole.php` is the floor: a Swoole HTTP server with the settings of the `php-swoole-mattsplat` entry
 (`SWOOLE_BASE`, one worker, no coroutine, POST/cookie/file parsing and compression off) that answers `200 {"status":"ok"}`
@@ -203,6 +258,134 @@ The other Swoole entry, tzimpel's, is configured differently, and the lab does n
 JIT buffer, `memory_limit=512M`, `opcache.validate_timestamps=0`, `zend.assertions=-1`) and sets `reactor_num`,
 `open_tcp_nodelay`, `backlog` 8192 and `package_max_length`. The code adapted from mattsplat's entry is credited in
 `lab/NOTICE.md`.
+
+### Bake-off servers, the handler and the conformance test
+
+The runtime bake-off compares runtimes (Swoole, Workerman, ext-event, a hand-written loop) serving the same two routes:
+`GET /noop` (the runtime alone) and `GET /posts/:id` (the runtime plus one indexed read).
+
+- **`lab/servers/handler.php`** is the one handler every runtime calls, so that runtimes differ by what they do around it. It
+  holds no runtime code: `handler_handle($method, $path, $body)` returns `[status, body]`, `handler_boot()` copies the seed and
+  opens it (`handler_copy_db()` and `handler_open_db()` are the two halves, for a runtime that forks workers: copy once before
+  the fork, open in each worker). The routes and the error bodies are the challenge's (`{"error":"not found"}` for an unknown
+  path or method, `invalid post id` with a 400 when `:id` is not a positive integer, `post not found` with a 404). The post query
+  is the spec's with `WHERE p.id = ?`, prepared once at boot, with the pragmas of the `php-swoole-mattsplat` entry.
+  **The database is a copy:** `lab/data/feed.db` is in WAL mode, so opening it would leave `-wal` and `-shm` files in `lab/data/`.
+  The server containers mount `lab/data` read-only, and the first boot copies the seed (250 MB, a few seconds, before the server
+  listens) to `/tmp/feed.db` inside the container. Side effect: `memory.peak` of a server that reads the database includes
+  about 250 MB of page cache from that copy (about 500 MiB against 12 MiB for the no-op server). The handler also maps the database (`mmap_size` 256 MiB), so a server's
+  `Pss` includes the database pages its requests touched: compare runtimes on `Pss_Anon` and `memory.current` (see "Memory under
+  load" below), not on `Pss`.
+- **`lab/servers/bake-swoole.php`** is the Swoole server on that handler: the settings of `noop-swoole.php` plus
+  `open_tcp_nodelay`, `Content-Type: application/json`, the status the handler gives. Every bake-off server uses a listen
+  backlog of 4,096 and TCP_NODELAY on. At boot it prints `socket: backlog=4096 tcp_nodelay=1`: the settings it asked for,
+  as the images' Swoole is not built with sockets support and cannot read them back. `macro.sh`, `conns.sh` and
+  `conformance.sh` copy that line into their output, and `macro.sh` and `conns.sh` into the JSON (`server.socket`). The three
+  bake-off servers print the same two keys, `backlog` and `tcp_nodelay`.
+- **`lab/servers/bake-workerman.php`** is the Workerman 5.2.4 server on that handler: one HTTP `Worker` (`count = 1`) on the
+  Event loop, `Worker::$eventLoopClass` set to it explicitly. It reads `WORKERMAN_TREE`: `nocache` (the default, Workerman with
+  its 5 request caches patched out) or `stock` (as released); any other value exits 1 with a message. It also exits 1 when
+  `event` is not loaded, instead of letting Workerman fall back to `select()`. `onMessage` sends a `Response` object (status,
+  `Content-Type: application/json`, the handler's body), the way Workerman's documentation does it: a plain string would always
+  answer 200 `text/html`. Listen backlog 4,096 (the `backlog` socket context option); Workerman sets `TCP_NODELAY` itself on
+  the listening socket when `sockets` is loaded. At boot the worker prints the tree, the loop class and
+  `socket: backlog=4096 tcp_nodelay=1`, where `tcp_nodelay` is read back from the listening socket (`socket_get_option` on
+  `socket_import_stream`) and the backlog is what was asked (the kernel does not give it back). Run it on each tree:
+
+  ```bash
+  bash lab/conformance.sh --image 8.5 --server lab/servers/bake-workerman.php --ext pcntl --ext sockets --ext event --env WORKERMAN_TREE=nocache
+  bash lab/macro.sh --image 8.5 --server lab/servers/bake-workerman.php --ext pcntl --ext sockets --ext event \
+    --env WORKERMAN_TREE=stock --label stock --rate 7000 --duration 20 --path /posts/1 --script lab/macro/k6/posts.js
+  ```
+
+  The extensions go in that order (`sockets` before `event`, which depends on it); `--label` puts the tree in the result's file
+  name and JSON. **Two processes run in the container's cgroup:** Workerman's master (`WorkerMan: master process`, it only
+  supervises) and its one worker. The CPU reading is the cgroup's, so it covers both; Pss and VmHWM are summed over every
+  process of the cgroup; `conns.sh` reads memory the same way. The pid, status and log files are in `/tmp` (`/lab` is
+  read-only), and the copy of the seed is made by the master before it forks, the SQLite handle opened by the worker.
+- **`lab/servers/bake-diy.php`** is our own server on that handler: one process, our own event loop on ext-event and our own
+  HTTP/1.1 parser, only what the challenge's routes need. Run it with `--ext sockets --ext event` (that order):
+
+  ```bash
+  bash lab/conformance.sh --image 8.5 --server lab/servers/bake-diy.php --ext sockets --ext event
+  bash lab/macro.sh --image 8.5 --server lab/servers/bake-diy.php --ext sockets --ext event --label diy --rate 7000 \
+    --duration 20 --path /posts/1 --script lab/macro/k6/posts.js
+  ```
+
+  - **The loop** (`bake-diy.php`): one `EventBase` (`epoll`); one persistent read event on the listening socket, which accepts
+    until `accept()` has nothing left, so a burst of connections is taken in one callback; one persistent read event per
+    connection; a write event only while a connection holds bytes the socket did not take. A connection's state is one small
+    object (`DiyPeer`: its parser object and its two events) allocated at accept. A request
+    allocates only its own strings (head, request line, method, target, body), the array `explode()` makes of its header lines,
+    and its response. ext-event is used because PHP's `stream_select` is capped at 1,024 descriptors.
+  - **The listening socket:** `stream_socket_server` with `backlog` 4,096 and `so_reuseport` off (one process), non-blocking;
+    `TCP_NODELAY` is set on it with `socket_import_stream` and `socket_set_option`. At boot the server prints
+    `socket: backlog=4096 tcp_nodelay=1` like the other two (the backlog is what was asked: the kernel does not give it back,
+    `tcp_nodelay` is read back). **Accepted sockets inherit `TCP_NODELAY` from the listening socket on Linux**: the server
+    reads it once from the first accepted socket and prints `accepted socket: tcp_nodelay=1` (the images show `1`).
+  - **The parser** (`diy-connection.php`, class `DiyConnection`, which knows nothing about the loop and works on any
+    non-blocking stream): on each read it appends to the connection's buffer, then, while the buffer holds a whole request,
+    finds `\r\n\r\n`, reads the request line (method, target, `HTTP/1.1` or `HTTP/1.0`), reads `Content-Length`, `Connection` and
+    `Transfer-Encoding` (names compared without case) and waits for the whole body. It calls the handler with the method, the
+    target (the handler cuts a `?query`) and the body, and appends the response to the write buffer. The answer is
+    `HTTP/1.1 <status> <reason>`, `Content-Type: application/json`, `Content-Length`, nothing else.
+  - **What it refuses with `400 {"error":"bad request"}` and a close:** a request line that does not have a method, a target and
+    `HTTP/1.1` or `HTTP/1.0`; a header line without a name and a colon; a block of request line and headers over 8 KiB (checked
+    before the blank line arrives too, so a client that never ends its headers is cut at 8 KiB); a `Content-Length` that is not
+    plain digits, appears twice, or is over 1 MiB (a bound on one connection's memory; the challenge's bodies are tiny);
+    `Transfer-Encoding` of any kind (k6 never sends a chunked body). **What it does not read:** `Authorization` (a later phase),
+    other headers (a line only has to have a name and a colon), absolute-form targets (the handler answers 404), lines ended by a
+    bare `\n`.
+  - **Keep-alive:** on by default on `HTTP/1.1`. `Connection: close` closes the connection after its response is fully written,
+    and what the client sent after that request is not answered; so does `HTTP/1.0` without `Connection: keep-alive`. An
+    `HTTP/1.0` client that asks for keep-alive keeps the connection open but the answer carries no `Connection` header, so
+    most such clients close on their own.
+  - **Writes:** `fwrite` as much as the socket takes; the rest stays in the connection's write buffer and a write event waits for
+    the socket. While the buffer holds 1 MiB or more, the connection stops reading **and stops answering requests it already
+    received** (they stay in its read buffer) until the buffer drops under the limit: a client that never reads cannot make the
+    server's memory grow past 1 MiB plus one response. A client that closes, or a write that fails, frees the connection's
+    events and its stream at once, with the bytes it did not take. At the descriptor limit `accept()` fails and the listening event
+    fires again at once: shedding there is for a later phase.
+  - **Two tests, run by `lab/check.sh`:** `lab/check/diy-parser-test.php` feeds `DiyConnection` through a socket pair and compares
+    the responses with literal expected bytes: a request complete, **cut at every byte position** (two pieces), two requests
+    pipelined (also cut everywhere), a body split from its headers, the `Connection` and `HTTP/1.0` rules, every kind of 400 above
+    and a client that leaves. `lab/check/diy-partial-write-test.php` uses a socket pair whose client end does not read: on a Linux
+    pair the kernel takes 212,992 bytes, so a 640,075-byte response is written in part, the rest waits in the buffer, and the bytes
+    then arrive whole and in order; with two 2 MB responses and a third request queued behind them, reading pauses and the third
+    request is answered only after the buffer drains. (End to end on loopback the buffers grow to megabytes, so that path would
+    never run.) Run one by hand with `bash lab/run.sh 8.5 php /lab/check/diy-parser-test.php`.
+- **`lab/conformance.sh`** proves that a server speaks HTTP/1.1 correctly with that handler:
+
+  ```bash
+  bash lab/conformance.sh --image 8.5 --server lab/servers/bake-swoole.php [--ext <name>]... [--env K=V]... [--port 18090]
+  ```
+
+  It starts the server like `macro.sh` does (`lab_start_server` in `lib.sh`) and runs `lab/conformance/client.php`, which
+  uses raw sockets (no curl), in a second container on the same host network. One line per case, `ok    <case>` or
+  `FAIL  <case>: <why>`, exit 1 if one fails; both containers are removed whatever happens. The cases: `noop` (200, the exact
+  body, `Content-Type: application/json`); `post 1` (the same JSON values, with the same types and key order, as `sqlite3`
+  gives on the Mac for post 1 with the same query); `errors` (the 404 and 400 bodies, `/posts/1/like`, `/posts/`);
+  `keep-alive` (two requests on one connection); `pipelining` (three requests in one write, answered in order);
+  `split request` (cut in the middle of the headers, 50 ms apart); `body then reuse` (a `POST /nope` with a body, then a
+  `GET /noop` on the same connection); `response bytes` (prints the exact bytes of the `/noop` response: each runtime keeps
+  its own headers). It ends with the event loop the server printed at boot (`loop: ...`, when it prints one: Workerman, DIY) and
+  its socket line.
+- **`lab/macro/k6/posts.js`** is `fixed-rate.js` for `GET /posts/<id>`: the id is the iteration number times 999,983 (a prime),
+  modulo 500,000, plus 1, so the sequence over the seed's post ids is the same on every run and uses no random number. It
+  takes the scheme, host and port of `--path`'s URL, so `--path /posts/1` makes the readiness check read the database too.
+
+```bash
+bash lab/macro.sh --image 8.5 --server lab/servers/bake-swoole.php --rate 7000 --duration 20 --path /posts/1 \
+  --script lab/macro/k6/posts.js
+```
+
+### Quiet VM
+
+A measurement next to other work is not comparable with one on a quiet VM. Just before the measured run, `macro.sh` lists the
+running containers that are not its own three (whoever started them, another checkout's lab run included) and writes them in
+the JSON (`other_containers`: `count` and `names`). Above 0, it prints `WARNING: N other containers running (...)` when it
+reads them and again before the verdict. The run completes and its validity does not change: a smoke run is not a measurement,
+and whether the VM is quiet enough is for whoever reads the results to judge. `macro.sh` and `conns.sh` do the same; `micro.sh` does not.
 
 ### Layout
 
@@ -235,6 +418,15 @@ The k6 image is pinned by tag **and** digest in `lib.sh` (`LAB_K6_IMAGE`; the 1.
 - **Connections open** = the established connections to the server's port, counted from the probe in `/proc/net/tcp` at 1/4, 1/2
   and 3/4 of the measured run (the table shows the largest, the JSON keeps the three). **VUs running at once** = the maximum
   of k6's `vus` gauge: how many iterations were in flight together, which is not the number of connections (see below).
+- **Memory under load, `Pss_Anon` and `Pss`.** The probe reads the sums of `Pss_Anon` and of `Pss` from
+  `/proc/<pid>/smaps_rollup` over the server's processes, and the cgroup's `memory.current`, at 1/4, 1/2 and 3/4 of the measured
+  run (the JSON keeps the three in `results.memory.under_load`, with `max_pss_anon_mib` and `max_pss_mib`; the table shows the
+  largest of each). **Compare runtimes on `Pss_Anon` (heap and stacks, no file pages) and on `memory.current`, not on `Pss`:**
+  `Pss` counts the file pages a process maps, and the handler maps the SQLite database (`mmap_size`), so `Pss` grows with the
+  rows the requests touched (the same server read 74 MiB on `/noop` and 182 MiB on `/posts/<id>`): it depends on the request
+  count and the ids, not on the runtime. `Pss` is kept as "including the mapped database". Both split a page that several
+  processes share between them, where `VmHWM` counts shared libraries and mapped files in full and `memory.peak` counts page
+  cache, so a runtime that forks workers is comparable with one that does not.
 - **Peak RSS**, two numbers, because they differ: the server cgroup's `memory.peak` (counts page cache charged to the
   cgroup) and the highest `VmHWM` of the processes in the cgroup (`/proc/<pid>/status`, counts the pages the process maps,
   shared libraries included). Both cover the whole life of the server, warm-up included. In trial runs `VmHWM` was about
@@ -307,6 +499,75 @@ full summaries of the measured run and the warm-up. Numbers from another machine
 - k6 1.x is pinned, but the `--summary-export` format is read by key (`http_reqs.count`, `http_req_duration.med`,
   `vus.max`, `dropped_iterations.count`, which k6 leaves out when it is 0): re-check them when the pin moves.
 - Do not start an image build or another benchmark during a measured run: they share the VM's CPUs and its memory bus.
+
+## Connection test
+
+`lab/conns.sh` measures how many idle keep-alive connections one server process holds, and what each one costs in memory:
+
+```bash
+bash lab/conns.sh --image 8.5 --server lab/servers/bake-swoole.php [--ext <name>]... [--env K=V]... [--label <text>] \
+  [--steps 1000,5000,...] [--max <n>] [--server-nofile <n>] [--port 18100] [--out <path>]
+```
+
+The default steps are 1000, 5000, 10000, 20000, 30000, 40000, 50000, 60000, 65000 and 66000; `--max` drops the steps above
+it. The server starts like `macro.sh` and `conformance.sh` start theirs (`lab_start_server`: 1 CPU, 2 GiB, `nofile` 65535). Two
+more containers join it: the probe of `macro.sh` (`lab/macro/probe.sh`, from outside the server's cgroup) and a client
+(`lab/conns/client.php` in a php-lab container on the load CPUs, `nofile` 200000, no CPU or memory limit).
+
+- **The client opens connections one at a time.** For each one it connects (blocking), writes `GET /noop HTTP/1.1` with a `Host`
+  header, reads the whole answer (status 200, body `{"status":"ok"}`) and keeps the socket open. One at a time means the
+  accept queue never fills, so a connection that gets no answer is the server's limit and not a burst the kernel dropped. The
+  client stays alive between steps, and `lab/conns.sh` drives it through a FIFO (`step <total>`, `quit`) and reads its answers
+  as JSON lines from a file.
+- **Source addresses rotate over 127.x.** One client address has only as many ephemeral ports as `ip_local_port_range` gives
+  (10,536 on the lab's VM at the time of writing, 28,232 with Linux's default of 32768-60999; the client reads the file and
+  keeps 500 ports in reserve), so the client binds each connection to `127.0.0.N:0` (`socket.bindto`) and moves to another
+  address before the ports run out. The next address is one that is the local address of no socket at all: a run right after
+  another one skips the addresses whose `TIME_WAIT` sockets (the client closes first, so they sit on its side, for 60 s) are
+  still there, and never fails on `bind`. `127.0.0.1` stays for the probe's fresh request. No `sysctl` is changed: the Docker
+  VM is shared. If every address from 127.0.0.2 to 127.0.0.254 is taken, the client waits up to 70 s, then fails.
+- **What is read at each step,** after the client opened its connections and swept them (non-blocking reads: an EOF or a reset
+  means the server closed one), and 1 s later: the summed `Pss` and `Pss_Anon` of the server's processes, the cgroup's `memory.current` and
+  `memory.events` (`oom_kill`), the established connections to the server port in `/proc/net/tcp`, and a fresh request from
+  `127.0.0.1`, which must answer within 1 s. The `/proc/net/tcp` count is a cross-check of the client's count, not what max
+  connections is made of.
+- **The baseline** is read before the first step, after one `GET /noop` on one connection (then closed), so the first-request
+  allocations are in it.
+- **Max connections** is what the client got an answer on and still holds at the last fully held step. The table also gives the
+  exact count held when the run stopped (the failing step's, after the sweep).
+- **The ceiling** is the first step where one of these happens, and the output names it: `connect timeout` or `request timeout`
+  (2 s), `connection reset`, `connection closed by the server (EOF)` (on the connection being opened) or `held connection closed
+  by the server (EOF)` (found by the sweep), `connection refused`, `bad answer`, `fresh request failed`, `server OOM-killed`,
+  `server died (exit code N)`. Linux does not refuse a SYN because of a full accept queue or a server out of fds: it completes
+  the handshake, then the request times out or resets. A server out of fds (`--server-nofile 256`) shows as `request timeout`.
+  Reaching `--max` (or the last step) is the other way a run ends: `no ceiling: ...`. Both are results, exit 0.
+- **A client-side error is a harness failure** (exit 1), never a ceiling: a `bind` that fails, `EMFILE` in the client, no free
+  port, no free source address, a client that exits or prints something that is not an event.
+- **Memory per connection** is the least-squares slope of the summed `Pss` against the connections held, and the same for
+  `Pss_Anon` (the figure to compare runtimes on) and `memory.current`, over the held steps (KiB per connection; `n/a` below two held steps). It is a slope over the steps, not a
+  per-connection constant: in one run on a busy VM (not a result) Swoole went from about 69 KiB per connection between 1,000
+  and 10,000 connections to about 5 KiB between 20,000 and 65,000, so the slope depends on the steps it covers. Read the table
+  too.
+- **`--server-nofile N`** sets the server container's `nofile` (a test hook, recorded in the JSON as `server.nofile`).
+  `lab/conns.sh` reads the limit back from `/proc/<pid>/limits`.
+- **Output:** a table (one row per step: target, held, Pss, `Pss_Anon`, `memory.current`, `/proc/net/tcp` count, fresh request in ms, `ok`
+  or the reason), then max connections, why it stopped, the three slopes, the baseline (`Pss`, `Pss_Anon`, `memory.current`), the server's socket line, the number of other
+  containers (with the same warning as `macro.sh`) and the versions. The JSON (`lab/results/conns-<server>[-<label>]-<image>-
+  <UTC date and time>.json`) holds every reading (`steps[]` with the client's event and the probe's reading), the exact command,
+  `results.ceiling` and `results.memory_per_connection`. The three containers (`lab-conns-server`, `-client`, `-probe`) are
+  removed at the end whatever happens, and the run refuses to start when one of them exists.
+
+### Traps of the connection test
+
+- **The ephemeral port range of the VM is not Linux's default** (55000-65535 here): never hard-code 28,232.
+- **`json_encode` returns `false` for a byte that is not UTF-8**, which printed a blank line as an event: the client's `emit`
+  substitutes invalid bytes. A PHP fatal error goes to stderr (`display_errors=stderr`), not into the events file.
+- **A `stream_socket_client` that fails on `EMFILE` gives errno 0 and an empty message.** That is why a connect error with no
+  known errno is a harness failure with the client's `nofile` in the message.
+- **PHP's read buffer would hold 8 KiB per connection in the client** (500 MiB for 65,000 sockets): `stream_set_read_buffer($fp,
+  0)`.
+- **Swoole at its fd limit accepts nothing more but still completes the handshake,** so the client's connect succeeds and the
+  request times out: 65,522 connections answered with `nofile` 65535 (the server keeps about 13 fds for itself).
 
 ## Checks
 

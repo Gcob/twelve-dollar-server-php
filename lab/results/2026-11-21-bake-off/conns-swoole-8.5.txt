@@ -1,0 +1,35 @@
+conns: the baseline is read, steps: 1000 5000 10000 20000 30000 40000 50000 60000 65000 66000
+conns: step 1000: held 1000
+conns: step 5000: held 5000
+conns: step 10000: held 10000
+conns: step 20000: held 20000
+conns: step 30000: held 30000
+conns: step 40000: held 40000
+conns: step 50000: held 50000
+conns: step 60000: held 60000
+conns: step 65000: held 65000
+conns: step 66000: held 65522, stopped: request timeout
+
+image 8.5 (PHP 8.5.13, Swoole 6.2.6), bake-swoole.php, server nofile 65535
+    target     held    Pss MiB  Pss_Anon MiB  mem.cur MiB  /proc tcp  fresh ms  status
+      1000     1000      89.43         76.03       328.06       1000       0.4  ok
+      5000     5000     358.42        344.96       612.07       5000       0.4  ok
+     10000    10000     696.99        683.46       969.42      10000       0.6  ok
+     20000    20000     945.69           932      1255.66      20000       8.1  ok
+     30000    30000     996.29        982.45      1343.66      30000       0.3  ok
+     40000    40000    1046.54       1032.55      1431.59      40000       0.3  ok
+     50000    50000    1101.53       1087.39      1523.99      50000       0.3  ok
+     60000    60000    1149.92       1135.62      1609.77      60000       0.2  ok
+     65000    65000     1174.1       1159.73      1652.66      65000       0.3  ok
+     66000    65522     1178.5       1164.13      1659.01      65522    1011.2  request timeout
+
+  max connections (held, answered)       65000 (at step 65000)
+  held when it stopped                   65522
+  stopped because                        request timeout
+  memory per connection, Pss             14.29 KiB (slope over 9 held steps)
+  memory per connection, Pss_Anon        14.28 KiB (slope over 9 held steps)
+  memory per connection, memory.current  18.13 KiB (slope over 9 held steps)
+  baseline (one request, no connection)  Pss 22.47 MiB, Pss_Anon 9.28 MiB, memory.current 257.54 MiB
+  socket settings (server's boot line)   backlog=4096 tcp_nodelay=1
+  other containers on the VM             0
+wrote lab/results/2026-11-21-bake-off/conns-swoole-8.5.json
