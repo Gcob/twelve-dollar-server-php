@@ -11,6 +11,9 @@
 #   probe.sh fresh-request <port> <path>                     one request from 127.0.0.1 with a 1 s limit: `fresh http_code <n>`, `fresh ms <n>`
 #   probe.sh port-open <port>                                exit 0 if something accepts connections on 127.0.0.1:<port>
 #   probe.sh http-answers <port> <path>                      exit 0 if 127.0.0.1:<port><path> answers any HTTP status
+#   probe.sh poll <server id> <k6 id> <status file>          k6's memory, the server's memory now, the aggregator's status line
+#   probe.sh fds <server container id>                       open file descriptors of the server's processes (`fds open <n>`)
+#   probe.sh client-ips <port>                               established connections to <port> by the client's address (`clients <ip> <n>`)
 set -euo pipefail
 
 CG=/sys/fs/cgroup/docker
@@ -81,8 +84,35 @@ case "${1:-}" in
     code="$(curl -s -o /dev/null --max-time 2 -w '%{http_code}' "http://127.0.0.1:$2$3" || true)"
     [ -n "$code" ] && [ "$code" != 000 ]
     ;;
+  poll)
+    # One call a second during lab/realistic.sh: k6's memory (current, peak, OOM kills), the server's memory now (as memory-now), and
+    # the aggregator's status file (written in the volume the probe shares with it), as the last line.
+    k="$(cgroup_dir "$3")"
+    echo "k6 memory_current $(cat "$k/memory.current")"
+    echo "k6 memory_peak $(cat "$k/memory.peak")"
+    echo "k6 oom_kill $(awk '$1 == "oom_kill" {print $2}' "$k/memory.events")"
+    bash "$0" memory-now "$2" | sed 's/^memory_now /server /'
+    echo "status $(cat "$4" 2>/dev/null || echo '{}')"
+    ;;
+  fds)
+    s="$(cgroup_dir "$2")"
+    n=0
+    for pid in $(cat "$s/cgroup.procs"); do
+      n=$(( n + $(ls "/proc/$pid/fd" 2>/dev/null | wc -l) ))
+    done
+    echo "fds open $n"
+    ;;
+  client-ips)
+    # Why: the clients of a server on the host network are in /proc/net/tcp, column 3 is the remote address (`0101007F:C350`, the IPv4
+    # address in little-endian hex).
+    hex="$(printf '%04X' "$2")"
+    awk -v p=":$hex" '$4 == "01" && substr($2, index($2, ":")) == p { split($3, a, ":"); n[a[1]]++ } END { for (h in n) print h, n[h] }' /proc/net/tcp |
+      while read -r h count; do
+        echo "clients $((16#${h:6:2})).$((16#${h:4:2})).$((16#${h:2:2})).$((16#${h:0:2})) $count"
+      done
+    ;;
   *)
-    echo "usage: probe.sh cpu|memory|memory-now|connections|memory-events|fresh-request|port-open|http-answers ..." >&2
+    echo "usage: probe.sh cpu|memory|memory-now|connections|memory-events|fresh-request|port-open|http-answers|poll|fds|client-ips ..." >&2
     exit 2
     ;;
 esac

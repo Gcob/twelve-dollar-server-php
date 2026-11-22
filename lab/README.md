@@ -539,6 +539,140 @@ variant of every step of a request, on purpose: later work measures the alternat
   here. No published image was used for the four tools: building them from the pinned Ubuntu is less to trust than a third-party
   image.
 
+## The realistic mode
+
+```bash
+bash lab/realistic.sh --image 8.5 --think-scale 0.03 --staircase 2000,2000,12000,60   # req/s: from, step, to, s per plateau
+bash lab/realistic.sh --image 8.5 --think-scale 0.03 --hold 10000,300                  # req/s, seconds of the plateau
+bash lab/realistic.sh --image 8.5 --think-scale 0.03 --calibrate                       # k6's memory per VU, the VU cap, the scale
+```
+
+Loads the challenge app (`lab/app/server.php`, started on a fresh copy of the seed) the way the challenge's bench does. k6 runs
+**the bench's own script**: `lab/macro/k6/realistic.js` is a copy of `reference/twelve-dollar-server-challenge/bench/load.js`
+(the loop: the feed, a post from it, 15 % like, 2 % new post, think time between; the tokens of `lab/data/tokens.json`; the
+`name` tags) with **two changes**, both named in its header: every `sleep(x)` is `sleep(x * THINK_SCALE)`, and `options` come
+from the environment (`REALISTIC_OPTIONS`, built by the harness). `check_realistic_script_is_the_benchs` in `lab/check.sh` diffs
+the copy against `load.js` and fails on any other change, an unscaled sleep included. The MIT credit is in `lab/NOTICE.md`.
+
+### The numbers of the journey
+
+- One loop is **2.17 requests** (1 feed + 1 post + 0.15 like + 0.02 new post) and **20.5 s of mean think time** (5 + 5.5 + 10).
+  One VU offers `2.17 / (20.5 * scale)` req/s; the harness turns a rate into VUs with `rate * 20.5 * scale / 2.17`, rounded up.
+- A steady load is **9.45 users per req/s** (20.5 / 2.17). **Users are always mapped from the achieved rate** (`users` in the
+  table is `9.45 * achieved`), never from the VUs and never with 10.8 (the leaderboard's 10.8 includes the bench's ramps).
+- With the think time scaled by `s`, a few thousand VUs make the rate of the bench's many more. The price: latency weighs
+  `1 / s` times more in a VU's loop (a request that takes 10 ms stretches a loop of 0.6 s by 3 %, not a loop of 20 s by 0.1 %).
+
+### A step passes, or fails with its reason
+
+A step is judged **on its plateau only**. It passes when **p95 < 500 ms, p99 < 1 s, errors < 1 % and achieved >= 97 % of offered**
+(offered = VUs times the per-VU rate; achieved = the requests of the plateau over its seconds). The 97 % rule is there because
+the bench's own thresholds are not enough once think time is scaled: a VU that waits longer for a response offers less load, so
+the latency thresholds alone pass loads far past saturation (at `s = 0.02`, 3.6 times the VUs of the knee). A failing step prints
+its reasons (`achieved below 97 % of offered` comes first when it is one) and **the staircase stops there**: the aggregator judges
+each step as it ends and the harness stops k6. A failing step is a result, not an error: the exit code stays 0.
+
+The pass rule spends 3 % of the offered rate, which is about `0.29 * s` seconds of mean latency per request (a request that
+takes longer than that makes the VU's loop long enough to fall under 97 %).
+
+### Layout and the live stream
+
+| Container            | What                                                                                           | CPUs   |
+|----------------------|------------------------------------------------------------------------------------------------|--------|
+| `lab-realistic-server` | `php-lab:<image>` running the app, 1 CPU, 2 GiB                                              | `2`    |
+| `lab-realistic-k6`   | the pinned k6, `--memory` at the budget below, `--local-ips` 127.0.1.1-4, CSV out to a FIFO    | `4-11` |
+| `lab-realistic-agg`  | `lab/macro/aggregate.php` (PHP): reads the FIFO, judges steps, reads the cgroups every second  | `4-11` |
+| `lab-realistic-probe`| memory and `/proc` from outside, the aggregator's status once a second                         | `0-1`  |
+
+A named volume (`lab-realistic-run`) holds the FIFO, the aggregator's status and its result: removed at the end, like the
+containers, whatever happens (a `trap`). **Nothing raw goes to disk**: k6's CSV (about 12 rows per request) goes into the FIFO and
+the aggregator keeps, per second and per endpoint (the `name` tag), a latency histogram with log buckets (1.5 % wide, a latency is
+read back within 0.75 %), the counts and the errors. A step's p95 and p99 are the merge of its seconds' histograms. It parses only
+the `http_req_duration` rows (one per request: latency, second, name, `expected_response`) and the `vus` rows; a duration row it
+cannot parse is counted (`unparsed`) and makes the run invalid. The request count is the number of duration rows, the same as
+k6's `http_reqs` (checked against k6's own summary in `check_realistic_staircase_passes`: the same count, p95 within 3 %).
+
+- **The plateau** comes from k6's `vus` gauge (a row each second): the seconds where it reads the step's VUs, without the first and
+  the last (the ramp may have ended, or the next one started, inside them). A step is judged once a sample of the next second
+  arrived.
+- **The server's CPU per request** is read by the aggregator from the server's `cpu.stat` on every whole second (the aggregator
+  has `--cgroupns host`, like the probe), so a window's CPU is the difference between two readings on the plateau's edges, scaled
+  by the time between them, over the requests of the same whole seconds. No `docker exec` sits on the measuring path.
+- **k6's ports:** k6 binds its own source addresses (`--local-ips 127.0.1.1-127.0.1.4`, recorded in the JSON as `k6.local_ips`, with
+  the addresses the server saw in `k6.client_ips_seen`): the next measurement holds 60,000 idle connections from a client that
+  `bind()`s its ports, and a port that is bound is skipped by any `connect()` that is not, so k6 on one address would run out.
+  k6 1.8.3 accepts loopback addresses.
+
+### The guard: lag and memory
+
+k6 does not slow down when its CSV reader falls behind: it buffers the samples in its own memory. So:
+
+- **The aggregator's lag** is the clock against the newest sample's second, written to the status every second. A run whose lag
+  passes the gate (`--lag-gate`, default 4 s) is **invalid** with that reason, and k6 is stopped. The lag at low load is about
+  1.0 to 1.8 s: the CSV's timestamps are whole seconds, k6 flushes every 250 ms (`K6_CSV_SAVE_INTERVAL`, the default is 1 s), and
+  the aggregator reads the clock on whole seconds. The gate is the lag measured in calibration plus 2 s.
+- **k6's memory** has a budget: the VM's memory minus 2 GiB (the server), 1 GiB (the client that will hold the idle connections:
+  an estimate until it is measured) and 1 GiB of margin, set as the container's `--memory` (`--k6-memory <MiB>` sets it by hand,
+  a test hook). A run whose k6 reaches 95 % of it, or is killed for it, is **invalid**.
+- **The replay case** (`check_replay_keeps_up`): `lab/macro/replay.php` feeds a recorded CSV (`lab/check/fixtures/k6-rows.csv`,
+  real k6 rows) to the aggregator at 480,000 rows a second (40,000 req/s at 12 rows a request) for 10 s. The aggregator reads
+  every row and request, none unparsed, with a lag of 1.0 s; the feeder was never more than 0.1 s late. At 1,500,000 rows a second
+  the lag stayed at 1.0 s too. The first reader keeps only two kinds of rows, as above; it did not need to be faster.
+
+### The calibration
+
+`--calibrate` runs 50 VUs for 60 s, then 300 VUs for 60 s (`--calibrate-vus`, `--calibrate-seconds`), each with the stream
+running, and prints k6's memory per VU (the difference between the two plateaus), the **VU cap** and the **scale**:
+
+- the cap is the smaller of `(the VM's memory - 4 GiB) / MiB per VU` and the server's free file descriptors
+  (65,535 - 60,000 idle connections - a margin for the server's own, **5,400**); a per-VU cost under the noise of two readings
+  bounds nothing;
+- the scale is the `s` that puts 20,000 req/s under the cap: `cap * 2.17 / (20,000 * 20.5)`, with the margin the 97 % rule leaves
+  (`0.29 * s` s of mean latency per request);
+- the harness **refuses more VUs than the cap** (`--vu-cap`, default 5,400): exit 2, before any container starts.
+
+Smoke runs on the Docker VM with 23 other projects' containers running (7,935 MiB, 12 vCPUs; not a measurement), the app on 8.5
+(the JSON files are in `lab/results/2026-11-22-realistic-calibration/`):
+
+| Run                          | VUs  | k6 memory | achieved / offered | k6 CPU                    | aggregator lag |
+|------------------------------|------|-----------|--------------------|---------------------------|----------------|
+| `--think-scale 0.03`, 60 s   | 50   | 72.1 MiB  | 0.995              | 13.3 % of a CPU, 759 us/req | 1.31 s         |
+|                              | 300  | 143.9 MiB | 0.995              | 41.0 %, 389 us/req        | 1.25 s         |
+| `--think-scale 0.1`, 30 s    | 300  | 138.9 MiB | 0.996              | 20.4 %, 646 us/req        | 1.21 s         |
+|                              | 2000 | 678.1 MiB | 0.998              | 62.8 %, 297 us/req        | 1.90 s         |
+
+- **k6 costs about 0.3 MiB per VU** (0.287 from 50 to 300, 0.317 from 300 to 2,000) **and 44 to 58 MiB at rest**: 5,400 VUs are
+  about 1.8 GiB, inside the 3.75 GiB budget. The memory cap is 12,100 to 13,400 VUs, so **the cap is the file descriptors: 5,400**.
+- **The scale is 0.02858** (`--think-scale 0.0285` to stay under it): 5,400 VUs offer 20,000 req/s, and the 97 % rule leaves 8.35 ms
+  of mean latency per request.
+- **At low load achieved / offered is 0.995 to 0.998:** k6's own loop overhead already takes 0.2 to 0.5 % of the 3 % margin.
+- **k6 costs 300 to 650 us of CPU per request** with the stream on (it falls as the rate rises: 759, 389, 297 us). At that scale
+  20,000 req/s is about 6 CPUs of k6 on the 8 it shares with the aggregator: read `k6_cpu_percent_of_one_cpu` on the high steps.
+- The gate to use is the largest lag plus 2 s: 3.3 to 3.9 s, so the default is 4 s.
+
+### Output and exit codes
+
+A table with one row per step (VUs, offered and achieved req/s, mapped users, CPU us per request, p95 and p99 overall, errors,
+`pass` or `FAIL: <reasons>`), a line per endpoint under it, and a JSON (`results/realistic-<mode>-<server>-<image>-<UTC>.json`):
+every step (window, requests, percentiles per endpoint, errors, CPU, k6's CPU), the think scale and the per-VU rate, the VU cap, k6's
+local IPs, its peak memory and CPU, the aggregator's max lag and the gate, the server's peak `Pss_Anon` and `memory.current`,
+`other_containers`, the exact command, the per-second table (`results.per_second`: requests, errors, p95, p99 and the server's CPU
+of each second), `results.run_total` and k6's own summary. Exit **0**: a valid run (a failing step included); **3**: printed but
+invalid (lag, k6's memory, unparsed rows); **2**: usage, or VUs above the cap; **1**: any other failure (the server died, k6 failed).
+`--warmup <rate>,<s>` runs the same journey first (not scored), `--ramp <s>` sets the ramp of each step (default a quarter of the
+plateau, 2 to 10 s), `--server`, `--ext` (default `sockets` and `event`), `--env` and `--label` are as in the other harnesses.
+
+### Traps
+
+- **The plateau is a few seconds shorter than the step**: the ramp is not scored, and the first and last second of the plateau are
+  left out. At 20 s plateaus a step has about 18 seconds of data.
+- **A new VU sleeps `between(0, 5) * s` before its first request** (the bench's own spread), so a ramp is not a step in rate:
+  the plateau starts after it.
+- **k6's CPU is what the stream costs too:** about 12 CSV rows a request. Read `k6.cpu_percent_of_one_cpu` and each step's
+  `k6_cpu_percent_of_one_cpu` before trusting a high step: k6 and the aggregator share CPUs 4 to 11.
+- **A run on the Docker VM next to other projects' containers is a smoke run:** `other_containers` and the `WARNING` line say
+  how many.
+
 ## Connection test
 
 `lab/conns.sh` measures how many idle keep-alive connections one server process holds, and what each one costs in memory:

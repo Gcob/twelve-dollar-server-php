@@ -30,8 +30,10 @@ ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEAL
 `lab/images/install-php83-apt.sh`, `lab/servers/noop-swoole.php`, `lab/servers/bake-swoole.php` and `lab/servers/handler.php`
 are adapted from the `php-swoole-mattsplat` entry (`install.sh`, the Swoole settings and the SQLite pragmas of `server.php`) of
 the challenge repository,
-<https://github.com/arjaythedev/twelve-dollar-server-challenge>. The challenge repository is under the MIT License; the entry
-has no license file of its own. The license text, as published there:
+<https://github.com/arjaythedev/twelve-dollar-server-challenge>. `lab/macro/k6/realistic.js` is a copy of the challenge's own load
+test, `bench/load.js`, at commit `162699aca4d8db710b7f0fa30729d4a626b90297`, with two changes (the think times scaled by an
+environment variable, and the k6 options read from the environment); `lab/check.sh` fails on any other difference. The challenge
+repository is under the MIT License; the entry has no license file of its own. The license text, as published there:
 
 ```text
 MIT License

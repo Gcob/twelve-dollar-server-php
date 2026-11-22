@@ -1,0 +1,554 @@
+#!/usr/bin/env bash
+# Loads the challenge app the way the challenge's bench does: k6 runs the bench's own journey (lab/macro/k6/realistic.js, a copy of
+# its bench/load.js: the feed, a post from it, 15 % like, 2 % new post, think time between) with the think times scaled down, so that
+# a few thousand VUs make the request rate the bench's many more make. A staircase of load steps or one hold, each step judged the
+# way the bench would (latency and errors) plus one rule the scaled think time needs: the achieved rate must reach 97 % of the offered.
+#
+#   bash lab/realistic.sh --image 8.5 --think-scale 0.1 --staircase 100,100,400,20     # req/s: from, step, to, seconds per plateau
+#   bash lab/realistic.sh --image 8.5 --think-scale 0.1 --hold 200,300                  # req/s, seconds of the plateau
+#   bash lab/realistic.sh --image 8.5 --think-scale 0.1 --calibrate                     # k6's memory per VU, the VU cap, the scale
+#                         [--server <php file under lab/>] [--ext <name>]... [--env K=V]... [--label <text>]
+#                         [--warmup <req/s>,<seconds>] [--vu-cap <n>] [--ramp <s>] [--out <path>] [--port <n>]
+#                         [--local-ips <range>] [--lag-gate <s>] [--k6-memory <MiB>] [--calibrate-vus <a>,<b>] [--calibrate-seconds <s>]
+#
+# The numbers of the journey: 2.17 requests per loop (1 + 1 + 0.15 + 0.02), 20.5 s of mean think time per loop (5 + 5.5 + 10), so one
+# VU offers 2.17 / (20.5 * scale) req/s, and a steady load is 9.45 users per req/s (20.5 / 2.17). Users are always mapped from the
+# achieved rate, never from the VUs.
+#
+# Containers (all on the host network of Docker's VM, removed at the end whatever happens), started on a fresh copy of the seed:
+#   server  php-lab:<image> running the app, 1 CPU, 2 GiB, the server CPU (lab/lib.sh);
+#   k6      the pinned k6 image on the k6 CPUs, with a memory limit (the budget of the cap), writes its CSV into a FIFO;
+#   agg     lab/macro/aggregate.php on the k6 CPUs: reads the FIFO, keeps per-second histograms, judges each step, reads the server's
+#           and k6's cgroups on every whole second;
+#   probe   on CPUs 0-1: reads memory and /proc from outside, and the aggregator's status file, once a second.
+# Exit codes: 0 a valid run (a failing step is a result, not an error), 3 printed but INVALID (the aggregator fell behind, k6 reached
+# its memory budget, a row could not be parsed), 2 usage (a VU count above the cap included), 1 any other failure.
+set -euo pipefail
+
+LAB="$(cd "$(dirname "$0")" && pwd)"
+REPO="$(dirname "$LAB")"
+# shellcheck source=lib.sh
+source "$LAB/lib.sh"
+
+SERVER=lab-realistic-server
+K6C=lab-realistic-k6
+PROBE=lab-realistic-probe
+AGG=lab-realistic-agg
+VOLUME=lab-realistic-run
+
+# The journey of lab/macro/k6/realistic.js (the bench's).
+LOOP_REQUESTS=2.17
+LOOP_THINK_S=20.5
+USERS_PER_RPS=9.45
+# What the idle connections of the next measurement leave of the server's file descriptors: 65,535 (the lab's nofile) minus 60,000 idle
+# connections minus a margin for the server's own descriptors (about 13 at boot).
+LAB_VU_CAP_FDS=5400
+# The pass rule of a step.
+LIMIT_P95_MS=500
+LIMIT_P99_MS=1000
+LIMIT_ERROR_RATE=0.01
+LIMIT_ACHIEVED_RATIO=0.97
+
+usage() {
+  cat >&2 <<'EOF'
+usage: lab/realistic.sh --image <variant> (--staircase <from>,<step>,<to>,<s> | --hold <rate>,<s> | --calibrate) [--think-scale <s>]
+                        [--server <php file under lab/>] [--ext <name>]... [--env K=V]... [--label <text>] [--warmup <rate>,<s>]
+                        [--vu-cap <n>] [--ramp <s>] [--out <path>] [--port <n>] [--local-ips <range>] [--lag-gate <s>] [--k6-memory <MiB>]
+                        [--calibrate-vus <a>,<b>] [--calibrate-seconds <s>]
+rates are in req/s, <s> is the seconds of one plateau; --think-scale is the share of the bench's think time (default 1)
+EOF
+  exit 2
+}
+fail() { echo "realistic: $*" >&2; exit 1; }
+
+command_line="lab/realistic.sh $*"
+command_line="${command_line//$REPO/.}"
+
+image=8.5 server_file="$LAB/app/server.php" label="" think_scale=1 warmup="" staircase="" hold="" calibrate="" vu_cap=""
+ramp="" out="" port=18120 local_ips="127.0.1.1-127.0.1.4" lag_gate=4 k6_memory="" calibrate_vus="50,300" calibrate_seconds=60
+LAB_EXT=() LAB_ENV=()
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = --calibrate ]; then calibrate=1; shift; continue; fi
+  [ "$#" -ge 2 ] || { echo "missing value for $1" >&2; usage; }
+  case "$1" in
+    --image) image="$2" ;;
+    --server) server_file="$2" ;;
+    --ext) LAB_EXT+=("$2") ;;
+    --env) LAB_ENV+=("$2") ;;
+    --label) label="$2" ;;
+    --think-scale) think_scale="$2" ;;
+    --warmup) warmup="$2" ;;
+    --staircase) staircase="$2" ;;
+    --hold) hold="$2" ;;
+    --vu-cap) vu_cap="$2" ;;
+    --ramp) ramp="$2" ;;
+    --out) out="$2" ;;
+    --port) port="$2" ;;
+    --local-ips) local_ips="$2" ;;
+    --lag-gate) lag_gate="$2" ;;
+    --k6-memory) k6_memory="$2" ;;
+    --calibrate-vus) calibrate_vus="$2" ;;
+    --calibrate-seconds) calibrate_seconds="$2" ;;
+    *) echo "unknown option: $1" >&2; usage ;;
+  esac
+  shift 2
+done
+
+modes=0
+for m in "$staircase" "$hold" "$calibrate"; do [ -z "$m" ] || modes=$(( modes + 1 )); done
+[ "$modes" -eq 1 ] || { echo "give exactly one of --staircase, --hold, --calibrate" >&2; usage; }
+[ "${#LAB_EXT[@]}" -gt 0 ] || LAB_EXT=(sockets event)
+for kv in "${LAB_ENV[@]+"${LAB_ENV[@]}"}"; do
+  [[ "$kv" == ?*=* ]] || { echo "--env must be K=V, got '$kv'" >&2; usage; }
+done
+[[ -z "$label" || "$label" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "--label may only hold letters, digits, . _ and -, got '$label'" >&2; usage; }
+number='^[0-9]+([.][0-9]+)?$'
+[[ "$think_scale" =~ $number ]] && awk -v s="$think_scale" 'BEGIN { exit !(s > 0 && s <= 1) }' || { echo "--think-scale must be above 0 and at most 1, got '$think_scale'" >&2; usage; }
+[[ "$lag_gate" =~ $number ]] || { echo "--lag-gate must be a number of seconds, got '$lag_gate'" >&2; usage; }
+for n in port calibrate_seconds; do
+  [[ "${!n}" =~ ^[0-9]+$ ]] || { echo "--${n//_/-} must be a whole number, got '${!n}'" >&2; usage; }
+done
+[ -z "$vu_cap" ] || [[ "$vu_cap" =~ ^[0-9]+$ ]] || { echo "--vu-cap must be a whole number, got '$vu_cap'" >&2; usage; }
+[ -z "$ramp" ] || [[ "$ramp" =~ ^[0-9]+$ ]] || { echo "--ramp must be a whole number of seconds, got '$ramp'" >&2; usage; }
+[ -z "$k6_memory" ] || [[ "$k6_memory" =~ ^[0-9]+$ ]] || { echo "--k6-memory must be a whole number of MiB, got '$k6_memory'" >&2; usage; }
+[ -n "$vu_cap" ] || vu_cap="$LAB_VU_CAP_FDS"
+
+# vus_for <req/s>: the VUs that offer at least that rate: rate * 20.5 * scale / 2.17, rounded up.
+vus_for() { awk -v r="$1" -v s="$think_scale" -v t="$LOOP_THINK_S" -v n="$LOOP_REQUESTS" 'BEGIN { v = r * t * s / n; printf "%d", (v == int(v)) ? v : int(v) + 1 }'; }
+per_vu_rate="$(awk -v s="$think_scale" -v t="$LOOP_THINK_S" -v n="$LOOP_REQUESTS" 'BEGIN { printf "%.6f", n / (t * s) }')"
+offered_for() { awk -v v="$1" -v p="$per_vu_rate" 'BEGIN { printf "%.3f", v * p }'; }
+
+# steps_vus: the VU count of each step, one per line; plateau: seconds of one plateau.
+steps_vus=()
+plateau=""
+if [ -n "$staircase" ]; then
+  IFS=, read -r from step to plateau <<<"$staircase"
+  for n in from step to plateau; do
+    [[ "${!n:-}" =~ ^[0-9]+$ ]] && [ "${!n}" -ge 1 ] || { echo "--staircase wants <from>,<step>,<to>,<s>, whole numbers from 1, got '$staircase'" >&2; usage; }
+  done
+  [ "$to" -ge "$from" ] || { echo "--staircase: <to> is below <from>" >&2; usage; }
+  rate="$from"
+  while [ "$rate" -le "$to" ]; do
+    steps_vus+=("$(vus_for "$rate")")
+    rate=$(( rate + step ))
+  done
+elif [ -n "$hold" ]; then
+  IFS=, read -r rate plateau <<<"$hold"
+  for n in rate plateau; do
+    [[ "${!n:-}" =~ ^[0-9]+$ ]] && [ "${!n}" -ge 1 ] || { echo "--hold wants <rate>,<s>, whole numbers from 1, got '$hold'" >&2; usage; }
+  done
+  steps_vus+=("$(vus_for "$rate")")
+else
+  IFS=, read -r cal_a cal_b <<<"$calibrate_vus"
+  for n in cal_a cal_b; do
+    [[ "${!n:-}" =~ ^[0-9]+$ ]] && [ "${!n}" -ge 1 ] || { echo "--calibrate-vus wants <a>,<b>, whole numbers from 1, got '$calibrate_vus'" >&2; usage; }
+  done
+  [ "$cal_b" -gt "$cal_a" ] || { echo "--calibrate-vus: <b> must be above <a>" >&2; usage; }
+  [ "$calibrate_seconds" -ge 10 ] || { echo "--calibrate-seconds must be at least 10" >&2; usage; }
+  plateau="$calibrate_seconds"
+  steps_vus=("$cal_a" "$cal_b")
+fi
+if [ -z "$ramp" ]; then
+  ramp=$(( (plateau + 3) / 4 ))
+  [ "$ramp" -ge 2 ] || ramp=2
+  [ "$ramp" -le 10 ] || ramp=10
+fi
+if [ -n "$warmup" ]; then
+  IFS=, read -r warm_rate warm_seconds <<<"$warmup"
+  for n in warm_rate warm_seconds; do
+    [[ "${warm_rate:-}" =~ ^[0-9]+$ && "${warm_seconds:-}" =~ ^[0-9]+$ ]] || { echo "--warmup wants <rate>,<s>, got '$warmup'" >&2; usage; }
+  done
+fi
+max_vus=0
+for v in "${steps_vus[@]}"; do [ "$v" -le "$max_vus" ] || max_vus="$v"; done
+if [ -z "$calibrate" ] && [ "$max_vus" -gt "$vu_cap" ]; then
+  echo "realistic: $max_vus VUs are above the VU cap of $vu_cap (--vu-cap; lab/realistic.sh --calibrate prints the cap): refusing to start" >&2
+  exit 2
+fi
+
+# Everything is checked before the first container starts.
+lab_require_variant "$image" || exit 1
+docker image inspect "$LAB_IMAGE:$image" >/dev/null 2>&1 || fail "image $LAB_IMAGE:$image is missing (run lab/build.sh $image)"
+server_in="$(lab_in_container_path "$server_file")" || exit 1
+[ -f "$LAB/data/feed.db" ] && [ -f "$LAB/data/tokens.json" ] || fail "lab/data/feed.db or tokens.json is missing (run lab/seed.sh)"
+for c in "$SERVER" "$K6C" "$PROBE" "$AGG"; do
+  if docker ps -a --format '{{.Names}}' | grep -x "$c" >/dev/null; then
+    fail "a lab/realistic.sh run is in progress, or one was killed: remove its containers first (docker rm -f $SERVER $K6C $PROBE $AGG; docker volume rm $VOLUME)"
+  fi
+done
+docker image inspect "$LAB_K6_IMAGE" >/dev/null 2>&1 || { echo "pulling $LAB_K6_IMAGE" >&2; docker pull -q "$LAB_K6_IMAGE" >/dev/null || fail "cannot pull $LAB_K6_IMAGE"; }
+
+# The memory k6 may use: the VM's, minus 2 GiB for the server, 1 GiB for the client that holds the idle connections (an estimate until
+# it is measured) and 1 GiB of margin. --k6-memory sets it by hand (a test hook: a budget k6 cannot live in).
+vm_bytes="$(docker info --format '{{.MemTotal}}')"
+k6_budget_mib=$(( vm_bytes / 1048576 - 4096 ))
+[ -z "$k6_memory" ] || k6_budget_mib="$k6_memory"
+[ "$k6_budget_mib" -gt 16 ] || fail "the VM has $(( vm_bytes / 1048576 )) MiB: not enough for a server (2 GiB), an idle client (1 GiB), a margin (1 GiB) and k6"
+
+stamp="$(date -u +%Y%m%d-%H%M%S)"
+mode=staircase
+[ -z "$hold" ] || mode=hold
+[ -z "$calibrate" ] || mode=calibrate
+if [ -z "$out" ]; then
+  out="$LAB/results/realistic-$mode-$(basename "$server_file" .php)${label:+-$label}-$image-$stamp.json"
+fi
+mkdir -p "$LAB/results" "$(dirname "$out")"
+
+tmp="$(mktemp -d)"
+cleanup() {
+  local rc=$?
+  docker rm -f "$SERVER" "$K6C" "$PROBE" "$AGG" >/dev/null 2>&1 || true
+  docker volume rm -f "$VOLUME" >/dev/null 2>&1 || true
+  rm -rf "$tmp"
+  exit "$rc"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM HUP
+
+probe() { docker exec "$PROBE" bash /lab/macro/probe.sh "$@"; }
+json_array() { jq -nc '$ARGS.positional' --args "$@"; }
+lines_to_json() {
+  jq -Rn 'reduce (inputs | split(" ") | select(length == 3)) as $l ({}; .[$l[0]][$l[1]] = ($l[2] | tonumber? // $l[2]))'
+}
+
+# --- the containers ---------------------------------------------------------------------------------------------------------
+docker volume create "$VOLUME" >/dev/null
+docker run -d --name "$PROBE" --network host --cgroupns host --pid host --cpuset-cpus "$LAB_CPUSET_PROBE" \
+  -v "$LAB:/lab:ro" -v "$VOLUME:/run/rt" "$LAB_IMAGE:$image" sleep 86400 >/dev/null
+if probe port-open "$port"; then
+  fail "port $port is already in use on the VM's host network: pick another with --port"
+fi
+
+lab_build_php_flags
+lab_start_app "$SERVER" "$image" "$port" "$server_in"
+answered=""
+for _ in $(seq 1 240); do
+  if [ "$(docker inspect -f '{{.State.Running}}' "$SERVER")" != true ]; then
+    echo "realistic: the server container exited:" >&2
+    docker logs "$SERVER" >&2 || true
+    exit 1
+  fi
+  if probe http-answers "$port" /health; then answered=1; break; fi
+  sleep 0.5
+done
+[ -n "$answered" ] || { docker logs "$SERVER" >&2 || true; fail "the server did not answer GET /health on port $port within 120 s"; }
+server_id="$(docker inspect -f '{{.Id}}' "$SERVER")"
+php_version="$(docker exec "$PROBE" php -r 'echo PHP_VERSION;')"
+socket_line="$(lab_socket_line "$SERVER")"
+server_fds="$(probe fds "$server_id" | lines_to_json | jq '.fds.open')"
+
+# Why --memory: k6 does not slow down when its reader falls behind, it buffers samples in memory; a run that needs more than the
+# budget is killed by Docker, not by the VM's OOM killer next to the server.
+docker run -d --name "$K6C" --network host --cpuset-cpus "$LAB_CPUSET_K6" --memory "${k6_budget_mib}m" --memory-swap "${k6_budget_mib}m" \
+  -v "$LAB:/lab:ro" -v "$VOLUME:/run/rt" --entrypoint sleep "$LAB_K6_IMAGE" 86400 >/dev/null
+k6_id="$(docker inspect -f '{{.Id}}' "$K6C")"
+k6_version="$(docker exec "$K6C" k6 version | head -n 1)"
+docker exec "$PROBE" mkfifo -m 666 /run/rt/csv
+
+# options_for <vus>...: the k6 options (JSON) of one ramping-vus scenario: for each VU count a ramp and a plateau, then a 1 s ramp down.
+# The bench's thresholds stay; the submetrics per endpoint are always met: they are there so that k6's own summary holds the
+# percentiles of each endpoint.
+options_for() {
+  jq -nc --argjson ramp "$ramp" --argjson plateau "$plateau" '
+    ($ARGS.positional | map(tonumber)) as $vus
+    | {scenarios: {users: {executor: "ramping-vus", startVUs: 0, gracefulRampDown: "1s", gracefulStop: "1s",
+         stages: (($vus | map([{duration: "\($ramp)s", target: .}, {duration: "\($plateau)s", target: .}]) | add) + [{duration: "1s", target: 0}])}},
+       thresholds: ({"http_req_duration": ["p(95)<500", "p(99)<1000"], "http_req_failed": ["rate<0.01"]}
+         + (["GET /feed", "GET /posts/:id", "POST /posts/:id/like", "POST /posts"] | map({key: "http_req_duration{name:\(.)}", value: ["p(95)<3600000"]}) | from_entries)),
+       summaryTrendStats: ["avg", "min", "med", "p(90)", "p(95)", "p(99)", "max"]}' --args "$@"
+}
+
+k6_job=""
+# k6_run <name> <options json> [csv]: the k6 run is a `docker exec` in the long-lived container (its cgroup outlives it). The summary
+# stays in the container at /tmp/<name>.json.
+k6_run() {
+  local name="$1" options="$2" csv="${3:-}" args=()
+  [ -z "$csv" ] || args+=(--out csv=/run/rt/csv)
+  docker exec -e K6_NO_USAGE_REPORT=true -e K6_CSV_SAVE_INTERVAL=250ms "$K6C" k6 run --quiet --no-color --local-ips "$local_ips" \
+    -e "BASE_URL=http://127.0.0.1:$port" -e TOKENS=/lab/data/tokens.json -e "THINK_SCALE=$think_scale" -e "REALISTIC_OPTIONS=$options" \
+    ${args[@]+"${args[@]}"} --summary-export "/tmp/$name.json" /lab/macro/k6/realistic.js >"$tmp/$name.log" 2>&1
+}
+
+if [ -n "$warmup" ]; then
+  echo "warm-up: ${warm_seconds}s at $warm_rate req/s (not scored)" >&2
+  warm_options="$(plateau="$warm_seconds" options_for "$(vus_for "$warm_rate")")"
+  k6_run warmup "$warm_options" || { echo "realistic: k6 (warm-up) failed:" >&2; tail -n 20 "$tmp/warmup.log" >&2; exit 1; }
+fi
+
+# run_measured <name> <stop on first failing step: true|false> <vus>...: one k6 run of those steps with the aggregator reading its CSV.
+# Leaves, in $tmp: <name>.agg.json (the aggregator's result), <name>.k6.json (k6's summary, when it wrote one), <name>.polls (one line
+# per poll: vus_now k6_memory_current server_pss_anon_kb server_memory_current) and <name>.meta.json: invalid (the reason, or ""),
+# stopped_by_harness (k6 was stopped at a failing step), k6_exit, k6_peak_bytes, server_pss_anon_peak_kb, server_memory_peak_bytes,
+# clients (the client addresses the server saw, read mid-run).
+run_measured() {
+  local name="$1" stop_on_fail="$2" steps_json config options
+  shift 2
+  steps_json="$(jq -nc --argjson p "$per_vu_rate" '$ARGS.positional | map(tonumber) | map({vus: ., offered: (. * $p)})' --args "$@")"
+  config="$(jq -nc --argjson steps "$steps_json" --argjson stop "$stop_on_fail" --arg server "/sys/fs/cgroup/docker/$server_id" \
+    --arg k6 "/sys/fs/cgroup/docker/$k6_id" --argjson users "$USERS_PER_RPS" --argjson p95 "$LIMIT_P95_MS" --argjson p99 "$LIMIT_P99_MS" \
+    --argjson err "$LIMIT_ERROR_RATE" --argjson ratio "$LIMIT_ACHIEVED_RATIO" '
+    {fifo: "/run/rt/csv", status: "/run/rt/status.json", result: "/run/rt/result.json", steps: $steps, stop_on_fail: $stop,
+     users_per_rps: $users, server_cgroup: $server, k6_cgroup: $k6,
+     limits: {p95_ms: $p95, p99_ms: $p99, error_rate: $err, achieved_ratio: $ratio}}')"
+  options="$(options_for "$@")"
+
+  docker exec "$PROBE" rm -f /run/rt/status.json /run/rt/result.json
+  docker rm -f "$AGG" >/dev/null 2>&1 || true
+  docker run -d --name "$AGG" --cpuset-cpus "$LAB_CPUSET_K6" --cgroupns host -v "$LAB:/lab:ro" -v "$VOLUME:/run/rt" \
+    -e "AGG_CONFIG=$config" "$LAB_IMAGE:$image" php -d memory_limit=-1 -d opcache.enable_cli=1 -d opcache.jit=tracing -d opcache.jit_buffer_size=32M \
+    /lab/macro/aggregate.php >/dev/null
+
+  local run_invalid="" run_stopped=0 run_k6_rc=0 run_k6_peak=0 run_pss_peak_kb=0 run_cur_peak=0 run_clients='{}' polls=0
+  : >"$tmp/$name.polls"
+  local limit_bytes=$(( k6_budget_mib * 1048576 ))
+  k6_run "$name" "$options" csv &
+  k6_job=$!
+  local poll line g k v k6_cur k6_peak k6_oom pss cur status_json failed_step failed_why lag_max vus_now unparsed
+  while kill -0 "$k6_job" 2>/dev/null; do
+    sleep 1
+    poll="$(probe poll "$server_id" "$k6_id" /run/rt/status.json 2>/dev/null || true)"
+    k6_cur=0 k6_peak=0 k6_oom=0 pss=0 cur=0 status_json='{}'
+    while IFS= read -r line; do
+      g="${line%% *}"
+      [ "$g" != status ] || { status_json="${line#status }"; continue; }
+      read -r g k v <<<"$line"
+      case "$g $k" in
+        "k6 memory_current") k6_cur="$v" ;;
+        "k6 memory_peak") k6_peak="$v" ;;
+        "k6 oom_kill") k6_oom="${v:-0}" ;;
+        "server pss_anon_kb") pss="$v" ;;
+        "server cgroup_current") cur="$v" ;;
+      esac
+    done <<<"$poll"
+    [ "$k6_peak" -le "$run_k6_peak" ] || run_k6_peak="$k6_peak"
+    [ "$pss" -le "$run_pss_peak_kb" ] || run_pss_peak_kb="$pss"
+    [ "$cur" -le "$run_cur_peak" ] || run_cur_peak="$cur"
+    IFS=$'\t' read -r failed_step failed_why lag_max vus_now unparsed < <(jq -r '[(.failed.step // 0), ((.failed.reasons // ["-"]) | join("; ")), (.lag_max_s // 0), (.vus_now // 0), (.unparsed // 0)] | @tsv' <<<"${status_json:-{\}}" 2>/dev/null || echo "")
+    echo "${vus_now:-0} $k6_cur $pss $cur" >>"$tmp/$name.polls"
+    polls=$(( polls + 1 ))
+    if [ "$polls" -ge 4 ] && [ "${vus_now:-0}" -gt 0 ]; then
+      run_clients="$(probe client-ips "$port" | lines_to_json | jq -c --argjson old "$run_clients" '(.clients // {}) as $now | if ($now | length) >= ($old | length) then $now else $old end')"
+    fi
+    if [ "$(docker inspect -f '{{.State.Running}}' "$SERVER" 2>/dev/null)" != true ]; then
+      stop_k6
+      fail "the server container died during the run"
+    fi
+    if [ "${k6_oom:-0}" -gt 0 ] || [ "$k6_peak" -ge $(( limit_bytes * 95 / 100 )) ]; then
+      run_invalid="k6 reached its memory budget ($(( k6_peak / 1048576 )) MiB of $k6_budget_mib MiB)"
+      stop_k6
+      break
+    fi
+    if awk -v l="${lag_max:-0}" -v g="$lag_gate" 'BEGIN { exit !(l > g) }'; then
+      run_invalid="the aggregator fell behind k6: lag ${lag_max} s, above the gate of $lag_gate s"
+      stop_k6
+      break
+    fi
+    if [ "${unparsed:-0}" -gt 0 ]; then
+      run_invalid="${unparsed} k6 duration rows could not be parsed by the aggregator"
+      stop_k6
+      break
+    fi
+    if [ "${failed_step:-0}" -gt 0 ] && [ "$stop_on_fail" = true ]; then
+      echo "step $failed_step failed ($failed_why): stopping k6" >&2
+      run_stopped=1
+      stop_k6
+      break
+    fi
+  done
+  wait "$k6_job" || run_k6_rc=$?
+  k6_job=""
+  # 99: k6's thresholds failed (a result). 105: k6 stopped by a signal, which the harness sent on purpose.
+  # A k6 killed for its memory before the poll saw it reach the budget is the same finding.
+  if [ "$run_k6_rc" -ne 0 ] && [ -z "$run_invalid" ] && [ "$(probe memory-events "$k6_id" | awk '$2 == "oom_kill" {print $3}')" -gt 0 ]; then
+    run_invalid="k6 was killed for reaching its memory budget ($k6_budget_mib MiB)"
+  fi
+  if [ "$run_k6_rc" -ne 0 ] && [ "$run_k6_rc" -ne 99 ] && [ "$run_stopped" -eq 0 ] && [ -z "$run_invalid" ]; then
+    echo "realistic: k6 failed (exit $run_k6_rc):" >&2
+    tail -n 20 "$tmp/$name.log" >&2
+    exit 1
+  fi
+  docker exec "$PROBE" sh -c 'printf "#END\n" > /run/rt/csv'
+  for _ in $(seq 1 60); do
+    docker exec "$PROBE" test -f /run/rt/result.json 2>/dev/null && break
+    [ "$(docker inspect -f '{{.State.Running}}' "$AGG" 2>/dev/null)" = true ] || break
+    sleep 0.5
+  done
+  docker exec "$PROBE" cat /run/rt/result.json >"$tmp/$name.agg.json" 2>/dev/null || {
+    echo "realistic: the aggregator left no result:" >&2
+    docker logs "$AGG" >&2 || true
+    exit 1
+  }
+  docker exec "$K6C" cat "/tmp/$name.json" >"$tmp/$name.k6.json" 2>/dev/null || echo 'null' >"$tmp/$name.k6.json"
+  jq -nc --arg invalid "$run_invalid" --argjson stopped "$run_stopped" --argjson rc "$run_k6_rc" --argjson peak "$run_k6_peak" \
+    --argjson pss "$run_pss_peak_kb" --argjson cur "$run_cur_peak" --argjson clients "$run_clients" \
+    '{invalid: $invalid, stopped_by_harness: ($stopped == 1), k6_exit: $rc, k6_peak_bytes: $peak, server_pss_anon_peak_kb: $pss,
+      server_memory_peak_bytes: $cur, clients: $clients}' >"$tmp/$name.meta.json"
+}
+
+# Stops k6 the way ctrl-C does: it wraps up and writes its summary.
+stop_k6() { docker exec "$K6C" sh -c 'kill -INT $(pidof k6)' >/dev/null 2>&1 || true; }
+
+other_names=()
+while IFS= read -r name; do [ -z "$name" ] || other_names+=("$name"); done < <(lab_other_containers "$SERVER" "$K6C" "$PROBE" "$AGG")
+other_json="$(jq -nc --argjson names "$(json_array "${other_names[@]+"${other_names[@]}"}")" '{count: ($names | length), names: $names}')"
+other_warning=""
+if [ "${#other_names[@]}" -gt 0 ]; then
+  other_warning="WARNING: ${#other_names[@]} other containers running (${other_names[*]})"
+  echo "$other_warning" >&2
+fi
+cpu_before="$(probe cpu "$server_id" "$k6_id" | lines_to_json)"
+
+if [ -n "$calibrate" ]; then
+  echo "calibration: ${steps_vus[0]} VUs for ${plateau}s, then ${steps_vus[1]} VUs for ${plateau}s (think scale $think_scale)" >&2
+  run_measured cal-a false "${steps_vus[0]}"
+  run_measured cal-b false "${steps_vus[1]}"
+else
+  echo "measured: ${#steps_vus[@]} step(s) of ${plateau}s (ramp ${ramp}s), think scale $think_scale, VUs ${steps_vus[*]}" >&2
+  run_measured main true "${steps_vus[@]}"
+fi
+cpu_after="$(probe cpu "$server_id" "$k6_id" | lines_to_json)"
+[ "$(docker inspect -f '{{.State.Running}}' "$SERVER")" = true ] || fail "the server container died during the run"
+
+# --- the numbers ------------------------------------------------------------------------------------------------------------
+runs_for_json=(main)
+[ -z "$calibrate" ] || runs_for_json=(cal-a cal-b)
+
+# The k6 memory of a run on its plateau: the median of the polls where k6's gauge read the step's VUs (MiB), or the peak when none did.
+plateau_memory_mib() {
+  local name="$1" vus="$2" m
+  m="$(awk -v v="$vus" '$1 == v { print $2 }' "$tmp/$name.polls" | sort -n | awk '{ a[NR] = $1 } END { if (NR) printf "%.2f", a[int((NR + 1) / 2)] / 1048576 }')"
+  if [ -z "$m" ]; then m="$(jq -r '.k6_peak_bytes / 1048576 * 100 | round / 100' "$tmp/$name.meta.json")"; fi
+  echo "$m"
+}
+
+# run_json <name>: everything one k6 run produced, as one JSON object.
+run_json() {
+  local name="$1"
+  jq -n --slurpfile agg "$tmp/$name.agg.json" --slurpfile k6 "$tmp/$name.k6.json" --slurpfile meta "$tmp/$name.meta.json" '
+    def mib: . / 1048576 * 100 | round / 100;
+    $agg[0] as $a | $meta[0] as $m
+    | {steps: $a.steps, stopped_at_step: ($a.failed.step // null), stop_reasons: ($a.failed.reasons // []),
+       invalid: (if $m.invalid != "" then $m.invalid
+                 elif ($a.steps | length) == 0 then "no step reached its plateau"
+                 else "" end),
+       stopped_by_harness: $m.stopped_by_harness, k6_exit: $m.k6_exit,
+       k6_peak_memory_mib: ($m.k6_peak_bytes | mib), client_ips_seen: $m.clients,
+       server_pss_anon_peak_mib: ($m.server_pss_anon_peak_kb / 1024 * 100 | round / 100),
+       server_memory_current_peak_mib: ($m.server_memory_peak_bytes | mib),
+       aggregator: {max_lag_s: $a.lag_max_s, rows: $a.rows, requests: $a.requests, unparsed: $a.unparsed, bytes: $a.bytes},
+       per_second: $a.per_second, run_total: $a.run_total, k6_summary: $k6[0]}'
+}
+
+# Calibration: the memory a VU costs, the VU cap and the scale (see the README).
+calibration_json='null'
+if [ -n "$calibrate" ]; then
+  mem_a="$(plateau_memory_mib cal-a "${steps_vus[0]}")"
+  mem_b="$(plateau_memory_mib cal-b "${steps_vus[1]}")"
+  calibration_json="$(jq -n --argjson va "${steps_vus[0]}" --argjson vb "${steps_vus[1]}" --argjson ma "$mem_a" --argjson mb "$mem_b" \
+    --argjson vm "$(( vm_bytes / 1048576 ))" --argjson fd_cap "$LAB_VU_CAP_FDS" --argjson per_vu "$per_vu_rate" --argjson s "$think_scale" \
+    --argjson loop_n "$LOOP_REQUESTS" --argjson loop_t "$LOOP_THINK_S" --slurpfile a "$tmp/cal-a.agg.json" --slurpfile b "$tmp/cal-b.agg.json" '
+    (($mb - $ma) / ($vb - $va)) as $per
+    | ($ma - $per * $va) as $base
+    # A per-VU cost under the noise of two readings (zero or negative) bounds nothing: the cap is then the file descriptors.
+    | (if $per > 0 then (($vm - 2048 - 1024 - 1024) / $per | floor) else null end) as $mem_cap
+    | ([$mem_cap, $fd_cap] | map(select(. != null)) | min) as $cap
+    # The scale that puts 20,000 req/s under the cap: VUs = rate * loop_t * scale / loop_n.
+    | ($cap * $loop_n / (20000 * $loop_t)) as $raw
+    | (($raw * 100000 | floor) / 100000) as $scale
+    | ($a[0].steps[0]) as $sa | ($b[0].steps[0]) as $sb
+    | {vus: [$va, $vb], k6_memory_mib: [$ma, $mb], mib_per_vu: ($per * 1000 | round / 1000), base_mib: ($base * 100 | round / 100),
+       vm_memory_mib: $vm, memory_cap: $mem_cap, fd_cap: $fd_cap, vu_cap: $cap,
+       cap_bound_by: (if $mem_cap != null and $mem_cap < $fd_cap then "memory" else "file descriptors" end),
+       scale_for_20000_rps: $scale,
+       vus_at_20000_rps_with_that_scale: (20000 * $loop_t * $scale / $loop_n | ceil),
+       latency_margin_ms_per_request_at_that_scale: ((1 - 0.97) * $loop_t * $scale / (0.97 * $loop_n) * 1000 * 100 | round / 100),
+       achieved_over_offered: [($sa.achieved_rps / $sa.offered_rps * 1000 | round / 1000), ($sb.achieved_rps / $sb.offered_rps * 1000 | round / 1000)],
+       k6_cpu_percent_of_one_cpu: [$sa.k6_cpu_percent_of_one_cpu, $sb.k6_cpu_percent_of_one_cpu],
+       k6_cpu_usec_per_request: [($sa.k6_cpu_percent_of_one_cpu * 10000 / $sa.achieved_rps | round), ($sb.k6_cpu_percent_of_one_cpu * 10000 / $sb.achieved_rps | round)],
+       aggregator_max_lag_s: [$a[0].lag_max_s, $b[0].lag_max_s],
+       lag_gate_to_use_s: ([$a[0].lag_max_s, $b[0].lag_max_s] | max | . + 2 | . * 100 | round / 100)}')"
+fi
+
+runs_json="[]"
+for r in "${runs_for_json[@]}"; do
+  runs_json="$(jq -c --argjson run "$(run_json "$r")" '. + [$run]' <<<"$runs_json")"
+done
+invalid_all="$(jq -r 'map(select(.invalid != "") | .invalid) | join("; ")' <<<"$runs_json")"
+
+jq -n \
+  --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg command "$command_line" --arg mode "$mode" \
+  --arg docker "$(docker version --format '{{.Server.Platform.Name}}')" --arg engine "$(docker version --format '{{.Server.Version}}')" \
+  --arg kernel "$(docker info --format '{{.KernelVersion}}')" --arg arch "$(uname -m)" --arg limits "${LAB_RESOURCE_FLAGS[*]}" \
+  --arg variant "$image" --arg image_id "$(docker image inspect -f '{{.Id}}' "$LAB_IMAGE:$image")" --arg php_version "$php_version" \
+  --arg server_file "${server_in#/lab/}" --arg flags "${LAB_PHP_FLAGS[*]}" --argjson port "$port" --arg label "$label" \
+  --argjson ext "$(json_array "${LAB_EXT[@]}")" --argjson env "$(json_array "${LAB_ENV[@]+"${LAB_ENV[@]}"}")" \
+  --arg socket_line "$socket_line" --argjson server_fds "$server_fds" --argjson other_containers "$other_json" \
+  --argjson think_scale "$think_scale" --argjson per_vu_rate "$per_vu_rate" --argjson users_per_rps "$USERS_PER_RPS" \
+  --argjson ramp "$ramp" --argjson plateau "$plateau" --argjson vu_cap "$vu_cap" --arg warmup "$warmup" \
+  --argjson steps_vus "$(jq -nc '$ARGS.positional | map(tonumber)' --args "${steps_vus[@]}")" \
+  --arg k6_image "$LAB_K6_IMAGE" --arg k6_version "$k6_version" --arg local_ips "$local_ips" --argjson k6_budget "$k6_budget_mib" \
+  --argjson lag_gate "$lag_gate" --argjson before "$cpu_before" --argjson after "$cpu_after" \
+  --argjson runs "$runs_json" --argjson calibration "$calibration_json" --arg invalid "$invalid_all" '
+  def mib: . / 1048576 * 100 | round / 100;
+  ($after.time.us - $before.time.us) as $window_us
+  | ($runs[-1]) as $last
+  | {
+    date: $date, command: $command, mode: $mode, label: (if $label == "" then null else $label end),
+    other_containers: $other_containers,
+    valid: ($invalid == ""), invalid_reasons: (if $invalid == "" then [] else [$invalid] end),
+    host: {docker_desktop: $docker, engine: $engine, vm_kernel: $kernel, arch: $arch, limits: $limits},
+    server: {variant: $variant, image_id: $image_id, php_version: $php_version, file: $server_file, port: $port, php_flags: $flags,
+             ext: $ext, env: $env, fds_open_at_boot: $server_fds,
+             socket: (if $socket_line == "" then null else $socket_line end)},
+    load: {think_scale: $think_scale, per_vu_rate_rps: $per_vu_rate, users_per_rps: $users_per_rps, ramp_s: $ramp, plateau_s: $plateau,
+           vus: $steps_vus, vu_cap: $vu_cap, warmup: (if $warmup == "" then null else $warmup end),
+           pass_rule: "p95 < 500 ms, p99 < 1000 ms, errors < 1 %, achieved >= 97 % of offered"},
+    k6: {image: $k6_image, version: $k6_version, script: "macro/k6/realistic.js", local_ips: $local_ips,
+         client_ips_seen: $last.client_ips_seen, memory_budget_mib: $k6_budget,
+         peak_memory_mib: ([$runs[].k6_peak_memory_mib] | max),
+         cpu_percent_of_one_cpu: (($after.k6.usage_usec - $before.k6.usage_usec) / $window_us * 100 * 100 | round / 100),
+         exit_codes: [$runs[].k6_exit]},
+    aggregator: {lag_gate_s: $lag_gate, max_lag_s: ([$runs[].aggregator.max_lag_s] | max),
+                 rows: ([$runs[].aggregator.rows] | add), unparsed: ([$runs[].aggregator.unparsed] | add)},
+    server_memory: {pss_anon_peak_mib: ([$runs[].server_pss_anon_peak_mib] | max),
+                    memory_current_peak_mib: ([$runs[].server_memory_current_peak_mib] | max)},
+    server_cpu_usec_over_the_runs: ($after.server.usage_usec - $before.server.usage_usec),
+    results: $last,
+    calibration: $calibration,
+    runs: (if $mode == "calibrate" then $runs else null end),
+    raw: {cpu_stat_before: $before, cpu_stat_after: $after}
+  }' >"$out"
+
+# The table reads the JSON just written, so what is printed is what is stored.
+echo
+echo "image $image (PHP $php_version), $(basename "$server_file"), $k6_version, k6 from $local_ips"
+jq -r '"think scale \(.load.think_scale): one VU offers \(.load.per_vu_rate_rps) req/s, \(.load.users_per_rps) users per req/s, ramp \(.load.ramp_s) s, plateau \(.load.plateau_s) s, VU cap \(.load.vu_cap)"' "$out"
+if [ -z "$calibrate" ]; then
+  printf '%4s %6s %9s %9s %7s %9s %8s %8s %7s  %s\n' step VUs offered achieved users us/req "p95 ms" "p99 ms" errors result
+  jq -r '.results.steps[] | [.step, .vus, (.offered_rps | . * 10 | round / 10), (.achieved_rps | . * 10 | round / 10), (.users | round),
+      (.cpu_usec_per_request // "n/a" | if type == "number" then (. * 10 | round / 10) else . end),
+      .latency_ms.overall.p95, .latency_ms.overall.p99, (.error_rate * 100 | . * 100 | round / 100 | tostring + "%"),
+      (if .pass then "pass" else "FAIL: " + (.reasons | join("; ")) end)] | @tsv' "$out" |
+    while IFS=$'\t' read -r st vus off ach users usec p95 p99 err res; do
+      printf '%4s %6s %9s %9s %7s %9s %8s %8s %7s  %s\n' "$st" "$vus" "$off" "$ach" "$users" "$usec" "$p95" "$p99" "$err" "$res"
+    done
+  jq -r '.results.steps[] | "  step \(.step) per endpoint (p95 / p99 ms, requests): " + ([.latency_ms.endpoints | to_entries[] | "\(.key) \(.value.p95) / \(.value.p99) (\(.value.count))"] | join(", "))' "$out"
+  jq -r 'if .results.stopped_at_step then "STOPPED at step \(.results.stopped_at_step): \(.results.stop_reasons | join("; "))"
+         elif (.results.steps | length) == 0 then "no step reached its plateau" else "no step failed" end' "$out"
+else
+  jq -r '.calibration as $c | .runs as $r | "VUs \($c.vus[0]) / \($c.vus[1]): k6 memory \($c.k6_memory_mib[0]) / \($c.k6_memory_mib[1]) MiB, achieved over offered \($c.achieved_over_offered[0]) / \($c.achieved_over_offered[1]), k6 CPU \($c.k6_cpu_percent_of_one_cpu[0]) / \($c.k6_cpu_percent_of_one_cpu[1]) % of one CPU (\($c.k6_cpu_usec_per_request[0]) / \($c.k6_cpu_usec_per_request[1]) us per request), aggregator lag \($c.aggregator_max_lag_s[0]) / \($c.aggregator_max_lag_s[1]) s",
+    "k6 memory per VU: \($c.mib_per_vu) MiB (and \($c.base_mib) MiB at rest)",
+    "VU cap: \($c.vu_cap) (memory \($c.memory_cap // "not bound: the cost per VU is under the noise") of the VM'"'"'s \($c.vm_memory_mib) MiB less 4 GiB, file descriptors \($c.fd_cap); bound by \($c.cap_bound_by))",
+    "scale for 20,000 req/s under the cap: \($c.scale_for_20000_rps) (\($c.vus_at_20000_rps_with_that_scale) VUs; the 97 % rule leaves \($c.latency_margin_ms_per_request_at_that_scale) ms of mean latency per request)",
+    "lag gate to use: \($c.lag_gate_to_use_s) s (the lag at low load plus 2 s)"' "$out"
+fi
+jq -r '"k6 peak memory \(.k6.peak_memory_mib) MiB of its \(.k6.memory_budget_mib) MiB budget, k6 CPU \(.k6.cpu_percent_of_one_cpu) % of one CPU, aggregator max lag \(.aggregator.max_lag_s) s (gate \(.aggregator.lag_gate_s) s), server Pss_Anon peak \(.server_memory.pss_anon_peak_mib) MiB, memory.current peak \(.server_memory.memory_current_peak_mib) MiB"' "$out"
+[ -z "$other_warning" ] || echo "$other_warning"
+if [ -z "$invalid_all" ]; then
+  echo "VALID"
+else
+  echo "INVALID: $invalid_all"
+fi
+echo "wrote ${out#"$REPO"/}"
+[ -z "$invalid_all" ] || exit 3
