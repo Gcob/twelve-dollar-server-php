@@ -91,7 +91,7 @@ command_line="${command_line//$REPO/.}"
 
 image=8.5 server_file="$LAB/app/server.php" label="" think_scale=1 warmup="" staircase="" hold="" calibrate="" vu_cap=""
 profile_out=""
-ramp="" out="" port=18120 local_ips="127.0.1.1-127.0.1.4" lag_gate=4 k6_memory="" calibrate_vus="50,300" calibrate_seconds=60 idle="" cold=""
+ramp="" out="" port=18120 local_ips="127.0.1.1-127.0.1.4" lag_gate=6 k6_memory="" calibrate_vus="50,300" calibrate_seconds=60 idle="" cold=""
 LAB_EXT=() LAB_ENV=()
 while [ "$#" -gt 0 ]; do
   if [ "$1" = --calibrate ]; then calibrate=1; shift; continue; fi
