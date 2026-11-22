@@ -1,20 +1,20 @@
 # Run: phase 3, runtime bake-off
 
-**Pace:** ⏸️ paused (waiting for a quiet VM, not for quota) · 5-hour 0 % · weekly 20 % at 18:47 · away
+**Pace:** 🟢 full · 5-hour 4 % · weekly 20 % at 21:12 · 5-hour resets 23:30 · away
 
-**Status:** ⏸️ Stopped, your turn
-**Progress:** stopped at 18:49: scopes 1 to 6 and both final reviews done and pushed; scope 7 (the measurements) needs a quiet Docker VM · started 2026-11-21 16:24
+**Status:** 🔄 Running: scope 7, the bake-off
+**Progress:** resumed at 21:12 on a quiet VM (0 other containers, Jacob's "go"): scope 7 measuring · started 2026-11-21 16:24
 **Since your last read:** scopes 1 to 6 are committed and pushed; both final reviews are OK (`pr-reviewer` pass 1,
 `blind-reviewer` pass 2 after one 🟠 fix). The bake-off (scope 7) can't measure: 23 containers of other projects run
 in Docker's VM (D15). Smoke runs on the busy VM, not results: all three servers VALID at 7,000 req/s on both routes.
-**👉 Your turn:** 🔴 blocking: quiet the Docker VM (23 other containers), then say "go". See "What I need from you" in [plan.md](plan.md). Q7 still open, not blocking.
+**👉 Your turn:** nothing blocking. Q7 still open, not blocking.
 
 ## Steps
 
 | #   | Step              | State       | Start | End | Detail |
 |-----|-------------------|-------------|-------|-----|--------|
 | 0   | Plan review       | done        | 16:29 | 16:48 | full: NOT_OK (1 🔴, 3 🟠), settled as D21 to D24 at 16:44; delta: OK at 16:48, 4 🟡 folded in |
-| 1   | Scopes            | blocked     | 16:31 |     | 6/7; scope 7 (measuring) waits for a quiet VM |
+| 1   | Scopes            | in progress | 16:31 |     | 6/7; scope 7 (measuring) resumed 21:12 on a quiet VM |
 | 2   | Questions         | skipped     |       |     | no `run` question opened by this phase; Q7 stays open (not blocking) |
 | 3   | Lab suite         | done        | 18:17 | 18:17 | `lab/check.sh` 32/32 on `3e74d76` |
 | 4   | `pr-reviewer`     | done        | 18:17 | 18:23 | pass 1 OK on scopes 1 to 6 (6 🟡); a delta pass on scope 7 later |
@@ -31,7 +31,7 @@ in Docker's VM (D15). Smoke runs on the busy VM, not results: all three servers 
 | 4   | done | 17:15 | 17:50 | +636 -16 | php-info 8.5/8.6 event 3.2.0 + Workerman, caches 5/5, boots on both trees, check.sh 26/26 (PM rerun) | `8c8f7cc` |       |
 | 5   | done | 17:53 | 18:01 | +136 -50 | conformance 8/8 on both trees, 4 macro runs VALID, check.sh 28/28 (PM rerun) | `ad52342` |       |
 | 6   | done | 18:03 | 18:14 | +862 -8 | conformance 8/8, parser 30/30, partial write 4/4, VALID at 7k, check.sh 32/32 (PM rerun) | `3e74d76` | R1 R2 R4 (`e1cf918`) |
-| 7   | blocked | | | | | | waits for a quiet VM (23 other containers at 18:17) |
+| 7   | in progress | 21:13 | | | | | VM quiet at 21:12 (0 other containers) |
 
 ## Reviews
 

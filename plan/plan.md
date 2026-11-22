@@ -1,6 +1,6 @@
 # $12 server challenge in PHP
 
-**Status:** ⏸️ Phase 3 stopped, your turn: the bake-off needs a quiet Docker VM · 1 question (not blocking) · approved
+**Status:** 🔄 Phase 3 running: the bake-off (scope 7) · 1 question (not blocking) · approved
 on 2026-11-21 · snapshot 2026-11-21-0920 · **Round:** 2
 **Since your last read:** scopes 1 to 6 and both final reviews are done; the bake-off itself waits for a quiet VM.
 Phase 3 is planned in [details/phase-3.md](details/phase-3.md), with its predictions
@@ -64,7 +64,7 @@ one information run on 8.6 if ext-event builds there. Nothing is patched.
 
 **What I need from you:**
 
-- [ ] 🔴 **Blocking: quiet the Docker VM, then say "go"** (scope 7, D15). Since 16:43, 23 containers of other
+- [x] 🔴 **Blocking: quiet the Docker VM, then say "go"** (scope 7, D15). Done at 21:12: 0 other containers, resumed. Since 16:43, 23 containers of other
   projects run in Docker's VM (names left out). The
   project manager never stops them. Scope 7 then takes about an hour (about 50 runs, then the README), then a short
   delta pass of both reviewers on its commit, then delivery.
