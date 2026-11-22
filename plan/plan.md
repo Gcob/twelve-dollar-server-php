@@ -1,6 +1,6 @@
 # $12 server challenge in PHP
 
-**Status:** 🔵 Phase 4 running (realistic baseline) · 1 question open (not blocking) · approved on 2026-11-21 · snapshot
+**Status:** 🔵 Phase 4 running (realistic baseline) · 2 questions open (Q12 blocks the delivery) · approved on 2026-11-21 · snapshot
 2026-11-21-0920 · **Round:** 3
 **Since your last read:** the baseline is measured (scope 5): the skeleton holds **23,386 req/s, about 221,000
 users at 9.45**, with 60,000 idle connections, at **27.15 µs of CPU per request** (median of 3 five-minute holds, p99
@@ -16,7 +16,45 @@ there, D47). SQLite is 52 % of the CPU, the response write 20 %, JSON 10 %. 6 of
 > **Answer freely:** a letter or `ok`, your own choice (`other: …`), `?` if it's unclear, or
 > `badly framed: …` if an option is missing or the question doesn't hold.
 
-### Q11/11 [run, step-lab-metric] : the held rate is the harness's floor: is CPU per request enough to judge phase 5?
+### 🔴 Q12/12 [run, public-history] : your 23 container names are in the branch's pushed history: rewrite it?
+
+**Blocking the delivery** (not the fixes, which go on). The blind-reviewer found that 2 calibration JSON files of scope
+2 (`lab/results/2026-11-22-realistic-calibration/scale-0.03-*.json` and `scale-0.1-*.json`, key
+`other_containers.names`) list the names of your 23 other Docker containers. They ran on the busy VM, and the harness
+recorded the names. They are on the public branch `phase-4-claude` since commit `47e4728`, pushed at about 12:28.
+`main` and its history are clean. A fix-forward commit removes them from the files and makes the harness record only
+the count, but the old commit keeps them, and the rules forbid me to rewrite pushed history or force-push.
+
+**Question:** what do we do with the branch's history?
+
+- **A.** Rewrite the branch so `47e4728` never held the names (a rebase that scrubs the two files), then force-push
+  `phase-4-claude`, with your explicit OK for that one force push (or you run it).
+  **Aims at:** names gone from every ref, per-scope commits kept for your review and the merge.
+  **For:** the branch is yours alone, nobody builds on it; the SHAs in `run.md` get rewritten once.
+  **Against:** a force push, against the usual rule; GitHub may still serve the old commits by SHA until its garbage
+  collection (GitHub support can purge them on request).
+- **B.** Keep the history, squash-merge the branch into `main`, then delete the remote branch.
+  **Aims at:** no force push.
+  **For:** `main` never holds the names.
+  **Against:** `main` loses the per-scope commits; the old commits stay reachable by SHA for a while, like A.
+- **C.** Fix forward only.
+  **Aims at:** no history work.
+  **For:** nothing to rewrite.
+  **Against:** the names stay in the public history for good, and in `main` after a normal merge.
+
+**Confidence:** A 70 % · B 25 % · C 5 %
+
+**Recommendation:** A: it keeps the review history and removes the names from every branch, for one force push on a
+branch only this run uses.
+
+**Flips if:** you'd rather not make an exception to "never force-push": then B.
+
+**Stopgap, if you want them off GitHub right now:** delete the remote branch (`git push origin --delete
+phase-4-claude`); I push it again, cleaned, after your answer.
+
+**Answer:**
+
+### Q11/12 [run, step-lab-metric] : the held rate is the harness's floor: is CPU per request enough to judge phase 5?
 
 Not blocking: phase 4 delivers either way, and the answer shapes phase 5's plan. At `s = 0.02` the skeleton holds
 at least 23,386 req/s with its CPU only 63 % busy: the 97 % rule fails on k6's own loop overhead, not on the server
@@ -51,7 +89,7 @@ is set by the fd wall first, then by CPU.
 **Flips if:** a variant changes latency without changing µs/req (for example group commit): then its per-second
 p99 joins the judgment, still without B.
 
-**Answer:**
+**Answer:** I don't know, should we continue the lab on my ryzen 9 pc tower? It has 64 go RAM DDR5 + RTX4700, we could maybe try to create a VM or something. It is on Windows though
 
 ### ✅ Quiet Docker VM for scope 5 (run, answered 13:27)
 

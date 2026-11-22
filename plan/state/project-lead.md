@@ -39,7 +39,8 @@ Skill defaults (`autonomous-run/pipeline.yml`), no run override file. Changes fr
 | 6     | aabebc28f7dcaaba7 | done 17:46; fd-wall note `1acc81a` |
 | pr-reviewer | a96493ee11e4c85c3 | OK 18:04 |
 | scope 5 (review fixes) | a0693a2b219c3cb46 | done 18:08: `6259b72`, `72cd9db` |
-| blind-reviewer | af115c2e95734bb63 | pass 1 since 18:09 |
+| blind-reviewer | af115c2e95734bb63 | NOT_OK 18:17 |
+| blind fixes | a6d7d3fcd59d94550 | since 18:20 |
 
 ## Verified
 
@@ -120,6 +121,11 @@ Rien.
   harnesses) set aside: a refactor of working code after the measurement, better done when phase 5 next touches
   them. 🟡 9 (3 % + 0.02 ms aggregator-vs-k6 tolerance): scope 2 set it from its smoke runs (k6's own summary
   rounds and its trend is sampled differently), checks stay stable; not tightened now. "Plan to review" → Q11.
+- `blind-reviewer` pass 1 (18:17), NOT_OK. 🔴 1 container names on the public branch: fixed forward, history = Q12
+  (🔴, planning session told 18:19). 🟠 2 fold leaf, 🟠 3 `--no-series` + labels, 🟡 6, 7, 9, 10: one developer.
+  🟡 set aside: 4 (dead aggregator blocks the FIFO write) and 5 (equal VU steps), harness robustness that no run hit,
+  for phase 5; 8 (D numbers in the predictions: they are a verbatim copy, and the README says where D numbers live);
+  11 (`trim()` and U+00A0: the tests don't reach it, and the challenge's reference is PHP, kept as is).
 
 ## Suggested skills
 
