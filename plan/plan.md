@@ -1,6 +1,6 @@
 # $12 server challenge in PHP
 
-**Status:** 🔵 Phase 4 running (realistic baseline) · 2 questions open (Q12 blocks the delivery) · approved on 2026-11-21 · snapshot
+**Status:** 🔵 Phase 4 running (realistic baseline) · 1 question open (not blocking) · approved on 2026-11-21 · snapshot
 2026-11-21-0920 · **Round:** 3
 **Since your last read:** the baseline is measured (scope 5): the skeleton holds **23,386 req/s, about 221,000
 users at 9.45**, with 60,000 idle connections, at **27.15 µs of CPU per request** (median of 3 five-minute holds, p99
@@ -16,7 +16,7 @@ there, D47). SQLite is 52 % of the CPU, the response write 20 %, JSON 10 %. 6 of
 > **Answer freely:** a letter or `ok`, your own choice (`other: …`), `?` if it's unclear, or
 > `badly framed: …` if an option is missing or the question doesn't hold.
 
-### 🔴 Q12/12 [run, public-history] : your 23 container names are in the branch's pushed history: rewrite it?
+### ✅ Q12/12 [run, public-history] : your 23 container names are in the branch's pushed history: rewrite it?
 
 **Blocking the delivery** (not the fixes, which go on). The blind-reviewer found that 2 calibration JSON files of scope
 2 (`lab/results/2026-11-22-realistic-calibration/scale-0.03-*.json` and `scale-0.1-*.json`, key
@@ -52,7 +52,10 @@ branch only this run uses.
 **Stopgap, if you want them off GitHub right now:** delete the remote branch (`git push origin --delete
 phase-4-claude`); I push it again, cleaned, after your answer.
 
-**Answer:**
+**Answer:** A, through the planning session at 18:25: "Please, fix the leak by yourself". The planning session
+deleted the remote branch; the project manager rewrites the branch locally (no commit holds the names, `47e4728`
+included), checks every commit with `git log -S`, and pushes the clean branch again (no force needed: the remote
+branch is gone).
 
 ### Q11/12 [run, step-lab-metric] : the held rate is the harness's floor: is CPU per request enough to judge phase 5?
 

@@ -2,14 +2,14 @@
 
 **Pace:** 🟢 full · 5-hour 10 % · weekly 29 % at 17:35 · 5-hour resets 20:20 · away
 
-**Status:** 🔵 Running (the delivery waits for Q12)
+**Status:** 🔵 Running
 **Progress:** step 5/7, the `blind-reviewer`'s fixes since 18:20 · started 2026-11-22 10:50
 **Since your last read:** scope 5 done: the baseline holds 23,386 req/s (about 221,000 users at 9.45) at 27.15 µs
 of CPU per request, p99 28 ms, 60,000 idle held (median of 3 holds; arm64, not a score). The rate is a harness floor at
 `s = 0.02`, the server 63 % busy (D47). Profile: SQLite 52 %, write 20 %, JSON 10 %. 6 of 12 predictions held.
 Q10: the stalls are outside the PHP code. Two harness fixes (`38fc153`, `fcf104f`). Results in
 `lab/results/2026-11-22-realistic-baseline/README.md` on the branch.
-**👉 Your turn:** 🔴 Q12 in plan.md: your 23 container names are in the branch's public history (rewrite it?). Q11, not blocking.
+**👉 Your turn:** Q11 in plan.md, not blocking. Q12 answered (A, 18:25): the branch is being rewritten, the remote branch is deleted until then.
 
 ## Steps
 
@@ -98,7 +98,7 @@ read"; the aggregator in its own container, outside k6's memory budget.
 
 - **🔴 1 Two calibration JSON files list your 23 other containers' names, on the public branch since `47e4728`.**
   Scope 2's calibration ran on the busy VM and the harness recorded the names. **Scopes:** 2. **Status:** being
-  fixed forward (count only, files scrubbed); the pushed history is Q12, for you. `main` is clean.
+  fixed forward (count only, files scrubbed); Q12 = A (18:25): history rewritten by the PM, then pushed again. `main` is clean.
 - **🟠 2 The fold can never say "unclassified"**: an unnamed frame takes its named caller's step, so a renamed step
   function would move its cost without a warning. **Scopes:** 4. **Status:** being fixed (classify by the leaf frame).
 - **🟠 3 The per-second probes may cause part of the p99 and the stalls** (11 ms longest callback each second, only
