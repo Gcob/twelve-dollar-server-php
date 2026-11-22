@@ -243,6 +243,17 @@ group commit, several writes in one transaction, each request answered once the 
 **Verdict:** ✅ the group commit per loop turn, a new S9 variant for phase 4. 🔶 batched reads: only without merging
 duplicates, and only if the profile shows a query's fixed cost is worth it. ❌ merging identical reads (rule 5).
 
+**2026-11-22 10:41:** Jacob challenged the rule 5 part: "if 2 requests ask for the very same thing at the same time,
+lookup seems to me to be fair, not cached". By the textbook he's right: a cache keeps a result to reuse it later, and
+a read shared by requests already waiting keeps nothing. But the challenge's author ruled on exactly this on
+2026-11-15 (`LEADERBOARD.md`, "Rule flags from code review"): **read coalescing is not allowed**, because "one query
+result shared by several requests is a cache across requests". go-iouring-rkkautsar #260 (one feed query, or one
+`IN (...)` for the post ids, per batch, "nothing outlives the batch") and go-nethttp #277 (one `/feed` read per write
+generation, and concurrent `/posts/:id` batched into one `IN` query) went off the board for it; rust-iouring #322 came
+back once each request did its own read. So the 🔶 above was wrong too: one `IN (...)` for different posts is the same
+ruling. **Verdict:** ❌ every read shared by several requests, merged or batched (Arjay's ruling). ✅ the group commit
+for writes stays: rule 6 allows it by name.
+
 ### 2026-11-22 10:33 · 💡 Idea: test the way Arjay tests
 
 **Jacob:** "We must include its way to test!" The challenge's author, in his newsletter, shares his skill
@@ -281,6 +292,11 @@ expected capacity, climb a linear staircase that stops at the first failing step
 **Verdict:** 🔶 Claude's take: yes, and early. Phase 4 starts with a walking skeleton (DIY, the 5 endpoints with the
 reference SQL, the 42 tests) and the realistic mode above, then a profile under that load; the step lab follows, in
 the order the profile gives. Open until Jacob picks.
+
+**2026-11-22 10:41:** found in passing, for phase 6: java-micronaut-Clickin replaced k6 with a Rust implementation of
+`load.js` (`rlt`), checked against k6 for the same request mix, think times, headers and server CPU per request, and
+split its users over two 4-vCPU generators, because of k6's memory at tens of thousands of VUs and the ~64,500
+connections one source IP can open to one port.
 
 ### 2026-11-22 10:33 · 💡 Idea: run a request's steps in parallel, like `Promise.all`
 
