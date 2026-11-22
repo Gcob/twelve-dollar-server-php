@@ -1,0 +1,22 @@
+warm-up: 10s at 9500 req/s
+measured run: 30s at 9500 req/s
+
+image 8.5 (PHP 8.5.13), bake-diy.php, k6 v1.8.3 (commit/58bbfd8e48, go1.26.4, linux/arm64)
+requested 9500 req/s for 30s (warm-up 10s), target http://127.0.0.1:18080/posts/1
+  requests                     282005
+  achieved req/s               9398.53
+  CPU us / request             29.37
+  latency ms p50 / p95 / p99   0.17 / 8.96 / 108.23
+  latency ms max               450.7
+  error rate                   0.00%
+  dropped iterations           2995
+  VUs running at once (max)    169 (of 1900 max)
+  connections open (max of 3)  1900 (k6 pre-allocated 1900 VUs)
+  peak RSS, cgroup memory.peak 494.02 MiB (counts page cache)
+  peak RSS, VmHWM              259.54 MiB
+  memory under load (max of 3) Pss 132.71 MiB (with the mapped database), Pss_Anon 8.73 MiB, cgroup memory.current 265.58 MiB
+  socket settings (server's boot line) backlog=4096 tcp_nodelay=1
+  server CPU over the window   26.83 % of one CPU (30.87 s window, idle 0 us/s, throttled 0 us)
+  k6 CPU over the window       195.86 % of one CPU (k6 is pinned to 8 CPUs)
+INVALID: 2995 dropped iterations: k6 had no free VU to start them (1900 VUs absorb a stall of 200 ms at 9500 req/s; latency max was 450 ms)
+wrote lab/results/2026-11-21-bake-off/run-1-diy-posts-9500.json
