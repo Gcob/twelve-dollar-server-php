@@ -3,13 +3,13 @@
 **Pace:** 🟢 full · 5-hour 10 % · weekly 29 % at 17:35 · 5-hour resets 20:20 · away
 
 **Status:** 🔵 Running
-**Progress:** step 4/7, `pr-reviewer` pass 1 since 17:55 · started 2026-11-22 10:50
+**Progress:** step 4/7, the `pr-reviewer`'s 🟡 fixes, then the `blind-reviewer` · since 18:05 · started 2026-11-22 10:50
 **Since your last read:** scope 5 done: the baseline holds 23,386 req/s (about 221,000 users at 9.45) at 27.15 µs
 of CPU per request, p99 28 ms, 60,000 idle held (median of 3 holds; arm64, not a score). The rate is a harness floor at
 `s = 0.02`, the server 63 % busy (D47). Profile: SQLite 52 %, write 20 %, JSON 10 %. 6 of 12 predictions held.
 Q10: the stalls are outside the PHP code. Two harness fixes (`38fc153`, `fcf104f`). Results in
 `lab/results/2026-11-22-realistic-baseline/README.md` on the branch.
-**👉 Your turn:** nothing. The measuring is over: your containers can come back.
+**👉 Your turn:** Q11 in plan.md, not blocking: what the step lab judges a variant on (CPU per request, recommended).
 
 ## Steps
 
@@ -19,7 +19,7 @@ Q10: the stalls are outside the PHP code. Two harness fixes (`38fc153`, `fcf104f
 | 1   | Scopes            | done    | 11:19 | 17:46 | 6/6    |
 | 2   | Questions         | done    | 17:40 | 17:40 | none open: scope 5's two settled as D47 |
 | 3   | Lab suite         | done    | 17:50 | 17:55 | 59/59 ok on `1acc81a`, no flake (other containers back at 17:54 during it) |
-| 4   | `pr-reviewer`     | running | 17:55 |     | pass 1/3 |
+| 4   | `pr-reviewer`     | done    | 17:55 | 18:05 | OK at pass 1: no 🔴 or 🟠, 9 🟡 (7 being fixed), 1 plan question (Q11) |
 | 5   | `blind-reviewer`  | to do   |       |     |        |
 | 6   | Delivery          | to do   |       |     |        |
 
@@ -79,6 +79,15 @@ holds. 4 🟡, all fixed in the plan at 11:18: two `{R}` placeholders in D43 and
 lag plus 2 s with `K6_CSV_SAVE_INTERVAL` lowered (k6 flushes its CSV every second); `plan.md`'s "Since your last
 read"; the aggregator in its own container, outside k6's memory budget.
 
-### `pr-reviewer`, pass 1 · since 17:55
+### `pr-reviewer`, pass 1 · 17:55 to 18:05 · OK
 
-Running.
+**Report:** [PR-2026-11-22-1755.md](reviews/PR-2026-11-22-1755.md). No 🔴 or 🟠; it also wrote the PR description.
+
+- **⚠️ Plan to review:** the held rate is the harness's floor (D47), so phase 5 can only tell variants apart by µs per
+  request. **Status:** Q11 in plan.md, for Jacob, not blocking.
+- **🟡 1 to 4, 6:** four README readings say more than the data (Pss_Anon's cause, "7 times a post", S1 is mostly the
+  idle accepts, "at least" missing), and the 11 ms longest callback at 24,000 req/s isn't mentioned. **Status:**
+  being fixed (scope 5's developer).
+- **🟡 5:** the default lag gate is 4 s, under the 5.5 s measured. **Status:** being fixed (6 s, D46).
+- **🟡 7:** lab/README's calibration table is typed by hand. **Status:** being fixed (said so).
+- **🟡 8, 9:** a duplicated `jq` block, a 3 % tolerance. **Status:** set aside (reasons in project-lead.md).

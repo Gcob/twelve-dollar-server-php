@@ -1,6 +1,6 @@
 # $12 server challenge in PHP
 
-**Status:** 🔵 Phase 4 running (realistic baseline) · 0 questions open · approved on 2026-11-21 · snapshot
+**Status:** 🔵 Phase 4 running (realistic baseline) · 1 question open (not blocking) · approved on 2026-11-21 · snapshot
 2026-11-21-0920 · **Round:** 3
 **Since your last read:** the baseline is measured (scope 5): the skeleton holds **23,386 req/s, about 221,000
 users at 9.45**, with 60,000 idle connections, at **27.15 µs of CPU per request** (median of 3 five-minute holds, p99
@@ -15,6 +15,43 @@ there, D47). SQLite is 52 % of the CPU, the response write 20 %, JSON 10 %. 6 of
 
 > **Answer freely:** a letter or `ok`, your own choice (`other: …`), `?` if it's unclear, or
 > `badly framed: …` if an option is missing or the question doesn't hold.
+
+### Q11/11 [run, step-lab-metric] : the held rate is the harness's floor: is CPU per request enough to judge phase 5?
+
+Not blocking: phase 4 delivers either way, and the answer shapes phase 5's plan. At `s = 0.02` the skeleton holds
+at least 23,386 req/s with its CPU only 63 % busy: the 97 % rule fails on k6's own loop overhead, not on the server
+(D47). So in phase 5, a step variant that saves CPU won't move the held rate: only µs of CPU per request (and the
+profile) can tell variants apart. The rule also sits on its edge at 24,000 (4 runs of 17 failed at 96.7 to 97.0 %).
+And with one process, the fd wall caps the real bench near 71,000 users whatever the CPU (the baseline README's
+step order puts S1-d or S1-b first). Raised by the final `pr-reviewer`
+([PR-2026-11-22-1755](reviews/PR-2026-11-22-1755.md), "Plan à revoir").
+
+**Question:** what does the step lab judge a variant on?
+
+- **A.** µs of CPU per request (median of runs) and the profile; the held rate is measured again only at the end of
+  phase 5, on the chosen variants together.
+  **Aims at:** a sharp, reproducible number per variant, as phase 2's micro benches did.
+  **For:** no new tooling; CPU per request is what the server controls; the fd wall makes the one-process rate moot
+  past about 7,500 req/s anyway.
+  **Against:** latency effects (stalls, queueing) don't show in µs/req; they need the per-second series beside it.
+- **B.** Add a second load generator (another machine) first, so the staircase finds the server's own knee.
+  **Aims at:** a held rate that is the server's, not k6's.
+  **For:** the bench's real pass rule then judges each variant.
+  **Against:** new hardware and setup before any step is measured; the Mac's numbers still aren't the x86 score.
+- **C.** Change the pass rule for the lab (for example 95 % achieved, or judge on the server's CPU at a fixed rate).
+  **Aims at:** a held rate the current harness can reach.
+  **For:** no new machine.
+  **Against:** moves away from what the bench judges; the knee would still depend on `s`.
+
+**Confidence:** A 75 % · B 15 % · C 10 %
+
+**Recommendation:** A: the server's CPU per request is the lever the step lab pulls, and the score on the real bench
+is set by the fd wall first, then by CPU.
+
+**Flips if:** a variant changes latency without changing µs/req (for example group commit): then its per-second
+p99 joins the judgment, still without B.
+
+**Answer:**
 
 ### ✅ Quiet Docker VM for scope 5 (run, answered 13:27)
 
