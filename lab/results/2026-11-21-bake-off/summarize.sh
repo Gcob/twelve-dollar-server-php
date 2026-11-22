@@ -29,6 +29,8 @@ macro_files() { ls run-*.json info-*.json 2>/dev/null; }
 
 # Median µs/req of the counted runs of one (server, route, rate, image), 7000 and 8.5 by default.
 median_us() { # label route rate image
+  # Why: the file names (run-*.json) hold no space, and the list must reach jq as separate arguments.
+  # shellcheck disable=SC2046
   jq -n "$PRELUDE"'[counted_group($label; $route; ($rate | tonumber); $image)[] | .us] | med' \
     --arg label "$1" --arg route "$2" --arg rate "$3" --arg image "$4" $(macro_files)
 }
@@ -48,13 +50,15 @@ for s in $SERVERS; do
   done
 done
 
-# The medians the rest reads, as shell variables.
-for s in swoole workerman-nocache workerman-stock diy; do
-  for r in noop posts; do
-    v="$(median_us "$s" "$r" 7000 8.5)"
-    eval "m_${s//-/_}_$r=$v"
-  done
-done
+# The medians the rest reads.
+m_swoole_noop="$(median_us swoole noop 7000 8.5)"
+m_swoole_posts="$(median_us swoole posts 7000 8.5)"
+m_workerman_nocache_noop="$(median_us workerman-nocache noop 7000 8.5)"
+m_workerman_nocache_posts="$(median_us workerman-nocache posts 7000 8.5)"
+m_workerman_stock_noop="$(median_us workerman-stock noop 7000 8.5)"
+m_workerman_stock_posts="$(median_us workerman-stock posts 7000 8.5)"
+m_diy_noop="$(median_us diy noop 7000 8.5)"
+m_diy_posts="$(median_us diy posts 7000 8.5)"
 
 echo
 echo "### Derived from the medians at 7,000 req/s"
