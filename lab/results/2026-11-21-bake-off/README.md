@@ -66,7 +66,7 @@ file for the three runtimes. Before each series: `docker ps` must show no contai
 ### Change made after a first try, before the series that counts
 
 A first try of series A (rate / 10 VUs, so 700 at 7,000 req/s) ran 18 runs and was stopped after round 2: 4 of its
-`posts.js` runs dropped iterations when the host paused for 100 to 300 ms, and one pair was invalid twice. Its files are
+`posts.js` runs dropped iterations during stalls of 100 to 300 ms, and one pair was invalid twice. Its files are
 kept in `first-try-700-vus/` and are **not counted** anywhere. The series that counts restarted from round 1 with
 `--pre-vus` and `--max-vus` at rate / 5 on every run of series A, B and D, both routes and all runtimes: 1,400 VUs at
 7,000 req/s and 1,900 at 9,500, so that posts minus noop compares the same client. The predictions above were not
@@ -92,7 +92,9 @@ D.
   VM had no other container before each series (`docker ps` empty) and in every JSON. **Invalid runs** keep their files
   and are rerun once at the end of their round; the rerun counts, the invalid one is shown and left out.
 - **This is arm64, Docker Desktop on an Apple M3 Pro, not the bench VM.** Relative results (runtime against runtime)
-  count here; absolute numbers only count on x86.
+  count here, with a limit: the Mac was not quiet, and differences under about 5 % are not distinguishable from the spread
+  of the 3 repeats (for example Workerman nocache against Swoole on `/noop`: 3.0 %, with repeats of 25.06 to 26.56 against
+  24.44 to 25.72). Absolute numbers only count on x86.
 
 ## Results
 
@@ -151,7 +153,7 @@ Finalists: **diy** and **swoole** (posts medians: Swoole 32.83, Workerman nocach
 
 ### Series C: connections (one run per runtime, 8.5)
 
-| Runtime | Max connections | Stopped at step | Why it stopped | Source addresses | Pss slope KiB/conn | Pss_Anon slope KiB/conn | memory.current slope KiB/conn | Pss_Anon per connection at the max KiB | memory.current per connection at the max KiB | Pss per connection at the max KiB (with the mapped database) | Baseline Pss / Pss_Anon / memory.current MiB | Held steps in the slope | Valid (other containers) |
+| Runtime | Max connections | Last step held | Why it stopped | Source addresses | Pss slope KiB/conn | Pss_Anon slope KiB/conn | memory.current slope KiB/conn | Pss_Anon per connection at the max KiB | memory.current per connection at the max KiB | Pss per connection at the max KiB (with the mapped database) | Baseline Pss / Pss_Anon / memory.current MiB | Held steps in the slope | Valid (other containers) |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | swoole | 65000 | 65000 | request timeout | 7 (127.0.0.2 .. 127.0.0.8) | 14.29 | 14.28 | 18.13 | 18.12 | 21.98 | 18.14 | 22.47 / 9.28 / 257.54 | 9 | true (0) |
 | workerman-nocache | 65000 | 65000 | request timeout | 7 (127.0.0.2 .. 127.0.0.13) | 2.37 | 2.37 | 6.07 | 2.37 | 6.08 | 2.37 | 19.75 / 7.52 / 256.91 | 9 | true (0) |
@@ -347,8 +349,12 @@ Reading the tables:
 ### About the first try
 
 The first try ran series A at rate / 10 VUs (700 at 7,000 req/s). It was stopped after round 2: 4 `posts.js` runs dropped
-iterations when the host stalled for 100 to 300 ms (the Mac was under memory pressure, 35 GB used and 16 GB in the
-compressor, with a load average of 6 to 7 on 12 CPUs), and `workerman-nocache` posts was invalid twice in round 2. Its 18
+iterations during stalls of 100 to 300 ms, and `workerman-nocache` posts was invalid twice in round 2. The cause of the
+stalls is not separated: the host (the Mac was under memory pressure, 35 GB used and 16 GB in the compressor, with a load
+average of 6 to 7 on 12 CPUs) or the server's reads of its database. What points away from the host alone: all 7 invalid
+runs of the first try and the counted series are `posts.js` runs, none of the 28 `/noop` runs is invalid, and 6 of the 7
+cost more µs/req than the valid run of their pair, which a paused vCPU would not do (it adds no CPU time to the server's
+cgroup). The extra VUs absorb a stall whatever its cause. Its 18
 runs are in `first-try-700-vus/` with their `.txt`, and are not counted anywhere. The table at the end of the output above
 lists them. Series A restarted from round 1 with twice the VUs, and every run of A, B and D used them. One thing the two
 tries show side by side, without being a test (the VUs and the time of day both changed): on `/noop` every runtime cost
@@ -371,22 +377,25 @@ the number the prediction names, a range holds if the value is inside it.
    stock is **10.9 % cheaper** (23.39 against 26.24, relative to nocache), 0.9 points inside the range. On posts stock is
    2.2 % more expensive (34.05 against 33.32), so it is not 5 % cheaper.
 5. **DIY within 15 % of Swoole on `/noop`, finalists Swoole and DIY: held, narrowly.** DIY is **14.1 % cheaper**
-   (21.88 against 25.47). On posts it is 11.3 % cheaper. The finalists by the posts medians are DIY (29.14) and Swoole
+   (21.88 against 25.47); depending on which repeats are compared it goes from 9.9 % (DIY's worst, 22.03, against
+   Swoole's best, 24.44) to 16.3 % (DIY's best, 21.52, against Swoole's worst, 25.72), so the 15 % line is crossed only by
+   the best against the worst. On posts it is 11.3 % cheaper. The finalists by the posts medians are DIY (29.14) and Swoole
    (32.83); Workerman nocache is third (33.32).
 6. **At 9,500 req/s µs/req is 5 to 15 % lower than at 7,000 for both finalists: did not hold.** On posts it held (DIY
    27.66 against 29.14, 5.1 % lower; Swoole 31.01 against 32.83, 5.6 % lower), both just above the bottom of the range.
    On `/noop` the drop is much larger (DIY 17.37 against 21.88, 20.6 % lower; Swoole 18.53 against 25.47, 27.3 % lower).
 7. **Max connections: partly held.** Swoole did **not** stop on memory: it held 65,000 and 65,522 at the next step, with
-   no OOM kill (`oom_kill` 0 at every step) and memory.current of 1,659 MiB, under the 2 GiB limit, so it stopped on the
-   fd limit like the others. Workerman and DIY stopped on the fd limit between 65,000 and 65,535 (65,000 held, 65,523 at
+   no OOM kill (`oom_kill` 0 at every step) and memory.current of 1,659 MiB, under the 2 GiB limit. It stopped at 65,522 held, which fits both the 65,535 `nofile` limit
+   and Swoole's own `max_connection` of 65,535: the run cannot tell which. Workerman and DIY stopped on the fd limit between 65,000 and 65,535 (65,000 held, 65,523 at
    the next step): that part held.
 8. **Memory per connection (Pss slope): did not hold for two of three, held for DIY.** Swoole **14.29 KiB** (predicted 15
-   to 45: 0.7 under), Workerman **2.37 KiB** (3 to 10: 0.6 under), DIY **1.48 KiB** (1 to 4: held). The `memory.current`
+   to 45), a slope that averages two regimes (about 69 KiB per connection below 10,000, about 5 KiB above 20,000: see
+   "Surprising"), so 0.7 under the range is not a near miss; Workerman **2.37 KiB** (3 to 10: 0.6 under), DIY **1.48 KiB** (1 to 4: held). The `memory.current`
    slope is higher than the Pss slope on all three (18.13, 6.07, 5.19 against 14.29, 2.37, 1.48): that part held.
 9. **p99 at 7,000 under 3 ms on all three, both routes, Workerman the highest: did not hold.** On `/noop`: Swoole 1.69
    ms, Workerman nocache 2.00, DIY 1.79: under 3, and Workerman the highest. On posts: Swoole 5.38, Workerman nocache
    7.18, DIY 3.03: over 3 for all three (DIY by 0.03), Workerman still the highest. The medians hide wide spreads: single posts
-   runs at 7,000 had p99 from 2.8 to 16 ms, with the max latency of a run up to 167 ms (host stalls, see above).
+   runs at 7,000 had p99 from 2.8 to 16 ms, with the max latency of a run up to 167 ms (stalls of unseparated cause, see "About the first try").
 
 ### The flip rule
 
@@ -410,7 +419,7 @@ Workerman nocache (21.88 against 26.24 µs/req).
 | k6 | v1.8.3, image `grafana/k6:1.8.3@sha256:2cd9cd09e4119340a122aaf06f30cf3009c19db23b87954909fba0d3eda58e08`, scripts `lab/macro/k6/fixed-rate.js` and `lab/macro/k6/posts.js` |
 | VUs | pre-allocated = max = rate / 5 (1,400 at 7,000 req/s, 1,900 at 9,500) |
 | Harness | the lab at commit `9aadddc` (no lab script changed by this commit) |
-| Other load | The VM had **no other container** before each series and in every counted JSON. The Mac was not quiet: Chrome and other apps were running, the load average was 4.6 to 7.6 on 12 CPUs during the runs, and the Mac was under memory pressure (about 35 GB used, 16 GB in the compressor, at 21:28). The host stalled for 100 to 300 ms at times (the first try's dropped iterations, and the max-latency column), which is why the VUs were doubled. I ran no build, no other benchmark and no `lab/check.sh` during a series (a `summarize.sh` run with no input, blocked on stdin, ran during the second and third runs of the restart; it used no CPU). |
+| Other load | The VM had **no other container** before each series and in every counted JSON. The Mac was not quiet: Chrome and other apps were running, the load average was 4.6 to 7.6 on 12 CPUs during the runs, and the Mac was under memory pressure (about 35 GB used, 16 GB in the compressor, at 21:28). Stalls of 100 to 450 ms happened (the dropped iterations of the invalid runs, and the max-latency column), all on `posts.js`; their cause is not separated (the host, or the server's database reads). I ran no build, no other benchmark and no `lab/check.sh` during a series (a `summarize.sh` run with no input, blocked on stdin, ran during the second and third runs of the restart; it used no CPU). |
 
 The exact commands, from the repo root (the drivers were loops in a scratch folder, not committed; they are these calls in
 this order; `<server>` is one of the four below, `<route>` one of the two below):
@@ -441,11 +450,16 @@ bash lab/conformance.sh --image 8.5 <server flags>        # output kept as confo
   (14.28 KiB) describes neither half. Under the macro load, the 1,400 connections of k6 already put Swoole's Pss_Anon at
   102 MiB, against 12 MiB for Workerman and 9 MiB for DIY, and memory.current at 357 MiB against 268 and 263.
 - **`/noop` costs a lot less at 9,500 than at 7,000** (20 to 27 % less per request), much more than the 5 to 15 % predicted,
-  while posts drops by about 5 %. The part of the cost that does not depend on the rate is large on the cheap route.
+  while posts drops by about 5 %. **Not explained.** The repeats are wide: DIY's three `/noop` runs at 9,500 are 15.91, 17.37
+  and 19.76 (27 %, 21 % and 10 % under the 7,000 median). A fixed cost per wake-up would be the same for both routes,
+  but the saving is 7 µs on Swoole `/noop` (25.47 to 18.53) against 1.8 on posts, so that explanation does not fit
+  and was not tested.
 - **No runtime was killed for memory.** Swoole at 65,522 connections is at 1.62 GiB of the 2 GiB, 18 KiB of
   `Pss_Anon` per connection at the max on average.
-- **The posts route stalls more than `/noop`:** all invalid runs were `posts.js` runs, with 100 to 450 ms of max latency,
-  at 700 VUs and at 1,400. Whether the host or the server is stalling was not separated.
+- **The posts route stalls more than `/noop`:** all 7 invalid runs (4 in the first try, 3 in the counted series) were
+  `posts.js` runs, with 100 to 450 ms of max latency, at 700 VUs and at 1,400; none of the 28 `/noop` runs was invalid. The
+  cause is not separated: the host, or the server's database reads. 6 of the 7 cost more µs/req than the valid run of
+  their pair.
 - **DIY on 8.6** cost 33.16 on posts in its one information run, 13.8 % above its 8.5 median (the other three 8.6 numbers
   are within 6.4 % of the 8.5 medians). One run each: not a result.
 - **DIY wins by a margin that is not large:** 14.1 % on `/noop` and 11.3 % on posts against Swoole, with a spread of

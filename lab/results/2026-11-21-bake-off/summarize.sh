@@ -130,7 +130,7 @@ jq -nr "$PRELUDE"'[inputs | rec | select(.image == "8.6")] | sort_by(.date) | .[
 echo
 echo "### Series C: connections (one run per runtime, 8.5)"
 echo
-echo "| Runtime | Max connections | Stopped at step | Why it stopped | Source addresses | Pss slope KiB/conn | Pss_Anon slope KiB/conn | memory.current slope KiB/conn | Pss_Anon per connection at the max KiB | memory.current per connection at the max KiB | Pss per connection at the max KiB (with the mapped database) | Baseline Pss / Pss_Anon / memory.current MiB | Held steps in the slope | Valid (other containers) |"
+echo "| Runtime | Max connections | Last step held | Why it stopped | Source addresses | Pss slope KiB/conn | Pss_Anon slope KiB/conn | memory.current slope KiB/conn | Pss_Anon per connection at the max KiB | memory.current per connection at the max KiB | Pss per connection at the max KiB (with the mapped database) | Baseline Pss / Pss_Anon / memory.current MiB | Held steps in the slope | Valid (other containers) |"
 echo "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"
 for s in swoole workerman-nocache diy; do
   f="$(ls conns-"$s"-*.json 2>/dev/null | head -1 || true)"
