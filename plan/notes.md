@@ -172,3 +172,139 @@ the "no worktree" part of D12 if Jacob agrees.
 
 **2026-11-21 09:50:** Jacob: "Yes, from phase 3". **Verdict:** ✅ D14 (recorded by the project manager in
 `decisions.md`): from phase 3, code on a branch per phase in its own worktree, `plan/` stays on `main`.
+
+### 2026-11-22 10:33 · 💡 Idea: compile the slowest PHP functions to native code
+
+**Jacob** (to Gemini, after a LinkedIn post about fast-anything): « si je réussis à trouver les fonctions qui prennent
+le plus de temps en PHP et que je les compile comme Fast Anything en Python, ça pourrait me sauver du temps, non ? »
+
+**Challenge:**
+
+- **It's HolyPHP's road.** HolyPHP compiles a PHP syntax to C and rewrote its runtime in C: 270,000 users, and the
+  leaderboard notes file it as "not really PHP". Our goal is the real-PHP record (D2): every function moved to C or
+  Rust moves us toward that line.
+- **The genuine version already exists:** OPcache's tracing JIT compiles hot PHP to machine code, and the micro
+  harness measures every step with the JIT on and off. FFI to `libsqlite3` (S6) calls an existing C library, like
+  `pdo_sqlite` does.
+- **The gain is unknown:** DIY's 29 µs on posts splits between our PHP code, SQLite's C and the kernel's syscalls,
+  in proportions nobody has measured. Native code only shrinks the first part. The profiler (SPX or Excimer,
+  [measuring.md](details/measuring.md)) tells how big it is.
+
+**Verdict:** ❌ our own native code (D2). ✅ Gemini's own advice, "profile first": already in the plan.
+
+### 2026-11-22 10:33 · 💡 Idea: Gemini's list of SQLite I/O techniques
+
+**Jacob:** « c'est quoi les techniques connues ou peut-être moins connues, moins répandues, pour optimiser ça de façon
+maximale ? »
+
+**Challenge:** the premise first. Gemini says the bottleneck is SQLite's I/O. On our VM the 250 MB seed sits in RAM,
+so a read is a memory copy, not a disk access; the only disk waits are the WAL writes and the checkpoint's `fsync`.
+In the bake-off, a whole `/posts/:id` (SQLite read plus JSON) costs about 7 µs more than `/noop`'s 22: the network
+side weighs more, at least on that route. `/feed` (20 posts, 20 like counts) isn't measured yet.
+
+| Technique                                            | Verdict          | Why                                                                                         |
+|------------------------------------------------------|------------------|---------------------------------------------------------------------------------------------|
+| WAL + `synchronous=NORMAL`                           | ✅ already (S9)   | rule 6's minimum, our starting point                                                        |
+| Prepared statements reused                           | ✅ already (S6)   | rule 5 allows it, S6 measures what it saves                                                 |
+| `mmap_size`, `cache_size`                            | ✅ already (S6)   | a full mmap of the 250 MB seed fits in 2 GB; watch the cgroup's memory                      |
+| `temp_store=MEMORY`                                  | ✅ already (S6)   | cheap to try; `EXPLAIN QUERY PLAN` tells if our queries use a temp table at all             |
+| Checkpoint control (`wal_autocheckpoint`, `PASSIVE`) | ✅ already (S9)   | plus a background checkpointer, see the `Promise.all` note below                            |
+| Group commit                                         | ✅ already (S9)   | rule 6 allows it, see the next note                                                         |
+| `busy_timeout`, a single writer                      | free             | one process is already the only writer: no lock to fight over. Comes back only with S1-b    |
+| Covering indexes                                     | ❌                | rule 3: no new index                                                                        |
+| Avoid `OFFSET`                                       | n/a              | the feed is `LIMIT 20`, no paging                                                           |
+| io_uring, reading the B-trees directly               | ❌ already        | out of scope in `plan.md`: not reachable from PHP without C                                 |
+
+**Verdict:** ✅ the plan already holds this list (S6, S9), a good sign for [steps.md](details/steps.md); the only new
+item is the background checkpointer. ❌ covering indexes (rule 3).
+
+### 2026-11-22 10:33 · 💡 Idea: group the requests to the database
+
+**Jacob:** "one of the idea of Gemini to group the request to the DB was already in my mind". Gemini's version: the
+group commit, several writes in one transaction, each request answered once the `COMMIT` succeeds.
+
+**Challenge:**
+
+- **Writes, the group commit:** rule 6 allows it if every response waits for its commit, and S9 already lists it
+  ("writes queued for a few ms"). **A better trigger than a timer:** one batch per turn of the event loop. Each turn
+  gathers the writes that arrived together, runs one `BEGIN … COMMIT`, then answers them all. At low load a batch is
+  one write, so no added latency; near saturation the batches grow by themselves, exactly when it matters. HolyPHP
+  uses a group commit too.
+- **What it can win:** writes are 7.8 % of the bench's requests (about 700 per second at 100,000 users). The gain is
+  a commit's fixed cost (lock calls, WAL frame writes) shared by the batch, plus pages that several likes touch (the
+  hot posts' index pages) written once. Measure one commit alone first: at 10 µs, the ceiling is about 1 % of the CPU.
+- **Reads, a grey zone of rule 5:** grouping five `/posts/:id` into one `IN (...)` query keeps one row read per
+  request, which looks allowed. Merging identical reads (two `/feed` in the same turn, or the same hot post) shares one
+  query result between requests: rule 5's forbidden result cache. In the real bench `/posts/:id` only targets the
+  newest 20 posts, so duplicates would be common.
+- **Reads, the gain:** only a query's fixed cost (bind, execute, reset), and only when a turn holds several requests,
+  which means near saturation.
+
+**Verdict:** ✅ the group commit per loop turn, a new S9 variant for phase 4. 🔶 batched reads: only without merging
+duplicates, and only if the profile shows a query's fixed cost is worth it. ❌ merging identical reads (rule 5).
+
+### 2026-11-22 10:33 · 💡 Idea: test the way Arjay tests
+
+**Jacob:** "We must include its way to test!" The challenge's author, in his newsletter, shares his skill
+[realistic-load-test](https://github.com/arjaythedev/realistic-load-test) (MIT, commit `8eb3343`). His point: a load
+test that hammers one endpoint gives a requests-per-second number, not a number of users.
+
+**His method** (read from the skill on 2026-11-22): profile how real users behave, turn the profile into virtual users
+that sleep their think time (`ramping-vus`, a closed model), calibrate at 20 to 50 VUs, warm up at about 10 % of the
+expected capacity, climb a linear staircase that stops at the first failing step (p95, p99, errors), then hold
+5 minutes at the estimate, one step above and one below, 3 times each, and keep the median.
+
+**Challenge:**
+
+- **The challenge already is his method, applied to this app:** `bench/load.js` is the user profile (the feed, then a
+  post taken from it, 15 % like, 2 % new post, 3 to 15 s of think time, one connection per user), and the scoring is
+  a staircase (doubling from 2,500, bisection, 5-minute hold, fresh database for each probe). His first steps (profile
+  the users, write the VU) are done for us.
+- **Where our lab differs, on purpose:** it ranks variants by µs per request at a fixed rate
+  (`constant-arrival-rate`), one route at a time, 30 s, about 1,900 connections. Good for ranking, blind to four
+  things the bench does:
+  1. **the mix:** `/feed` is 46 % of the requests and the heaviest, and isn't measured yet;
+  2. **the connections:** 75,000 to 100,000 open, mostly idle;
+  3. **time:** 5 minutes of writes, so the WAL grows and checkpoints run;
+  4. **the hot set:** our `posts.js` walks all 500,000 posts in turn; the bench only reads posts it just got from the
+     feed, the newest 20. Q10's stalls may be a lab artifact (cold pages of the 250 MB file) that the bench never
+     meets.
+- **The Mac can't play 100,000 users:** k6 needs 1 to 5 MB per VU and one instance tops out around 30,000 to 40,000
+  VUs (k6's "Running large tests" guide); one source IP opens about 64,000 connections to one port. The scoring uses
+  several 16-core generators.
+- **A version that fits on the Mac:** `load.js`'s journey with shorter think times (a few thousand VUs make the
+  bench's 9,300 req/s, with the same mix and the same hot posts), plus phase 3's connection harness holding about
+  60,000 idle keep-alive connections, so the server also carries the bench's connection count. Arjay's run shape on
+  top: warm-up, staircase, 5-minute holds 3 times, median, a fresh database each time. The full-size run stays for
+  phase 6, on x86 with several generators.
+
+**Verdict:** 🔶 Claude's take: yes, and early. Phase 4 starts with a walking skeleton (DIY, the 5 endpoints with the
+reference SQL, the 42 tests) and the realistic mode above, then a profile under that load; the step lab follows, in
+the order the profile gives. Open until Jacob picks.
+
+### 2026-11-22 10:33 · 💡 Idea: run a request's steps in parallel, like `Promise.all`
+
+**Jacob:** async steps like JavaScript's `Promise.all`, where one failing part fails the request: "we do not wait to
+validate the JWT before starting the rest of the process, so if the JWT validation fails, we stop the rest […] maybe
+it is not worth because we waste CPU in this case, but maybe it is worth for a large scale".
+
+**Challenge:**
+
+- **Possible:** Fibers (built into PHP since 8.1), Swoole's coroutines, Amp or ReactPHP promises, or real threads with
+  the `parallel` extension (it needs a thread-safe PHP build).
+- **`Promise.all` wins by overlapping waits** (calls to other services, the disk). Inside one of our requests nothing
+  waits: the JWT check is an HMAC, pure CPU, and the SQLite read is pure CPU too (the database sits in RAM, and
+  `pdo_sqlite` has no async API). On one vCPU, two CPU tasks run one after the other however they're written.
+- **The score counts CPU, not one request's latency:** users ≈ 9.2 million / µs per request. A microsecond less
+  latency buys no user; starting a fiber or a coroutine costs CPU, which does cost users.
+- **The failure case is rare, and so is the gain:** the bench always sends valid tokens.
+- **Where the instinct is right, two places where something really waits:**
+  - **across requests:** the event loop already does it. While one connection waits on the network, the others run:
+    that's what the three runtimes of the bake-off do;
+  - **the WAL checkpoint:** the one step that waits on the disk (`fsync`). In a one-process loop, a checkpoint inside
+    a request freezes every connection while it runs. A separate process that runs `PRAGMA wal_checkpoint(PASSIVE)`
+    on a timer, with the server's `wal_autocheckpoint` off, takes the wait off the loop: the CPU work stays, the
+    waiting goes. HolyPHP runs its checkpoints in the background.
+
+**Verdict:** ❌ parallel steps inside a request (one vCPU, steps that only use the CPU). ✅ its real form, a
+background checkpointer: a new S9 variant for phase 4, next to the group commit per loop turn.
