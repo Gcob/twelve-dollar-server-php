@@ -322,7 +322,7 @@ check_diy_parser() {
   out="$(bash "$LAB/run.sh" 8.5 php /lab/check/diy-parser-test.php 2>&1)" || rc=$?
   [ "$rc" = 0 ] || { echo "diy-parser-test.php exited $rc: ${out//$'\n'/ | }"; return 1; }
   ok="$(grep -c '^ok  ' <<<"$out")"
-  [ "$ok" = 34 ] || { echo "expected 34 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
+  [ "$ok" = 40 ] || { echo "expected 40 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
   grep -q 'FAIL' <<<"$out" && { echo "a case failed: ${out//$'\n'/ | }"; return 1; }
   return 0
 }
@@ -366,6 +366,44 @@ check_macro_bake_diy_posts_is_valid() {
   detail="$(jq -c '{valid, label, server: {ext: .server.ext, socket: .server.socket}, memory: .results.memory.under_load}' "$json")"
   echo "the JSON does not hold the run's options and numbers: $detail"
   return 1
+}
+
+# The challenge app's own cases, through handler_handle on a small database: what the challenge's suite does not reach (the JWT
+# rules, the body rules, one like per user, the feed's size and order, a write committed before the response).
+check_app_cases() {
+  local out ok rc=0
+  out="$(bash "$LAB/run.sh" 8.5 php /lab/check/app-test.php 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "app-test.php exited $rc: ${out//$'\n'/ | }"; return 1; }
+  ok="$(grep -c '^ok  ' <<<"$out")"
+  [ "$ok" = 57 ] || { echo "expected 57 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
+  grep -q 'FAIL' <<<"$out" && { echo "a case failed: ${out//$'\n'/ | }"; return 1; }
+  return 0
+}
+
+# The challenge app passes the challenge's own test suite (42 checks), twice in a row: the second run starts from a fresh copy of the
+# seed (the suite's golden answers fail on a database the first run wrote to), and no container is left behind.
+check_challenge_test_passes_on_app() {
+  local out run left rc
+  for run in 1 2; do
+    rc=0
+    out="$(bash "$LAB/challenge-test.sh" --image 8.5 2>&1)" || rc=$?
+    [ "$rc" = 0 ] || { echo "run $run: lab/challenge-test.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
+    grep -qx 'passed=42 failed=0' <<<"$out" || { echo "run $run: the summary is not 'passed=42 failed=0': ${out//$'\n'/ | }"; return 1; }
+  done
+  left="$(docker ps -a --format '{{.Names}}' | grep '^lab-challenge-' || true)"
+  [ -z "$left" ] || { echo "containers left behind: ${left//$'\n'/ }"; return 1; }
+}
+
+# A server that answers one golden wrong: the harness exits non-zero, names the check that fails (and only that one), and removes
+# its containers.
+check_challenge_test_fails_on_wrong_golden() {
+  local out left rc=0
+  out="$(bash "$LAB/challenge-test.sh" --image 8.5 --server "$LAB/check/fixtures/wrong-golden-app.php" 2>&1)" || rc=$?
+  [ "$rc" != 0 ] || { echo "expected a non-zero exit for a wrong server: ${out//$'\n'/ | }"; return 1; }
+  grep -q '^  FAIL GET /posts/250000 == golden' <<<"$out" || { echo "the failing check is not named: ${out//$'\n'/ | }"; return 1; }
+  grep -qx 'passed=41 failed=1' <<<"$out" || { echo "expected 'passed=41 failed=1': ${out//$'\n'/ | }"; return 1; }
+  left="$(docker ps -a --format '{{.Names}}' | grep '^lab-challenge-' || true)"
+  [ -z "$left" ] || { echo "containers left behind: ${left//$'\n'/ }"; return 1; }
 }
 
 # The bash scripts of the lab, one repo-relative path per line: every `*.sh` and every file whose first line is a bash or sh
@@ -438,6 +476,9 @@ CHECKS=(
   check_diy_partial_write
   check_conformance_bake_diy
   check_macro_bake_diy_posts_is_valid
+  check_app_cases
+  check_challenge_test_passes_on_app
+  check_challenge_test_fails_on_wrong_golden
   check_shellcheck
   check_shellcheck_catches_warning
 )

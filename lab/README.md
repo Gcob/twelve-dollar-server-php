@@ -312,7 +312,7 @@ The runtime bake-off compares runtimes (Swoole, Workerman, ext-event, a hand-wri
     --duration 20 --path /posts/1 --script lab/macro/k6/posts.js
   ```
 
-  - **The loop** (`bake-diy.php`): one `EventBase` (`epoll`); one persistent read event on the listening socket, which accepts
+  - **The loop** (`diy-server.php`, shared with the challenge app): one `EventBase` (`epoll`); one persistent read event on the listening socket, which accepts
     until `accept()` has nothing left, so a burst of connections is taken in one callback; one persistent read event per
     connection; a write event only while a connection holds bytes the socket did not take. A connection's state is one small
     object (`DiyPeer`: its parser object and its two events) allocated at accept. A request
@@ -326,15 +326,17 @@ The runtime bake-off compares runtimes (Swoole, Workerman, ext-event, a hand-wri
   - **The parser** (`diy-connection.php`, class `DiyConnection`, which knows nothing about the loop and works on any
     non-blocking stream): on each read it appends to the connection's buffer, then, while the buffer holds a whole request,
     finds `\r\n\r\n`, reads the request line (method, target, `HTTP/1.1` or `HTTP/1.0`), reads `Content-Length`, `Connection` and
-    `Transfer-Encoding` (names compared without case) and waits for the whole body. It calls the handler with the method, the
-    target (the handler cuts a `?query`) and the body, and appends the response to the write buffer. The answer is
-    `HTTP/1.1 <status> <reason>`, `Content-Type: application/json`, `Content-Length`, nothing else.
+    `Transfer-Encoding` and `Authorization` (names compared without case) and waits for the whole body. It calls
+    `handler_handle($method, $target, $body, $authorization)` (the bake-off's handler takes the first three and ignores the
+    fourth; the target keeps its `?query`, which the handler cuts) and appends the response to the write buffer. The answer is
+    `HTTP/1.1 <status> <reason>`, `Content-Type: application/json`, `Content-Length`, nothing else (the statuses it knows are 200,
+    201, 400, 401, 404, 500 and 503). The `Authorization` value is handed over without its surrounding spaces, `''` when the request
+    has none.
   - **What it refuses with `400 {"error":"bad request"}` and a close:** a request line that does not have a method, a target and
     `HTTP/1.1` or `HTTP/1.0`; a header line without a name and a colon; a block of request line and headers over 8 KiB (checked
     before the blank line arrives too, so a client that never ends its headers is cut at 8 KiB); a `Content-Length` that is not
     plain digits, appears twice, or is over 1 MiB (a bound on one connection's memory; the challenge's bodies are tiny);
-    `Transfer-Encoding` of any kind (k6 never sends a chunked body). **What it does not read:** `Authorization` (a later phase),
-    other headers (a line only has to have a name and a colon), absolute-form targets (the handler answers 404), lines ended by a
+    `Transfer-Encoding` of any kind (k6 never sends a chunked body). **What it does not read:** other headers (a line only has to have a name and a colon), absolute-form targets (the handler answers 404), lines ended by a
     bare `\n`.
   - **Keep-alive:** on by default on `HTTP/1.1`. `Connection: close` closes the connection after its response is fully written,
     and what the client sent after that request is not answered; so does `HTTP/1.0` without `Connection: keep-alive`. An
@@ -499,6 +501,43 @@ full summaries of the measured run and the warm-up. Numbers from another machine
 - k6 1.x is pinned, but the `--summary-export` format is read by key (`http_reqs.count`, `http_req_duration.med`,
   `vus.max`, `dropped_iterations.count`, which k6 leaves out when it is 0): re-check them when the pin moves.
 - Do not start an image build or another benchmark during a measured run: they share the VM's CPUs and its memory bus.
+
+## The challenge app and its test
+
+`lab/app/` is the challenge's five endpoints (`GET /health`, `GET /feed`, `GET /posts/:id`, `POST /posts`,
+`POST /posts/:id/like`, as `reference/twelve-dollar-server-challenge/SPEC.md` says) served by the DIY loop, with the simplest
+variant of every step of a request, on purpose: later work measures the alternatives one by one.
+
+- **`lab/app/server.php`** is the entry, started like a challenge submission: `SQLITE_PATH` (the file it opens, never a copy),
+  `JWT_SECRET`, `HOST` (default `0.0.0.0`) and `PORT` (default 8080), with `--ext sockets --ext event`. It listens only once the
+  database is open and prints the same boot lines as the bake-off's DIY server (`listening on`, `loop:`, `socket:`).
+  **`lab/app/app.php`** holds the work, one function per step so that a profiler can tell them apart: `handler_handle` (the
+  route, a plain match), `jwt_verify`, `id_validate`, `body_validate`, `feed_query`, `post_query`, `post_insert`, `post_exists`,
+  `like_insert`, `feed_json`, `post_json`, `like_json`, `health_json`, `response_json`, `response_error`. Parsing and writing are
+  `DiyConnection`'s. The SQL is the spec's reference SQL; every write is its own autocommit transaction, committed before the
+  response is built; the pragmas are the bake-off handler's. Every token is verified on every request, and a token without `exp`
+  is rejected. `lab/check/app-test.php` covers what the challenge's suite does not (the JWT and body rules, one like per user,
+  the feed's order).
+- **`lab_start_app`** (`lab/lib.sh`) is how a harness starts the app on a fresh database: it copies `lab/data/feed.db` **with
+  `cp` inside the server container** (the copy's page cache is charged to the server's cgroup, like the bake-off's copy), runs
+  `sync` on the copy, then starts the app with `SQLITE_PATH` pointing at it. `lab/data/` is mounted read-only and never written.
+- **`lab/challenge-test.sh`** runs the challenge's own `test/test.sh`, unchanged, against it:
+
+  ```bash
+  bash lab/challenge-test.sh --image 8.5 [--server lab/app/server.php] [--ext sockets --ext event] [--port 18110]
+  ```
+
+  It starts the server on a fresh copy, waits for `GET /health` (60 s at most, like the challenge's `test/run.sh`), prints the
+  suite's output and exits with its code (`passed=42 failed=0`, exit 0). Both containers are removed at the end, whatever
+  happens. Run it twice in a row: each run has its own copy, so the second passes as well (the suite's golden answers fail on a
+  database a first run wrote to). `--server` takes any file that reads the same environment: `lab/check/fixtures/wrong-golden-app.php`
+  is the real app on a database with one post changed, and `lab/check.sh` checks that the harness fails on it and names the check.
+- **Where the suite runs:** in a container on the host network, from the image `php-lab-tools:1` (`lab/images/Dockerfile.tools`:
+  Ubuntu 24.04 by digest, plus bash, curl, jq and openssl, which `test.sh` needs and the php-lab images lack: no `jq`). It is built
+  the first time (`lab_ensure_tools_image`). Docker Desktop does not publish a host-network container's ports to macOS unless
+  its host networking setting is on, and a harness must not change that setting, so running `test.sh` from the Mac does not work
+  here. No published image was used for the four tools: building them from the pinned Ubuntu is less to trust than a third-party
+  image.
 
 ## Connection test
 

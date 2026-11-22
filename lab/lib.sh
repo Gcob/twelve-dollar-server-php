@@ -76,19 +76,58 @@ lab_build_php_flags() {
   for kv in "${LAB_INI[@]+"${LAB_INI[@]}"}"; do LAB_PHP_FLAGS+=(-d "$kv"); done
 }
 
-# lab_start_server <container name> <variant> <port> <server file as the container sees it>: starts the server container the
-# same way for lab/macro.sh and lab/conformance.sh (1 CPU, 2 GiB, the server CPU, host network, lab/ at /lab, the seed
-# read-only at /lab/data). Needs LAB (the lab/ folder) and LAB_PHP_FLAGS (lab_build_php_flags); LAB_ENV, an array of K=V,
-# is passed with -e after PORT. Never mount lab/data writable here: a server must copy feed.db, not open it (WAL files).
-# LAB_SERVER_NOFILE, when set, replaces the container's `nofile` limit (a test hook for lab/conns.sh: the later --ulimit of the
-# same name wins).
-lab_start_server() {
-  local name="$1" variant="$2" port="$3" server_in="$4" env_args=() nofile_args=() kv
+# lab_run_server_container <container name> <variant> <port> <command...>: the `docker run` of every server container (1 CPU,
+# 2 GiB, the server CPU, host network, lab/ at /lab, the seed read-only at /lab/data), running <command> in php-lab:<variant>.
+# Needs LAB (the lab/ folder); LAB_ENV, an array of K=V, is passed with -e after PORT. Never mount lab/data writable here: a
+# server must copy feed.db, not open it (WAL files). LAB_SERVER_NOFILE, when set, replaces the container's `nofile` limit (a test
+# hook for lab/conns.sh: the later --ulimit of the same name wins).
+lab_run_server_container() {
+  local name="$1" variant="$2" port="$3" env_args=() nofile_args=() kv
+  shift 3
   for kv in "${LAB_ENV[@]+"${LAB_ENV[@]}"}"; do env_args+=(-e "$kv"); done
   [ -z "${LAB_SERVER_NOFILE:-}" ] || nofile_args=(--ulimit "nofile=$LAB_SERVER_NOFILE:$LAB_SERVER_NOFILE")
   docker run -d --name "$name" "${LAB_RESOURCE_FLAGS[@]}" "${nofile_args[@]+"${nofile_args[@]}"}" --network host --cpuset-cpus "$LAB_CPUSET_SERVER" \
     -v "$LAB:/lab:ro" -v "$LAB/data:/lab/data:ro" -e "PORT=$port" "${env_args[@]+"${env_args[@]}"}" \
-    "$LAB_IMAGE:$variant" php "${LAB_PHP_FLAGS[@]}" "$server_in" >/dev/null
+    "$LAB_IMAGE:$variant" "$@" >/dev/null
+}
+
+# lab_start_server <container name> <variant> <port> <server file as the container sees it>: starts a bake-off server container the
+# same way for lab/macro.sh and lab/conformance.sh (see lab_run_server_container). Needs LAB and LAB_PHP_FLAGS (lab_build_php_flags).
+lab_start_server() {
+  local name="$1" variant="$2" port="$3" server_in="$4"
+  lab_run_server_container "$name" "$variant" "$port" php "${LAB_PHP_FLAGS[@]}" "$server_in"
+}
+
+# The challenge's secret, the one of its test suite and of the benchmark box.
+LAB_JWT_SECRET=twelve-dollar-challenge
+# Where the challenge app finds its database inside the container: a fresh copy of the seed, on the container's own disk.
+LAB_APP_DB=/tmp/feed.db
+
+# lab_start_app <container name> <variant> <port> <app file as the container sees it>: starts the challenge app (lab/app/server.php,
+# or another file that reads the same environment) on a FRESH copy of the seed: every run of a harness starts from the same
+# database, because the challenge's tests and its golden answers need it. The copy is made by `cp` inside the server container, so
+# that the page cache it fills is charged to the server's cgroup like the bake-off's copy was, and `sync <file>` writes it to disk
+# before the app starts: the first requests then do not wait on a dirty copy. The app only opens SQLITE_PATH. Needs LAB,
+# LAB_PHP_FLAGS (lab_build_php_flags); LAB_ENV is passed too, after JWT_SECRET and SQLITE_PATH.
+lab_start_app() {
+  local name="$1" variant="$2" port="$3" server_in="$4" extra=("JWT_SECRET=$LAB_JWT_SECRET" "SQLITE_PATH=$LAB_APP_DB")
+  local own_env=("${extra[@]}" "${LAB_ENV[@]+"${LAB_ENV[@]}"}")
+  local LAB_ENV
+  LAB_ENV=("${own_env[@]}")
+  lab_run_server_container "$name" "$variant" "$port" sh -c 'cp "$1" "$2" && sync "$2" && shift 2 && exec php "$@"' \
+    lab-app /lab/data/feed.db "$LAB_APP_DB" "${LAB_PHP_FLAGS[@]}" "$server_in"
+}
+
+# The image of lab/challenge-test.sh's test container: the four programs the challenge's test/test.sh needs (bash, curl, jq,
+# openssl), which the php-lab images lack (jq). Built from lab/images/Dockerfile.tools (the same pinned Ubuntu as the other images)
+# by lab_ensure_tools_image. Not a published image: pulling a third-party image for four packages is more trust than building them.
+LAB_TOOLS_IMAGE=php-lab-tools:1
+
+# lab_ensure_tools_image: builds LAB_TOOLS_IMAGE when it is missing. Needs LAB.
+lab_ensure_tools_image() {
+  docker image inspect "$LAB_TOOLS_IMAGE" >/dev/null 2>&1 && return 0
+  echo "building $LAB_TOOLS_IMAGE (once)" >&2
+  docker build -q -t "$LAB_TOOLS_IMAGE" -f "$LAB/images/Dockerfile.tools" "$LAB/images" >/dev/null
 }
 
 # lab_in_container_path <file under lab/>: prints the file's path in the containers (lab/ is mounted at /lab). Returns 1 with a

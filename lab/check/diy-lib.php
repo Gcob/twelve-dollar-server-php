@@ -9,12 +9,20 @@ require __DIR__ . '/../servers/diy-connection.php';
 
 /**
  * /big/<n> answers n bytes (n a multiple of 16) of counters, so that a byte lost, repeated or moved shows in a comparison;
- * /boom throws, like a handler whose database read fails; anything else echoes `<method> <path> <body>`.
+ * /status/<n> answers status n with `{}`; /boom throws, like a handler whose database read fails; /auth echoes the Authorization value and the body it got; anything
+ * else echoes `<method> <path> <body>`. The Authorization value is the fourth argument: a handler that takes three (the
+ * bake-off's) ignores it, which is what keeps the bake-off servers working.
  *
  * @return array{int, string}
  */
-function handler_handle(string $method, string $path, string $body): array
+function handler_handle(string $method, string $path, string $body, string $authorization = ''): array
 {
+    if (str_starts_with($path, '/status/')) {
+        return [(int) substr($path, 8), '{}'];
+    }
+    if ($path === '/auth') {
+        return [200, '{"echo":"auth=' . $authorization . ' body=' . $body . '"}'];
+    }
     if (str_starts_with($path, '/big/')) {
         return [200, diy_body((int) substr($path, 5))];
     }

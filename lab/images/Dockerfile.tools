@@ -1,0 +1,8 @@
+# php-lab-tools: the four programs the challenge's test/test.sh needs (bash, curl, jq, openssl), on the same pinned Ubuntu as the
+# lab's other images. Built by lab/challenge-test.sh the first time it runs (lab_ensure_tools_image in lab/lib.sh), never at run
+# time: the test runs from this image on the host network, because a macOS host does not reach a host-network container.
+FROM ubuntu:24.04@sha256:9c7f200c07e3d4a03e7249d2c16bf66a51120fb876aa2242cf31451412543289
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends bash curl jq openssl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
