@@ -3,18 +3,18 @@
 **Pace:** 🟢 full · 5-hour 3 % · weekly 23 % at 10:52 · 5-hour resets 15:19 · away
 
 **Status:** 🔵 Running
-**Progress:** step 0/7, plan review · started 2026-11-22 10:50
+**Progress:** step 0/7, `plan-reviewer` (full) running since 10:59 · started 2026-11-22 10:50
 **Since your last read:** phase 4 planned in [details/phase-4.md](details/phase-4.md): 5 scopes, predictions written
 before any measurement. Q7 and Q10 recorded (D26, D28), D27 to D36 added. Phase 3's run archived in
 [runs/phase-3/](runs/phase-3/run.md).
-**👉 Your turn:** nothing new. Scope 5 will need a quiet Docker VM (D15).
+**👉 Your turn:** nothing new. The Docker VM is quiet since 10:55 (D15): keep it that way until scope 5 is measured.
 
 ## Steps
 
 | #   | Step              | State   | Start | End | Detail |
 |-----|-------------------|---------|-------|-----|--------|
-| 0   | Plan review       | to do   |       |     |        |
-| 1   | Scopes            | to do   |       |     | 0/5    |
+| 0   | Plan review       | running | 10:59 |     | full   |
+| 1   | Scopes            | to do   |       |     | 0/6    |
 | 2   | Questions         | to do   |       |     |        |
 | 3   | Lab suite         | to do   |       |     |        |
 | 4   | `pr-reviewer`     | to do   |       |     |        |
@@ -30,7 +30,10 @@ before any measurement. Q7 and Q10 recorded (D26, D28), D27 to D36 added. Phase 
 | 3   | to do |       |     |       |        |     |       |
 | 4   | to do |       |     |       |        |     |       |
 | 5   | to do |       |     |       |        |     |       |
+| 6   | to do |       |     |       |        |     |       |
 
 ## Reviews
 
-Nothing yet.
+### `plan-reviewer`, full · since 10:59
+
+Running.

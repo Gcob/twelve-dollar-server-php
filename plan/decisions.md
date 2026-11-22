@@ -115,6 +115,9 @@
   scale picked by calibration so the knee needs at most 2,500 VUs. The baseline: warm-up, a staircase that stops at the
   first failing step, then 3 holds of 5 minutes at the highest passing step (the median counts) and 1 hold one step
   above; a fresh seed copy for every run (project manager, phase 4, 2026-11-22).
+- **D37:** `lab/check.sh` runs every `lab/results/*/summarize.sh` and checks that each line it prints is in that
+  folder's README, so a results README can't drift from its raw files. Phase 4 adds it as its last scope, so it also
+  covers the baseline's folder ([round 3](questions/2026-11-22-1049.ronde-3.md), Jacob's `ok` to the retro's item).
 
 ## History
 

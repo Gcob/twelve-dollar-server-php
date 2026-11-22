@@ -29,3 +29,5 @@
   kept across requests, and no read shared by several requests (merged, or batched with `IN (...)`). Prepared
   statements reused across requests are fine.
 - **PHP 8.5** (`php-lab:8.5`) for everything in this phase.
+- **shellcheck** 0.11.0 is installed on the Mac (the pinned image's version): run it locally on the scripts you touch
+  (`shellcheck --severity=warning --external-sources <file>`); `lab/check.sh` stays the reference.

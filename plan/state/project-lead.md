@@ -29,12 +29,15 @@ Skill defaults (`autonomous-run/pipeline.yml`), no run override file. Changes fr
 
 | Scope | Agent id | State |
 |-------|----------|-------|
+| plan-reviewer | a480e25853b51eccf | full, running since 10:59 |
 
 ## Verified
 
 - The worktree is at `0eba220`, clean; its `reference` is a relative symlink to the main checkout's clone (excluded by
   `/reference` in the shared `.git/info/exclude`); `lab/seed.sh` printed `OK ... content sha256 matches` there at 10:53.
 - 23 other containers running at 10:52 (D15: no measurement). Docker VM: 12 CPUs, 7.75 GiB.
+- The planning session says Jacob stopped his 23 containers at 10:55: the VM is quiet, measuring allowed once the
+  plan is ready; still `docker ps` before each measurement, and tell the planning session if one comes back.
 
 ## Assumed
 
@@ -50,7 +53,7 @@ Rien.
 
 - 10:55: phase 3's `run.md`, `run.yml` and `state/` archived in `plan/runs/phase-3/` (links rewritten to `../../`).
 - 10:56: Q7 and Q10 moved to `questions/2026-11-22-1049.ronde-3.md`; Round 3.
-- 11:05: D31 (the 97 % rule) comes from the arithmetic of a closed model with scaled think time: the number of VUs
+- 10:57: D31 (the 97 % rule) comes from the arithmetic of a closed model with scaled think time: the number of VUs
   for a 500 ms mean latency over the knee is `1 + 2.17 × 0.5 / (20.5 × s)`: 3.6 at `s = 0.02`, 1.05 at `s = 1`.
 
 ## Review triage
@@ -71,7 +74,7 @@ Rien.
 
 ## Plan read up to
 
-`plan.md`, `decisions.md` D1 to D36, 2026-11-22 11:05.
+`plan.md`, `decisions.md` D1 to D36, 2026-11-22 10:57.
 
 ## Next steps
 

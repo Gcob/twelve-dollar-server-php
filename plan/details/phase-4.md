@@ -40,11 +40,12 @@ From Jacob (D26 to D30) and the project manager (D31 to D36), in [decisions.md](
 | 3   | `feat(lab): idle connections and per-second series in the realistic mode` | `lab/realistic.sh --idle 5000` reports 5,000 idle connections held at the start and at the end; its per-second table has one row per second with latency per endpoint (count, p50, p99, max), server CPU, `Pss_Anon`, `memory.current`, WAL bytes, minor and major faults and the server's telemetry (longest callback, GC runs); `--cold` shows the copy's resident pages near 0 before the first request (`fincore`), against the whole file without it; `lab/macro.sh --per-second` prints the same latency series for a fixed-rate run |
 | 4   | `feat(lab): Excimer profiles folded into the steps S1 to S9`          | `lab/run.sh 8.5 php-info` prints `excimer: <version>`; a 20 s profiled realistic run writes the collapsed stacks and `lab/profile/fold.php` prints one table (rows S1 to S9, the event loop, unclassified; columns per endpoint and all), the shares summing to 100 % and unclassified under 5 %, plus the cgroup's user and system split for the same window |
 | 5   | `docs(lab): the realistic baseline`                                     | `lab/results/<date>-realistic-baseline/README.md` holds the predictions (copied from this file, unchanged), the staircase, the 3 holds and their median, the hold one step above, per-endpoint p95 and p99, per-second latency, memory and WAL over time, the profile table, Q10's runs and answer, telemetry's and Excimer's cost, each prediction marked held or not; every counted run passes and says `other_containers: 0`; `summarize.sh` regenerates its tables |
+| 6   | `chore(lab): check that every results folder regenerates its tables` | `bash lab/check.sh` runs every `lab/results/*/summarize.sh` and prints `ok` for each folder whose README holds every line it prints (the bake-off's and the baseline's included); a fixture folder whose README misses one line fails and names the line |
 
 Vertical slices: scope 1 is the skeleton with the test that proves it (the challenge's own). Scope 2 is the smallest
 realistic run end to end (journey, staircase, pass rule) on that skeleton. Scope 3 adds what the bench has that scope 2
 doesn't (the idle connections, time) and Q10's instruments. Scope 4 adds the profiler and its fold. Scope 5 only
-measures, on a quiet VM (D15).
+measures, on a quiet VM (D15). Scope 6 comes last so its check also covers the baseline's folder (D37).
 
 **The lab's suite:** `lab/check.sh`. Each scope adds its smoke check (scope 1 the challenge's tests, scopes 2 and 3 a
 short realistic run, scope 4 a short profiled run and the fold on a fixture). It's the "full suite" of the skill, run
@@ -200,9 +201,19 @@ layout in `lab/lib.sh`, pinned versions with sha256, no absolute `/Users/...` pa
 - **Then:** "Did the predictions hold?", one line each, and **the step lab's order**: the steps ranked by their µs per
   request in the profile, which phase 5 follows.
 
+## Scope 6: every results folder regenerates its tables (D37)
+
+- **Seam:** a check in `lab/check.sh`, and a fixture folder under `lab/check/fixtures/`.
+- **What:** for each `lab/results/*/summarize.sh`, run it (it reads only the files next to it) and check every line it
+  prints is in that folder's `README.md`, byte for byte. A folder without `summarize.sh` is skipped and named. The
+  phase 2 folder (`2026-11-21-noop-swoole`) gets the check too if it has a `summarize.sh`; if its README was written by
+  hand, the check says so instead of failing.
+- **Cases:** every real folder passes; the fixture (a `summarize.sh` printing two lines, a README with one) fails and
+  prints the missing line.
+
 ## Predictions (D5)
 
-Written by the project manager on 2026-11-22 at 11:05, before any phase 4 measurement. Arm64, Docker Desktop on an M3
+Written by the project manager on 2026-11-22 at 10:57, before any phase 4 measurement. Arm64, Docker Desktop on an M3
 Pro, quiet VM, PHP 8.5, the DIY server, 1 CPU.
 
 **What we start from:** the bake-off's DIY at 7,000 req/s: `/noop` 21.88 µs/req, `/posts/:id` (a different post each

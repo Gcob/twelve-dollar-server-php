@@ -13,31 +13,7 @@ Arjay's rule 5 ruling and the two new S9 variants are D29 and D30. Progress in [
 > **Answer freely:** a letter or `ok`, your own choice (`other: …`), `?` if it's unclear, or
 > `badly framed: …` if an option is missing or the question doesn't hold.
 
-### Phase 3 delivered at 22:36 (run, merged)
-
-**What's established:**
-
-- 13 commits on `phase-3-claude`, pushed: the lab (shared handler, three servers, conformance, connection harness,
-  extensions and Workerman in the images) and the bake-off results in `lab/results/2026-11-21-bake-off/`.
-  `lab/check.sh` 32/32.
-- Both final reviews OK: `pr-reviewer` (delta 2), `blind-reviewer` (delta 2). Every 🟠 fixed.
-- The bake-off ran on a quiet Docker VM; the first try (700 VUs) is kept, not counted (D25).
-
-**What I need from you:**
-
-- [x] **Review and merge `phase-3-claude`:** merged on `main` (`9b5c8ce`). Its run is archived in
-  [runs/phase-3/run.md](runs/phase-3/run.md).
-- [ ] **[run] A check that each results folder regenerates its tables** (from the retro): `lab/check.sh` runs every
-  `lab/results/*/summarize.sh` and checks each printed line is in that folder's README. I diffed it by hand at 5
-  commits in scope 7. `ok` and phase 4 adds it.
-
-  **Answer:**
-
-- [x] 🔴 **Blocking: quiet the Docker VM, then say "go"** (scope 7, D15). Done at 21:12: 0 other containers, resumed.
-
-- [ ] **[run] Install `shellcheck`** (`brew install shellcheck`): 4 of 6 developers had no linter for the lab's
-  ~600 lines of bash. Phase 3 can then add a lint check to `lab/check.sh`.
-  Phase 3 runs shellcheck from a pinned Docker image in `lab/check.sh` (scope 1), so this one is only for your editor.
+Nothing waits on you. Phase 4 is running: see [run.md](run.md).
 
 ## 🤝 Essentials
 
@@ -66,7 +42,7 @@ step's choice backed by a measurement.
 | 7 | Score           | `bench/load.js` ramps, x86 calibration                      | More than 71,000 held for 5 minutes                     |
 | 8 | Submit          | The PR to the challenge repo                                | CI green                                                |
 
-**Decisions:** 36 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
+**Decisions:** 37 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
 is a prediction we re-measure, not an answer.
 
 ### Phase 4 scopes (running)
@@ -81,6 +57,7 @@ Detail, seams, cases and the predictions in [details/phase-4.md](details/phase-4
 | 3 | `feat(lab): idle connections and per-second series in the realistic mode` | idle connections held start to end; one row per second; cold proven by `fincore` |
 | 4 | `feat(lab): Excimer profiles folded into the steps S1 to S9`              | a profiled run folds into S1 to S9, under 5 % unclassified                |
 | 5 | `docs(lab): the realistic baseline`                                       | 3 holds and their median, the profile, Q10's answer, predictions judged   |
+| 6 | `chore(lab): check that every results folder regenerates its tables`     | `lab/check.sh` runs every `summarize.sh` against its README (D37)         |
 
 ### Phase 3 scopes (delivered)
 
