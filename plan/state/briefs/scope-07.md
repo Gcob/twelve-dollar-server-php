@@ -117,3 +117,14 @@ number named in the prediction; a range holds if the measured value is inside it
    DIY **1 to 4 KiB**. The `memory.current` slope is higher than the Pss slope on all three, by the kernel's socket
    memory.
 9. **p99 at 7,000:** under 3 ms on all three on both routes, with Workerman the highest.
+
+## Notes after the first try (21:28, before the restart)
+
+- **VUs:** every run of series A, B and D uses `--pre-vus` and `--max-vus` at rate / 5 (1,400 at 7,000, 1,900 at
+  9,500), both routes, all runtimes. Series A restarts from round 1. The first try (rate / 10, 19 runs) moves to a
+  subfolder `first-try-700-vus/` of the results folder, is committed, and the README shows it as not counted, with
+  why (4 posts runs dropped iterations on host stalls of 100 to 300 ms).
+- **Predictions:** stay unchanged, plan tags included; one line right after the section says the D numbers are in
+  `plan/decisions.md`.
+- **The invalid rule** stays: a run with dropped iterations is rerun once at the end of its round; two invalid runs of
+  the same pair stop the series.

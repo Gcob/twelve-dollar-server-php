@@ -39,7 +39,7 @@ Skill defaults (`autonomous-run/pipeline.yml`), no run override file. Changes fr
 | blind-reviewer | abca1a48d5f108622 | pass 1 NOT_OK 18:38 (1 🟠) |
 | 6 (fixes 2) | a5ac629088e976752 | R7 to R10 fixed `9aadddc`, pushed 18:47 |
 | blind-reviewer | abca1a48d5f108622 | pass 2 OK 18:49 (R12 🟡 left) |
-| 7     | (launching 21:13) | bake-off |
+| 7     | aa198fd9407d71d19 | launched 21:14, bake-off |
 
 ## Verified
 
@@ -89,6 +89,8 @@ Skill defaults (`autonomous-run/pipeline.yml`), no run override file. Changes fr
 
 - 18:17: scope 7 blocked by a busy VM (23 other containers since 16:43). Reviews run on scopes 1 to 6 now; after
   scope 7, each reviewer gets a delta pass on its commit only. Questions point skipped: no new `run` question.
+
+- 21:30: scope 7 first try stopped at 21:28 (posts runs dropped iterations on host stalls of 100-300 ms, workerman-nocache posts invalid twice; all /noop valid; VM quiet throughout). D25: VUs at rate / 5 on every run, series A from round 1, first try kept in `first-try-700-vus/`, shown not counted. Predictions stay unchanged with a line pointing to decisions.md.
 
 ## Next steps
 
