@@ -337,6 +337,38 @@ Commits: `38fc153` (fix: the run's own idle client counted as another container)
 - **`lab/README.md`:** the calibration table is said to be typed by hand from the calibration JSON (no `summarize.sh`, the check skips it); the lag gate text now says 6 s.
 - **Disagreement:** none. Two small precisions: the likes candidate is untested, so the README says "more likely", not "the cause"; S1 has 968 samples by my count of `onAccept` and `close` in `profile.collapsed` (the review says 944, the same order).
 
+## Handover of the final blind review's fixes (commits 1c8c6c0, 515fc67, 832f422, 5a06fe5, 51dfe37)
+
+### Verified (final fixes)
+
+- **No other project's container name in the tree.** Names were extracted from the two calibration JSONs (23, a file outside the repo, deleted at the end) before the scrub; `git grep -F -f` at HEAD: 0 files outside `plan/reviews/`, 2 files inside it, matching only the generic words `pgsql` (2 lines) and `traefik` (1 line). The two JSONs lost only `other_containers.names` (`jq 'del(...)'`: `jq .` of the old files was byte-identical to them, so formatting is untouched; the diff is 52 deleted lines, 2 added). The names stay in the pushed history (`72cd9db` and before): Jacob's call (rewrite or leave), not done here.
+- **Count only:** `lab_other_containers_count` in `lab/lib.sh` (the names function stays for it); `realistic.sh`, `macro.sh`, `conns.sh` write `{count}` and print `WARNING: N other containers running: see docker ps`. `check_realistic_staircase_passes`, `check_macro_bake_swoole_posts_is_valid` and `check_conns_holds_steps` now start a fixture container (`lab-check-other-fixture`), demand `other_containers` keys == `["count"]`, `count >= 1` and `count <= running before + 2` (the run's own 4 or 5 containers, if counted, would push it past). New check `check_results_hold_no_container_names` (every JSON under `lab/results` has no `names`, or an empty one: the bake-off JSONs have `names: []`).
+- **Fold, red then green:** `lab/check/fold-test.php` changed first (mystery leaf under `like_insert`, a renamed `feed_fetch` leaf under `route_feed`, shares 360 / 10): 5 cases failed, then all 25 ok after `fold_classify` takes the leaf frame. The baseline's leaves: every one was already named except `DiyProfile::write` (19) and a closure of `diy-profile.php` (1), which the old code counted in "event loop" by inheritance. They are now named `loop` by rule, so **nothing moved in the baseline: 0 unclassified samples (0.0 %), `summarize.sh` output identical to the README block, no number or word of its tables changed.** `app_count` is not a leaf in the baseline (it is S3 by rule); the review said it would be.
+- **`--no-series`:** a live run (hold 100 req/s, 25 s) had no `sampler.php` process and no `.samples` file in the probe; `check_realistic_no_series` (a 2-step staircase at 100 req/s) ok. The check does not detect a sampler that runs and is ignored (I mutated `sampler_start` back on: the check still passed): the live `ps` was the proof, and the flag gates the sampler, the poll's `memory-now` (via `probe.sh poll ... light`), the `series_build` and the mid-run `client-ips` read together.
+- **Full suite on 5a06fe5:** 60 ok of 61 (59 before + `check_results_hold_no_container_names` + `check_realistic_no_series`), the one FAIL was my new `check_realistic_no_series` (a 100 req/s step lost on the 97 % rule on the busy VM, the staircase stopped at 18 seconds). Fixed in 51dfe37 (a step may fail on that rule alone; at least 10 per-second rows), then 3 of 3 ok alone. `check_realistic_staircase_passes` also failed once in a first run of three checks and once in a pair, ok on a rerun alone each time (same flake: 24 other containers on the VM, step 2 or 3 at 96.9 %).
+
+### Decisions on the way (final fixes)
+
+- **`DiyProfile::write`, its timer closure and `DiyProfile::start` / `::merge` go to "event loop"**, not to a row of their own: a new row would change the table's shape and the README's, and they are 0.03 % of the baseline. A comment in `steps.rules` says so. The closure rule is a prefix on `{closure:/lab/servers/diy-profile.php`: a closure of the app stays unclassified on purpose.
+- **Other leaves named, though the baseline never shows them:** `DiyConnection::wantsRead|wantsWrite|pendingBytes` (loop), `::__construct` and `DiyPeer::__construct` (S1), `::reject` (S2), `app_count` (S3). The telemetry's own frames (`DiyTelemetry`) are not named: `--profile` turns it off, so one that shows up is unclassified.
+- **`--no-series` keeps the server's cgroup CPU read by the aggregator** (`per_second[].server_cpu_usec_per_s`, needed for CPU per request) and the server's telemetry line (stdout, once a second; `--env APP_TELEMETRY=0` removes it). It drops the mid-run `client-ips` read of `/proc/net/tcp` too (so `k6.client_ips_seen` is `{}`), a once-a-second walk of 64,000 sockets. `server_memory.*_peak_mib` are null, `results.series` is null, `per_second_probes` is a new top-level boolean. The `.polls` file's server columns are 0 in that mode.
+- **`results_check`:** a README with `<!-- BEGIN summarize -->` / `<!-- END summarize -->` whole lines is compared exactly (diff), with exactly one of each; without them the old line check. The three real folders: the baseline (block mode, 266 lines) passes; the bake-off and noop-swoole READMEs have no markers.
+- **Baseline README:** a sentence before the results block says every run had the probes on; p99 and the stalls are labelled in the baseline bullet, the latency bullet, prediction 5 and 9 verdicts, and the Q10 bullet names `--no-series` as the separating run. Mean latency: k6's mean over the three holds is 2.21 to 2.67 ms (whole runs, ramps included).
+- **Not done (as told):** 4, 5, 8, 11 of the review.
+
+### Raw learnings (final fixes)
+
+- **A fixture container in a check beats a name filter:** the old check compared `count` to `names | length` and could not tell if the run's own containers were counted when the VM had 23 others. A started fixture plus an upper bound does.
+- **`jq 'del(.key)'` keeps a `jq .`-formatted file byte for byte** (checked with `jq . f | diff - f` before): the scrub of a committed JSON is a clean 52-line diff.
+- **A 100 req/s step over 12 s (about 1,200 requests) still fails the 97 % rule by chance on a busy VM** (about 1 run in 3 to 5 here): any check that needs the step to pass needs a longer plateau or to not depend on it.
+- **bash and `&` in `run_in_background` again:** the task returned at once (scope 5's note); I waited with an `until`/`for` loop on a done file, and ran the full suite as a foreground command of the background task.
+
+### Where to look (final fixes)
+
+- `lab/lib.sh` -> `lab_other_containers_count`; `lab/check.sh` -> `other_fixture_start`, `other_containers_jq`, `check_results_hold_no_container_names`, `check_realistic_no_series`, `results_check`. `@5a06fe5`
+- `lab/profile/fold-lib.php` -> `fold_classify` (the leaf), `lab/profile/steps.rules` (header and the new leaves). `@515fc67`
+- `lab/realistic.sh` (`series`, `--no-series`), `lab/macro/probe.sh` (`poll ... light`). `@832f422`
+
 ## Questions for the project manager
 
 - Nothing blocking. To settle before the measuring scope: k6 costs about 300 us of CPU per request with the CSV stream on (it falls with the rate), so 20,000 req/s takes about 5 to 6 of the 8 CPUs that k6 and the aggregator share. I did not measure above 2,000 req/s. If it does not fit on a quiet VM, the options are fewer tags per CSV row (k6's `systemTags`), or a lower top rate for the staircase; the cap and the scale ignore k6's CPU today.
@@ -406,3 +438,13 @@ Commits: `38fc153` (fix: the run's own idle client counted as another container)
 - **Deterministic:** `lab/check.sh` could write its log to a fixed file plus a `done` marker that it deletes at start, so a waiter never mistakes an old run for the current one; and the ok-count floors in `check.sh` already need an edit per case (impression, as scopes 1 to 4).
 - **Plan should have decided:** nothing for this scope.
 - **Blind spot:** the check proves a README holds the script's lines, not that the prose around the tables (verdicts, predictions) still agrees with them: a number written in a sentence can drift unseen.
+
+### Final fixes (blind review)
+
+- **Missing:** nothing blocked me. The brief said the baseline needs `app_count` as a leaf, and it does not: the baseline's only unnamed leaves were the profiler's flush and its closure (checked in `profile.collapsed` with a one-line awk). No number moved, which the brief had prepared for.
+- **Guessed:** that the profiler's flush belongs in "event loop" (the brief left it to me); that `--no-series` should also skip the mid-run `client-ips` read (the brief lists only the sampler and the smaps read: I took "no probes" literally); that a check may let a step fail on the 97 % rule alone.
+- **Lost time:** about 25 minutes on the full suite (12 minutes) and one rerun after my own new check flaked on the busy VM; about 5 minutes on a `git -C` alias I tried to put in a shell variable (`$G add ...` fails: the variable holds the whole command).
+- **Useless or contradictory instruction:** "see it fail first" for `--no-series`: the first run without the flag fails on an unknown option, which proves nothing about the check. Mutation showed my check cannot see a sampler that runs and is ignored; I closed that with a live `ps`, not with a check.
+- **Deterministic:** a check helper `other_fixture_start` / `other_containers_jq` now exists for any run JSON. A `lab/check.sh` lock (scope 4's idea) and a done-marker log would still save time; also a lint that greps committed files for the names of `docker ps` (a guard on the way in, not only on the JSONs): `check_results_hold_no_container_names` covers the JSON only, a `.txt` of a run's output could still carry a name.
+- **Plan should have decided:** whether a pushed history that holds the names is rewritten (force-push is off the table without Jacob): the first leak is in `72cd9db` and its parents, on `origin/phase-4-claude`.
+- **Blind spot:** the `.txt` run outputs and the READMEs are not scanned for container names (the check reads JSON). And the new `--no-series` has no number yet: nobody has measured what the probes cost.

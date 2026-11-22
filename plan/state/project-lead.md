@@ -40,7 +40,7 @@ Skill defaults (`autonomous-run/pipeline.yml`), no run override file. Changes fr
 | pr-reviewer | a96493ee11e4c85c3 | OK 18:04 |
 | scope 5 (review fixes) | a0693a2b219c3cb46 | done 18:08: `6259b72`, `72cd9db` |
 | blind-reviewer | af115c2e95734bb63 | NOT_OK 18:17 |
-| blind fixes | a6d7d3fcd59d94550 | since 18:20 |
+| blind fixes | a6d7d3fcd59d94550 | done 18:47: `1c8c6c0`..`51dfe37` |
 
 ## Verified
 
@@ -126,6 +126,10 @@ Rien.
   🟡 set aside: 4 (dead aggregator blocks the FIFO write) and 5 (equal VU steps), harness robustness that no run hit,
   for phase 5; 8 (D numbers in the predictions: they are a verbatim copy, and the README says where D numbers live);
   11 (`trim()` and U+00A0: the tests don't reach it, and the challenge's reference is PHP, kept as is).
+- 18:31: Jacob, through the planning session: "please clean master and force push, and make sure the git history
+  has no leak at all. Ask the PM to do it." One-time exception to "never push --force". Audit at 18:40: container
+  names in 2 calibration JSON files (13 commits, branch only); 3 nickname phrases in plan files on main; nothing
+  else (messages, emails in files, paths, keys, employer). Author email in metadata: out of scope, reported.
 
 ## Suggested skills
 
