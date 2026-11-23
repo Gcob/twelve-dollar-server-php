@@ -292,6 +292,14 @@
   in 2 minutes. The in-process autocheckpoint, today's, keeps it near 4 MB. The switch stays in the code, refused
   with `APP_LOCKING=exclusive`, and the finding goes in scope 10's README (D60: a failed gate stops; project
   manager, phase 5, 2026-11-23 06:20, scope 9's hand-back).
+- **D64:** scope 11 adds one combined screen before its staircase: `APP_PRAGMAS=cache-256m` with
+  `APP_LOCKING=exclusive`, one `steplab.sh` pair at 24,000 req/s against the skeleton (floor 2.57 µs/req), 2 more
+  pairs only if it beats the floor (D60). Confirmed, it runs in the staircase with S1-d; otherwise the staircase runs
+  S1-d alone. In scope 10 no variant beat the floor alone (cache-256m -2.22, mmap-off -1.31, exclusive -0.85, group
+  commit +1.18), but the first and third act on different costs (the page cache, the lock calls), so their sum may.
+  cache-256m gets no extra pairs alone (D60: one pair under the floor stops). The idle client's unexplained wall
+  (7,020 sockets on a free-looking address) is left alone: the retry absorbs it, and no number depends on it
+  (project manager, phase 5, 2026-11-23 07:48, scope 10's hand-back).
 
 ## History
 
