@@ -1,0 +1,20 @@
+runs, in the order they ran (one round runs every variant once, the first variant is the reference)
+round  variant        valid      req/s    us/req   p95 ms   p99 ms   tw/addr  result
+    1  a              yes      23434.8      26.1    10.75    25.49         0  pass
+    1  b              yes      23428.4      25.8    10.75    20.69         0  pass
+    2  a              yes      23442.1      25.9    10.75    21.96         0  pass
+    2  b              yes      23212.6      28.5    15.14    51.32         0  FAIL: achieved below 97 % of offered
+    3  a              yes        23404      26.1    11.93    25.11         0  pass
+    3  b              yes      23444.3        26    10.91    22.97         0  pass
+    4  a              yes      23446.9      26.4    10.59    21.64         0  pass
+    4  b              yes      23413.3      26.1    11.24    25.11         0  pass
+    5  a              yes      23374.4      26.3    11.75    29.58         0  pass
+    5  b              yes      23485.6      26.2    10.28    21.32         0  pass
+tw/addr: the most TIME_WAIT sockets on one of k6's source addresses when the run started (0 when the runner did not count)
+
+variants (us is the server's CPU per request over the plateau)
+variant         valid median us        min to max   p99 ms  paired differences us     median  verdict
+a                 5/5      26.1      25.9 to 26.4    25.11  reference                      -  reference
+b                 5/5      26.1      25.8 to 28.5    22.97  -0.3 +2.6 -0.2 -0.3 -0.1      -0.2  no floor: not judged: run with --floor <µs> from an A/A calibration
+
+Rule: a variant is beyond the noise when it has at least 2 pairs, every paired difference (its µs CPU/req minus the reference's in the same round) has the same sign and the median paired difference is at least the floor in absolute value; otherwise it is within the noise. A round where either run is invalid has no pair. One pair with a floor: a screen (beats the floor when lower by at least the floor, else not better), never a verdict. No pair: no verdict. No floor: not judged (the floor comes from an A/A calibration).
