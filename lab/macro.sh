@@ -464,7 +464,7 @@ printf '  %-28s %s\n' \
   "memory under load (max of 3)" "Pss $pss_now MiB (with the mapped database), Pss_Anon $anon_now MiB, cgroup memory.current $cur_now MiB" \
   "socket settings (server's boot line)" "$socket" \
   "server CPU over the window" "$srvpct % of one CPU ($window s window, idle $idle us/s, throttled $thr us)" \
-  "k6 CPU over the window" "$k6cpu % of one CPU (k6 is pinned to $(awk -F- '{print $2-$1+1}' <<<"$LAB_CPUSET_K6") CPUs)"
+  "k6 CPU over the window" "$k6cpu % of one CPU (k6 is pinned to $(lab_cpuset_count "$LAB_CPUSET_K6") CPUs)"
 jq -r 'select(.cold != null) | .cold | "database copy in the page cache when the server opened it (fincore): \(.resident_bytes) of \(.size_bytes) bytes, \(.resident_share * 100 | round) %, --cold \(if .requested then "on" else "off" end)"' "$out"
 if [ -n "$per_second" ]; then
   jq -r '.results.per_second.aggregator | "per-second series: \(.requests) requests read by the aggregator (lag at most \(.max_lag_s) s, \(.unparsed) rows unparsed), \(.connection_errors) k6 connection errors"' "$out"

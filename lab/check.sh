@@ -1488,6 +1488,37 @@ check_time_wait_count() {
   [ "$got" = "$want" ] || { echo "the count over two ranges is not the fixture's: ${got//$'\n'/ | }"; return 1; }
 }
 
+# The CPU layouts: unset is the Mac's Docker VM (server 2, k6 4-11, probe 0-1, no idle sibling), as before the x86 layout existed; x86-8
+# reads a fixture of /sys/devices/system/cpu for two shapes of 4 cores of 2 threads (the siblings as a list, then as ranges) and keeps
+# the server's hyperthread sibling out of every other cpuset; a host of 2 cores, and a name it does not know, stop the script.
+check_cpu_layouts() {
+  local tmp got want core i a b c list pairs
+  tmp="$(mktemp -d)"
+  got="$(env -u LAB_CPU_LAYOUT bash -c 'source "$1"; echo "$LAB_CPUSET_SERVER|$LAB_CPUSET_K6|$LAB_CPUSET_PROBE|$LAB_CPUSET_IDLE_SIBLING"' _ "$LAB/lib.sh" 2>&1)"
+  [ "$got" = "2|4-11|0-1|" ] || { rm -rf "$tmp"; echo "the default layout changed: $got"; return 1; }
+  # A c5.2xlarge pairs vCPU n with n+4 (a list); other hosts pair 2n with 2n+1 (the kernel prints a range).
+  for core in "0,4 1,5 2,6 3,7|1|5|0,2,3,4,6,7|0,4" "0-1 2-3 4-5 6-7|2|3|0,1,4,5,6,7|0,1"; do
+    rm -rf "$tmp/cpu"
+    for i in 0 1 2 3 4 5 6 7; do mkdir -p "$tmp/cpu/cpu$i/topology"; done
+    read -r -a pairs <<<"${core%%|*}"
+    for list in "${pairs[@]}"; do
+      IFS=,- read -r a b <<<"$list"
+      for c in "$a" "${b:-$a}"; do printf '%s\n' "$list" >"$tmp/cpu/cpu$c/topology/thread_siblings_list"; done
+    done
+    want="${core#*|}"
+    got="$(env LAB_CPU_LAYOUT=x86-8 LAB_SYSFS_CPU="$tmp/cpu" bash -c 'source "$1"; echo "$LAB_CPUSET_SERVER|$LAB_CPUSET_IDLE_SIBLING|$LAB_CPUSET_K6|$LAB_CPUSET_PROBE"' _ "$LAB/lib.sh" 2>&1)"
+    [ "$got" = "$want" ] || { rm -rf "$tmp"; echo "x86-8 on '${core%%|*}': got $got, want $want"; return 1; }
+  done
+  rm -rf "$tmp/cpu"
+  for i in 0 1 2 3; do mkdir -p "$tmp/cpu/cpu$i/topology"; echo "$((i / 2 * 2))-$((i / 2 * 2 + 1))" >"$tmp/cpu/cpu$i/topology/thread_siblings_list"; done
+  got="$(env LAB_CPU_LAYOUT=x86-8 LAB_SYSFS_CPU="$tmp/cpu" bash -c 'source "$1"; echo sourced' _ "$LAB/lib.sh" 2>&1)" && { rm -rf "$tmp"; echo "x86-8 accepted a host of 2 cores"; return 1; }
+  grep -q 'wants 4 cores' <<<"$got" || { rm -rf "$tmp"; echo "no message for a host of 2 cores: $got"; return 1; }
+  rm -rf "$tmp"
+  got="$(env LAB_CPU_LAYOUT=nope bash -c 'source "$1"; echo sourced' _ "$LAB/lib.sh" 2>&1)" && { echo "an unknown layout was accepted"; return 1; }
+  grep -q 'unknown LAB_CPU_LAYOUT' <<<"$got" || { echo "no message for an unknown layout: $got"; return 1; }
+  [ "$(bash -c 'source "$1"; lab_cpuset_count 4-11; lab_cpuset_count 0,2,3,4,6,7; lab_cpuset_count 0-1,4' _ "$LAB/lib.sh" | paste -sd, -)" = "8,6,3" ] || { echo "lab_cpuset_count is wrong"; return 1; }
+}
+
 # The two Swoole entries run unchanged: the copies under lab/servers/swoole-entries/ are byte for byte the challenge's files, and the
 # two lines of tzimpel's build.sh that patch Swoole (the `perl -0pi` substitution and its "applied exactly twice" check) are the ones in
 # lab/images/install-swoole-tzimpel.sh.
@@ -1809,6 +1840,7 @@ CHECKS=(
   check_steplab_verdicts
   check_syscalls_table_parse
   check_time_wait_count
+  check_cpu_layouts
   check_swoole_entries_are_unchanged
   check_php_ini_flags
   check_steplab_live

@@ -31,6 +31,47 @@ lab_source_release() {
 LAB_CPUSET_SERVER=2     # the server and the micro benches
 LAB_CPUSET_K6=4-11      # the load generator
 LAB_CPUSET_PROBE=0-1    # the helper that reads cgroup files and /proc for lab/macro.sh, next to the VM's own CPUs
+LAB_CPUSET_IDLE_SIBLING=  # empty: the VM's vCPUs are not read for hyperthreads; x86-8 below sets it
+
+# lab_cpu_layout_x86_8: the layout of an 8-vCPU x86 host (a c5.2xlarge is 4 cores of 2 hyperthreads). It reads each vCPU's
+# `thread_siblings_list` (LAB_SYSFS_CPU, default /sys/devices/system/cpu, is a test hook) and sets:
+#  - LAB_CPUSET_SERVER: the first vCPU of the second core (the first core takes the host's interrupts);
+#  - LAB_CPUSET_IDLE_SIBLING: that core's other vCPU, which nothing of the lab runs on, so the server has the whole core;
+#  - LAB_CPUSET_K6: every vCPU but those two (the load generator, the idle client and the aggregator);
+#  - LAB_CPUSET_PROBE: the first core's two vCPUs (the probe only reads /proc and cgroup files once a second).
+# Returns 1 with a message unless the host has exactly 4 cores of 2 threads.
+lab_cpu_layout_x86_8() {
+  local sys="${LAB_SYSFS_CPU:-/sys/devices/system/cpu}" f list cores=() c
+  for f in "$sys"/cpu[0-9]*/topology/thread_siblings_list; do
+    [ -f "$f" ] || { echo "no thread_siblings_list under $sys: cannot read the cores" >&2; return 1; }
+    # The kernel prints a cpulist: adjacent siblings come as a range ("0-1"), others as a list ("0,4").
+    list="$(tr -d ' \n' <"$f" | awk -F, '{ o = ""; for (i = 1; i <= NF; i++) if (split($i, r, "-") == 2) for (j = r[1]; j <= r[2]; j++) o = o (o == "" ? "" : ",") j; else o = o (o == "" ? "" : ",") $i; print o }')"
+    case " ${cores[*]-} " in *" $list "*) ;; *) cores+=("$list") ;; esac
+  done
+  [ "${#cores[@]}" -eq 4 ] || { echo "x86-8 wants 4 cores, found ${#cores[@]}" >&2; return 1; }
+  # Cores ordered by their lowest vCPU number.
+  list="$(printf '%s\n' "${cores[@]}" | sort -t, -k1,1n)"
+  IFS=$'\n' read -r -d '' -a cores <<<"$list" || true
+  for c in "${cores[@]}"; do
+    [[ "$c" =~ ^[0-9]+,[0-9]+$ ]] || { echo "x86-8 wants 2 threads a core, found '$c'" >&2; return 1; }
+  done
+  LAB_CPUSET_PROBE="${cores[0]}"
+  LAB_CPUSET_SERVER="${cores[1]%%,*}"
+  LAB_CPUSET_IDLE_SIBLING="${cores[1]#*,}"
+  LAB_CPUSET_K6="$(printf '%s\n' "${cores[0]}" "${cores[2]}" "${cores[3]}" | tr ',' '\n' | sort -n | paste -sd, -)"
+}
+
+# LAB_CPU_LAYOUT picks the layout: unset (the Mac's Docker VM, above) or `x86-8`. Anything else stops the script.
+case "${LAB_CPU_LAYOUT:-}" in
+  "") ;;
+  x86-8) lab_cpu_layout_x86_8 || exit 1 ;;
+  *) echo "unknown LAB_CPU_LAYOUT '$LAB_CPU_LAYOUT' (unset, or x86-8)" >&2; exit 1 ;;
+esac
+
+# lab_cpuset_count <cpuset>: how many CPUs a cpuset names ("4-11" is 8, "0,2,3" is 3, "0-1,4" is 3).
+lab_cpuset_count() {
+  awk -v s="$1" 'BEGIN { n = split(s, p, ","); t = 0; for (i = 1; i <= n; i++) t += (split(p[i], r, "-") == 2) ? r[2] - r[1] + 1 : 1; print t }'
+}
 
 # Resource limits of every lab container: 1 CPU, 2 GiB, no swap, like the challenge VM (1 vCPU, about 2 GB). Not the same
 # budget, though: the VM's memory is shared with the OS (and Nginx when used), the lab gives the server the whole 2 GiB. A

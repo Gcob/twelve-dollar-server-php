@@ -11,6 +11,23 @@ measurement. Nothing in `lab/data/` is committed.
 - **`jq`**: the macro harness builds and reads its JSON with it.
 - The clone of the challenge in `reference/` (see Seed), and `curl`, `git`, `shasum` (they ship with macOS).
 
+## CPU layouts
+
+`lab/lib.sh` pins every container. The default (`LAB_CPU_LAYOUT` unset) is the Mac's Docker VM of 12 vCPUs: the server on `2`, k6, the idle
+client and the aggregator on `4-11`, the probe on `0-1`, the VM's own work on whatever is left.
+
+`LAB_CPU_LAYOUT=x86-8` is for an 8-vCPU x86 host (an AWS `c5.2xlarge`: 4 cores of 2 hyperthreads, Docker running on the host itself). It
+reads `/sys/devices/system/cpu/cpu*/topology/thread_siblings_list` and refuses a host that is not 4 cores of 2 threads:
+
+- **The server** gets one vCPU, the first of the second core, and **its hyperthread sibling stays idle**: nothing of the lab runs on it, so
+  the server has a whole core to itself, as a one-vCPU VM on a bigger machine would not.
+- **k6, the idle client and the aggregator** run on every other vCPU (the first core's two and the third's and fourth's), never on that sibling.
+- **The probe** runs on the first core, where the host's interrupts and the kernel's own work are.
+
+Example with the siblings `0,4`, `1,5`, `2,6` and `3,7` (a guess until read on the host): the server is on `1`, its sibling `5` is idle, k6 is
+on `0,2,3,4,6,7` and the probe on `0,4`. Export the variable before any lab script (`export LAB_CPU_LAYOUT=x86-8`): every script reads it
+through `lib.sh`. `check_cpu_layouts` checks that the default is unchanged and that both ways the kernel prints siblings give such a layout.
+
 ## Seed
 
 ```bash

@@ -686,6 +686,8 @@ jq -n \
   --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg command "$command_line" --arg mode "$mode" \
   --arg docker "$(docker version --format '{{.Server.Platform.Name}}')" --arg engine "$(docker version --format '{{.Server.Version}}')" \
   --arg kernel "$(docker info --format '{{.KernelVersion}}')" --arg arch "$(uname -m)" --arg limits "${LAB_RESOURCE_FLAGS[*]}" \
+  --arg cpu_layout "${LAB_CPU_LAYOUT:-default}" --arg cpuset_server "$LAB_CPUSET_SERVER" --arg cpuset_k6 "$LAB_CPUSET_K6" \
+  --arg cpuset_probe "$LAB_CPUSET_PROBE" --arg cpuset_idle_sibling "$LAB_CPUSET_IDLE_SIBLING" \
   --arg variant "$image" --arg image_id "$(docker image inspect -f '{{.Id}}' "$LAB_IMAGE:$image")" --arg php_version "$php_version" \
   --arg server_file "${server_in#/lab/}" --arg flags "${LAB_PHP_FLAGS[*]}" --argjson port "$port" --arg label "$label" \
   --argjson ext "$(json_array "${LAB_EXT[@]}")" --argjson env "$(json_array "${LAB_ENV[@]+"${LAB_ENV[@]}"}")" \
@@ -706,7 +708,9 @@ jq -n \
     other_containers: $other_containers,
     valid: ($invalid == ""), invalid_reasons: (if $invalid == "" then [] else [$invalid] end),
     idle: $idle, cold: $cold, profile: $profile, per_second_probes: $per_second_probes,
-    host: {docker_desktop: $docker, engine: $engine, vm_kernel: $kernel, arch: $arch, limits: $limits},
+    host: {docker_desktop: $docker, engine: $engine, vm_kernel: $kernel, arch: $arch, limits: $limits,
+            cpu_layout: $cpu_layout, cpuset_server: $cpuset_server, cpuset_k6: $cpuset_k6, cpuset_probe: $cpuset_probe,
+            cpuset_idle_sibling: (if $cpuset_idle_sibling == "" then null else $cpuset_idle_sibling end)},
     server: {variant: $variant, image_id: $image_id, php_version: $php_version, file: $server_file, port: $port, php_flags: $flags,
              ext: $ext, env: $env, fds_open_at_boot: $server_fds,
              socket: (if $socket_line == "" then null else $socket_line end)},
