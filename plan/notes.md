@@ -451,6 +451,33 @@ opens, and the server could reach about 120,000 connections.
 
 **Verdict:** ❌ the redirect; ✅ its core, two fd budgets, is S1-b with `SO_REUSEPORT`, already in phase 5a.
 
+### 2026-11-22 22:03 · 💡 Idea: run the two Swoole entries in our own lab, and compare with them
+
+**Jacob:** the entries to beat are the two real-PHP ones at 71,000 (mattsplat and tzimpel, not HolyPHP, which is
+mostly C). Their code is public: could we install them, run some of our tests on them, and compare? If we beat them
+on some numbers on the Mac, shouldn't we beat them on any machine?
+
+**Challenge:**
+
+- **Their code is already here:** `reference/twelve-dollar-server-challenge/submissions/php-swoole-mattsplat/` and
+  `php-swoole-tzimpel/` (MIT). Our lab images already carry Swoole 6.2.6 (they used 6.2.3; tzimpel patched Swoole's
+  receive buffer, which his `build.sh` does). Phase 3 measured Swoole with our handler, never their full code.
+- **It's a calibration nearly for free:** the leaderboard measured them on the bench's VM (94 and 101 µs of CPU per
+  request). Run them in our realistic mode on the Mac and each gives a Mac-to-bench factor. Two entries, two factors:
+  if they agree, our 27 µs converts to a bench estimate before AWS. On AWS (scope 12) the same runs check the
+  factor directly.
+- **"We beat them on the Mac, so we beat them anywhere" holds for CPU per request, roughly:** both run PHP on the
+  same SQLite, so the ratio mostly survives the machine. It can drift where the costs differ in kind: Swoole's
+  parser is C, ours is PHP, and arm64 and x86 JIT differently; a VM makes system calls and network costlier, and our
+  kernel share is 30 %. So a ratio predicts, the x86 run confirms (D5).
+- **But their score isn't capped by CPU:** both stop at 71,000 on the fd wall, at 66 and 71 % CPU. Beating their µs
+  doesn't beat their score until we pass 65,535 connections. On the Mac we can compare both numbers: CPU per request
+  at the same rate, and connections held.
+- **Fail fast (D60):** one scope, no new code beyond running their entry in the lab, one pair of runs each.
+
+**Verdict:** ✅ Claude's take: a scope in 5a, before the x86 calibration, since it sharpens what scope 12 checks. Open
+until Jacob gives the go.
+
 ### 2026-11-22 18:08 · 💡 Idea: try io_uring anyway, something nobody tried in PHP
 
 **Jacob:** "do you think we could still even try it? […] to be at the top, we need to do some, let's say, gray hat
