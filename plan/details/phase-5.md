@@ -360,6 +360,14 @@ build during a measurement. New for phase 5:
 ## Scope 13: the two Swoole entries in our lab (D61)
 
 - **Runs after scope 6**, while the VM is quiet, before scope 7 (its rate and its skeleton pair are scope 6's).
+- **Cleared by an audit (Jacob's request, planning session, 2026-11-22):** every file of both entries read: no
+  shell-out, `eval`, network call, file write outside SQLite, obfuscation or hidden character; the only URL is
+  Swoole's own tarball, sha256-pinned. Three conditions, so the lab runs nothing it hasn't read:
+  1. **Their `install.sh` and `build.sh` are never run** (apt as root, a download): our lab images' Swoole 6.2.6,
+     verified in phase 2, runs them; the README notes the version difference (they used 6.2.3).
+  2. **tzimpel's Swoole patch:** only the `perl -0pi` substitution from his `build.sh`, applied to our own Swoole
+     source, with his check that it applied exactly twice. It frees a receive buffer; nothing else.
+  3. **Their PHP files run only inside the lab container**, as everything else does.
 - **What:** the two real-PHP entries at 71,000, `reference/twelve-dollar-server-challenge/submissions/php-swoole-mattsplat/`
   and `php-swoole-tzimpel/` (MIT, credited in `lab/NOTICE.md`), run unchanged (their PHP code, their config) in
   `realistic.sh` on our lab image: PHP 8.3 from apt with Swoole 6.2.6 (`php-lab:8.3-apt`; they used 6.2.3: the
