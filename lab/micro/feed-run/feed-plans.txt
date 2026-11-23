@@ -1,0 +1,33 @@
+SQLite 3.45.1
+
+== GET /feed, APP_FEED_SQL=reference
+SCAN p USING INDEX posts_created_at_id_idx
+SEARCH u USING INTEGER PRIMARY KEY (rowid=?)
+CORRELATED SCALAR SUBQUERY 1
+  SEARCH l USING COVERING INDEX likes_post_id_idx (post_id=?)
+
+== GET /feed, APP_FEED_SQL=join
+CO-ROUTINE p
+  SCAN posts USING INDEX posts_created_at_id_idx
+SCAN p
+SEARCH u USING INTEGER PRIMARY KEY (rowid=?)
+SEARCH l USING COVERING INDEX likes_post_id_idx (post_id=?) LEFT-JOIN
+USE TEMP B-TREE FOR GROUP BY
+
+== GET /feed, APP_FEED_SQL=two-step (statement 1 of 2)
+SCAN p USING INDEX posts_created_at_id_idx
+SEARCH u USING INTEGER PRIMARY KEY (rowid=?)
+
+== GET /feed, APP_FEED_SQL=two-step (statement 2 of 2)
+SEARCH likes USING COVERING INDEX likes_post_id_idx (post_id=?)
+
+== GET /posts/:id, APP_FEED_SQL=reference
+SEARCH p USING INTEGER PRIMARY KEY (rowid=?)
+SEARCH u USING INTEGER PRIMARY KEY (rowid=?)
+CORRELATED SCALAR SUBQUERY 1
+  SEARCH l USING COVERING INDEX likes_post_id_idx (post_id=?)
+
+== GET /posts/:id, APP_FEED_SQL=join
+SEARCH p USING INTEGER PRIMARY KEY (rowid=?)
+SEARCH u USING INTEGER PRIMARY KEY (rowid=?)
+SEARCH l USING COVERING INDEX likes_post_id_idx (post_id=?) LEFT-JOIN

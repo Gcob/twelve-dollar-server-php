@@ -17,32 +17,122 @@ const APP_POST_SELECT = 'SELECT p.id, p.body, p.created_at, u.username AS author
                                 (SELECT count(*) FROM likes l WHERE l.post_id = p.id) AS like_count
                            FROM posts p JOIN users u ON u.id = p.user_id';
 
-/** @var array{db: PDO, feed: PDOStatement, post: PDOStatement, post_insert: PDOStatement, post_exists: PDOStatement, like_insert: PDOStatement, health: PDOStatement}|null */
+// The variants of S6, each a switch read once at boot (app_variants): unset, the statements and the bytes are the reference's.
+//   APP_FEED_SQL  reference  the like count of each post is a correlated subquery
+//                 join       the 20 newest posts first (a subquery with the limit), then a LEFT JOIN on likes with GROUP BY
+//                 two-step   the 20 posts with their authors, then one statement counting the likes of exactly those 20 ids,
+//                            merged here (both statements are this request's own)
+//   APP_FETCH     assoc | num: the rows as arrays keyed by column name, or by position (the JSON is then built from positions)
+//                 assoc-loop | num-loop: the same, with fetch() in a loop instead of fetchAll()
+//   APP_PRAGMAS   a preset of the page cache and the memory map sizes (the other pragmas never change)
+const APP_FEED_SQL_VARIANTS = ['reference', 'join', 'two-step'];
+const APP_FETCH_VARIANTS = ['assoc', 'num', 'assoc-loop', 'num-loop'];
+// 64 MiB of cache and a 256 MiB map (the seed is 250 MB) are today's. Why each preset:
+//   mmap-off    reads go through pread and the 64 MiB cache: says what the map is worth
+//   cache-256m  the whole seed fits in the page cache, the map is off: the cache against the map
+//   cache-8m    a cache smaller than the working set of the newest posts and users, the map on: how much the cache matters when the map does the reading
+const APP_PRAGMA_PRESETS = [
+    'mmap-off' => ['cache_size' => -65536, 'mmap_size' => 0],
+    'cache-256m' => ['cache_size' => -262144, 'mmap_size' => 0],
+    'cache-8m' => ['cache_size' => -8192, 'mmap_size' => 268435456],
+];
+const APP_PRAGMA_DEFAULT = ['cache_size' => -65536, 'mmap_size' => 268435456];
+
+/** @var array{db: PDO, feed: PDOStatement, feed_likes: ?PDOStatement, post: PDOStatement, post_insert: PDOStatement, post_exists: PDOStatement, like_insert: PDOStatement, health: PDOStatement}|null */
 $app_db = null;
+$app_feed_two_step = false;
+$app_fetch_num = false;
+$app_fetch_loop = false;
 $app_secret = '';
 $app_started_at = 0;
 $app_path = '';
 /** @var array<string, int>|null requests per endpoint since the last telemetry line; null (the default) counts nothing */
 $app_requests = null;
 
-/** Opens the database at $path (it must exist: SQLite would create an empty one) and prepares every statement once. */
-function app_boot(string $path, string $secret): void
+/**
+ * The S6 switches from the environment (pass getenv()): unset or empty is the reference's. A value that is not one of the names is refused.
+ *
+ * @param array<string, mixed> $env
+ * @return array{feed_sql: string, fetch: string, pragmas: string}
+ */
+function app_variants(array $env): array
 {
-    global $app_db, $app_secret, $app_started_at, $app_path;
+    $pick = static function (string $name, string $default, array $allowed) use ($env): string {
+        $value = $env[$name] ?? '';
+        if ($value === '') {
+            return $default;
+        }
+        if (!is_string($value) || !in_array($value, $allowed, true)) {
+            throw new InvalidArgumentException("$name must be one of " . implode(', ', $allowed) . ', got ' . json_encode($value));
+        }
+        return $value;
+    };
+    return [
+        'feed_sql' => $pick('APP_FEED_SQL', 'reference', APP_FEED_SQL_VARIANTS),
+        'fetch' => $pick('APP_FETCH', 'assoc', APP_FETCH_VARIANTS),
+        'pragmas' => $pick('APP_PRAGMAS', 'default', ['default', ...array_keys(APP_PRAGMA_PRESETS)]),
+    ];
+}
+
+/** The SQL of the feed for a feed variant (the first statement, for two-step). */
+function app_feed_sql(string $feedSql): string
+{
+    $order = ' ORDER BY p.created_at DESC, p.id DESC LIMIT 20';
+    return match ($feedSql) {
+        'reference' => APP_POST_SELECT . $order,
+        // Why the subquery: SQLite cannot fold a LIMIT into a join, so the 20 posts are picked first and only their likes are counted.
+        // Why GROUP BY created_at, id: with the order of the ORDER BY it needs one temporary b-tree, not two (a GROUP BY p.id alone adds one for the order).
+        'join' => 'SELECT p.id, p.body, p.created_at, u.username AS author, count(l.post_id) AS like_count
+                     FROM (SELECT id, user_id, body, created_at FROM posts ORDER BY created_at DESC, id DESC LIMIT 20) p
+                     JOIN users u ON u.id = p.user_id
+                     LEFT JOIN likes l ON l.post_id = p.id
+                    GROUP BY p.created_at, p.id
+                    ORDER BY p.created_at DESC, p.id DESC',
+        'two-step' => 'SELECT p.id, p.body, p.created_at, u.username AS author FROM posts p JOIN users u ON u.id = p.user_id' . $order,
+    };
+}
+
+/** The second statement of the two-step feed: the like counts of exactly the 20 ids it is given (a shorter feed repeats an id, which IN ignores). */
+function app_feed_likes_sql(): string
+{
+    return 'SELECT post_id, count(*) FROM likes WHERE post_id IN (' . implode(', ', array_fill(0, 20, '?')) . ') GROUP BY post_id';
+}
+
+/** The SQL of one post by id for a feed variant: the join variant has its own; the others read it as the reference does. */
+function app_post_sql(string $feedSql): string
+{
+    if ($feedSql === 'join') {
+        return 'SELECT p.id, p.body, p.created_at, u.username AS author, count(l.post_id) AS like_count
+                  FROM posts p JOIN users u ON u.id = p.user_id LEFT JOIN likes l ON l.post_id = p.id
+                 WHERE p.id = ? GROUP BY p.id';
+    }
+    return APP_POST_SELECT . ' WHERE p.id = ?';
+}
+
+/** Opens the database at $path (it must exist: SQLite would create an empty one) and prepares every statement once. */
+function app_boot(string $path, string $secret, ?array $variants = null): void
+{
+    global $app_db, $app_secret, $app_started_at, $app_path, $app_feed_two_step, $app_fetch_num, $app_fetch_loop;
     if (!is_file($path)) {
         throw new RuntimeException("the database file does not exist: $path");
     }
+    $variants ??= app_variants(getenv());
+    $pragmas = APP_PRAGMA_PRESETS[$variants['pragmas']] ?? APP_PRAGMA_DEFAULT;
     $db = new PDO('sqlite:' . $path, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
     $db->exec('PRAGMA journal_mode = WAL');
     $db->exec('PRAGMA synchronous = NORMAL');
     $db->exec('PRAGMA busy_timeout = 5000');
-    $db->exec('PRAGMA cache_size = -65536');      // 64 MiB page cache
-    $db->exec('PRAGMA mmap_size = 268435456');    // 256 MiB
+    $db->exec('PRAGMA cache_size = ' . $pragmas['cache_size']);    // KiB when negative: -65536 is 64 MiB
+    $db->exec('PRAGMA mmap_size = ' . $pragmas['mmap_size']);      // bytes: 268435456 is 256 MiB
     $db->exec('PRAGMA temp_store = MEMORY');
+    $app_feed_two_step = $variants['feed_sql'] === 'two-step';
+    $app_fetch_num = str_starts_with($variants['fetch'], 'num');
+    $app_fetch_loop = str_ends_with($variants['fetch'], '-loop');
     $app_db = [
         'db' => $db,
-        'feed' => $db->prepare(APP_POST_SELECT . ' ORDER BY p.created_at DESC, p.id DESC LIMIT 20'),
-        'post' => $db->prepare(APP_POST_SELECT . ' WHERE p.id = ?'),
+        'feed' => $db->prepare(app_feed_sql($variants['feed_sql'])),
+        'feed_likes' => $app_feed_two_step ? $db->prepare(app_feed_likes_sql()) : null,
+        'post' => $db->prepare(app_post_sql($variants['feed_sql'])),
         'post_insert' => $db->prepare('INSERT INTO posts (user_id, body) VALUES (?, ?) RETURNING id, created_at'),
         'post_exists' => $db->prepare('SELECT 1 FROM posts WHERE id = ?'),
         'like_insert' => $db->prepare('INSERT INTO likes (user_id, post_id) VALUES (?, ?) ON CONFLICT (user_id, post_id) DO NOTHING'),
@@ -124,11 +214,14 @@ function route_health(): array
 
 function route_feed(): array
 {
-    return response_json(200, feed_json(feed_query()));
+    global $app_fetch_num;
+    $rows = feed_query();
+    return response_json(200, $app_fetch_num ? feed_json_positions($rows) : feed_json($rows));
 }
 
 function route_post_get(string $id): array
 {
+    global $app_fetch_num;
     $id = id_validate($id);
     if ($id === null) {
         return response_error(400, 'invalid post id');
@@ -137,7 +230,7 @@ function route_post_get(string $id): array
     if ($post === null) {
         return response_error(404, 'post not found');
     }
-    return response_json(200, post_json($post));
+    return response_json(200, $app_fetch_num ? post_json_positions($post) : post_json($post));
 }
 
 function route_post_create(string $authorization, string $body): array
@@ -246,20 +339,45 @@ function body_validate(string $raw): array
 
 // S6, SQLite. Autocommit: each write is its own transaction, committed before the response is built.
 
-/** @return list<array<string, mixed>> */
+/** @return list<array<string|int, mixed>> the rows keyed by column name, or by position with APP_FETCH=num (id, body, created_at, author, like_count) */
 function feed_query(): array
 {
-    global $app_db;
-    $app_db['feed']->execute();
-    return $app_db['feed']->fetchAll();
+    global $app_db, $app_feed_two_step, $app_fetch_num, $app_fetch_loop;
+    $feed = $app_db['feed'];
+    $feed->execute();
+    if ($app_fetch_loop) {
+        $style = $app_fetch_num ? PDO::FETCH_NUM : PDO::FETCH_ASSOC;
+        $rows = [];
+        while (($row = $feed->fetch($style)) !== false) {
+            $rows[] = $row;
+        }
+    } else {
+        $rows = $app_fetch_num ? $feed->fetchAll(PDO::FETCH_NUM) : $feed->fetchAll();
+    }
+    if ($app_feed_two_step && $rows !== []) {
+        $ids = array_column($rows, $app_fetch_num ? 0 : 'id');
+        $likes = $app_db['feed_likes'];
+        $likes->execute(array_pad($ids, 20, $ids[0]));
+        $counts = $likes->fetchAll(PDO::FETCH_KEY_PAIR);
+        foreach ($rows as &$row) {
+            $count = $counts[$row[$app_fetch_num ? 0 : 'id']] ?? 0;
+            if ($app_fetch_num) {
+                $row[] = $count;
+            } else {
+                $row['like_count'] = $count;
+            }
+        }
+        unset($row);
+    }
+    return $rows;
 }
 
-/** @return array<string, mixed>|null */
+/** @return array<string|int, mixed>|null */
 function post_query(int $id): ?array
 {
-    global $app_db;
+    global $app_db, $app_fetch_num;
     $app_db['post']->execute([$id]);
-    $post = $app_db['post']->fetch();
+    $post = $app_fetch_num ? $app_db['post']->fetch(PDO::FETCH_NUM) : $app_db['post']->fetch();
     $app_db['post']->closeCursor();
     return $post === false ? null : $post;
 }
@@ -307,6 +425,31 @@ function feed_json(array $posts): string
 function post_json(array $post): string
 {
     return json_encode(['post' => $post], APP_JSON_FLAGS);
+}
+
+// With APP_FETCH=num the rows come by position (id, body, created_at, author, like_count): the same bytes as the keyed arrays give.
+
+/** @param array<int, mixed> $post */
+function post_object_json(array $post): string
+{
+    return '{"id":' . $post[0] . ',"body":' . json_encode($post[1], APP_JSON_FLAGS) . ',"created_at":' . json_encode($post[2], APP_JSON_FLAGS)
+        . ',"author":' . json_encode($post[3], APP_JSON_FLAGS) . ',"like_count":' . $post[4] . '}';
+}
+
+/** @param array<int, mixed> $post */
+function post_json_positions(array $post): string
+{
+    return '{"post":' . post_object_json($post) . '}';
+}
+
+/** @param list<array<int, mixed>> $posts */
+function feed_json_positions(array $posts): string
+{
+    $objects = [];
+    foreach ($posts as $post) {
+        $objects[] = post_object_json($post);
+    }
+    return '{"posts":[' . implode(',', $objects) . ']}';
 }
 
 function like_json(int $postId, bool $alreadyLiked): string

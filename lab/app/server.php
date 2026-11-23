@@ -5,7 +5,8 @@
 // APP_PROFILE=<file> (off by default, needs `--ext excimer`): a CPU-time profiler whose collapsed stacks are written to that file every
 // 2 s, one sample every APP_PROFILE_PERIOD seconds of CPU time (default 0.001; lab/servers/diy-profile.php), and
 // APP_SOFT_CONN_LIMIT=<n> (off by default; 0 is a limit): a response built while more than <n> client connections are open says
-// `Connection: close` and its connection ends once it is written (lab/servers/diy-server.php).
+// `Connection: close` and its connection ends once it is written (lab/servers/diy-server.php), and the S6 variants of lab/app/app.php
+// (off by default): APP_FEED_SQL=reference|join|two-step, APP_FETCH=assoc|num|assoc-loop|num-loop, APP_PRAGMAS=default|mmap-off|cache-256m|cache-8m.
 //
 // It starts with the extensions loaded in this order: `--ext sockets --ext event`. It listens only once the database is open.
 // lab/challenge-test.sh starts it on a fresh copy of the seed.
@@ -25,7 +26,13 @@ $host = (string) (getenv('HOST') ?: '0.0.0.0');
 $port = (int) (getenv('PORT') ?: 8080);
 $backlog = 4096;
 
-app_boot($path, $secret);
+try {
+    $variants = app_variants(getenv());
+} catch (InvalidArgumentException $e) {
+    fwrite(STDERR, 'server: ' . $e->getMessage() . "\n");
+    exit(1);
+}
+app_boot($path, $secret, $variants);
 
 $listener = diy_listen($host, $port, $backlog);
 $telemetry = null;
@@ -50,6 +57,9 @@ $server = new DiyServer($listener, $telemetry, $profile, $softLimit);
 echo "listening on $host:$port\n";
 if ($softLimit !== null) {
     echo "soft connection limit: $softLimit\n";
+}
+if ($variants !== app_variants([])) {
+    echo 'app variants: feed_sql=' . $variants['feed_sql'] . ' fetch=' . $variants['fetch'] . ' pragmas=' . $variants['pragmas'] . "\n";
 }
 echo 'loop: ' . $server->loopMethod() . "\n";
 echo diy_socket_line($listener, $backlog) . "\n";

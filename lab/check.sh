@@ -497,6 +497,61 @@ check_app_cases() {
   return 0
 }
 
+# The S6 variants (APP_FEED_SQL, APP_FETCH, APP_PRAGMAS) through the app's entry point on a small database: every combination answers the
+# same bytes as the unset one, and the literal answers, the refused values, the presets and the join's plan hold (55 cases).
+check_app_variants_cases() {
+  local out ok rc=0
+  out="$(bash "$LAB/run.sh" 8.5 php /lab/check/app-variants-test.php 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "app-variants-test.php exited $rc: ${out//$'\n'/ | }"; return 1; }
+  ok="$(grep -c '^ok  ' <<<"$out")"
+  [ "$ok" = 55 ] || { echo "expected 55 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
+  ! grep -q 'FAIL' <<<"$out" || { echo "a case failed: ${out//$'\n'/ | }"; return 1; }
+}
+
+# The challenge's 42 checks (the golden feed byte for byte) against the server with each non-default value of the S6 switches, and with
+# three of them together.
+check_challenge_test_passes_each_s6_variant() {
+  local out env left rc
+  for env in APP_FEED_SQL=join APP_FEED_SQL=two-step APP_FETCH=num APP_FETCH=assoc-loop APP_FETCH=num-loop \
+             APP_PRAGMAS=mmap-off APP_PRAGMAS=cache-256m APP_PRAGMAS=cache-8m "APP_FEED_SQL=join APP_FETCH=num-loop APP_PRAGMAS=cache-8m"; do
+    rc=0
+    # shellcheck disable=SC2046 # one --env per word on purpose
+    out="$(bash "$LAB/challenge-test.sh" --image 8.5 $(printf -- '--env %s ' $env) 2>&1)" || rc=$?
+    [ "$rc" = 0 ] || { echo "$env: lab/challenge-test.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
+    grep -qx 'passed=42 failed=0' <<<"$out" || { echo "$env: the summary is not 'passed=42 failed=0': ${out//$'\n'/ | }"; return 1; }
+  done
+  left="$(docker ps -a --format '{{.Names}}' | grep '^lab-challenge-' || true)"
+  [ -z "$left" ] || { echo "containers left behind: ${left//$'\n'/ }"; return 1; }
+}
+
+# The switches reach the server: it says which variants it runs (and nothing when none is set), and it refuses a value that is not a name.
+check_s6_switches_reach_the_server() {
+  local log
+  start_app_for_check lab-check-variants 18164 0 APP_FEED_SQL=join APP_FETCH=num APP_PRAGMAS=mmap-off || return 1
+  log="$(docker logs lab-check-variants 2>&1)"
+  docker rm -f lab-check-variants >/dev/null 2>&1
+  grep -qx 'app variants: feed_sql=join fetch=num pragmas=mmap-off' <<<"$log" || { echo "the boot lines do not name the variants: ${log//$'\n'/ | }"; return 1; }
+  start_app_for_check lab-check-variants 18164 0 || return 1
+  log="$(docker logs lab-check-variants 2>&1)"
+  docker rm -f lab-check-variants >/dev/null 2>&1
+  ! grep -q 'app variants' <<<"$log" || { echo "an app with no switch names variants: ${log//$'\n'/ | }"; return 1; }
+  log="$(start_app_for_check lab-check-variants 18164 0 APP_FETCH=both)" && { docker rm -f lab-check-variants >/dev/null 2>&1; echo "a bad APP_FETCH was accepted"; return 1; }
+  docker rm -f lab-check-variants >/dev/null 2>&1
+  grep -q 'APP_FETCH must be one of assoc, num, assoc-loop, num-loop, got "both"' <<<"$log" || { echo "the refusal does not say why: $log"; return 1; }
+}
+
+# The feed bench times every case of the S6 variants and none is skipped (each case checked its answer against the reference's), and the
+# plans saved next to its output are what SQLite says today.
+check_micro_feed_bench() {
+  local out rows plans
+  out="$(bash "$LAB/micro.sh" "$LAB/micro/benches/feed.php" --images 8.5 --jit on --quick --procs 1 --out "$(mktemp -d)/micro.json" 2>&1)" || { echo "lab/micro.sh failed: ${out//$'\n'/ | }"; return 1; }
+  ! grep -q 'SKIPPED' <<<"$out" || { echo "a case was skipped: $(grep 'SKIPPED' <<<"$out" | head -3 | tr '\n' '|')"; return 1; }
+  rows="$(grep -c -E '^8\.5 +8\.5\.[0-9]+ +on +.* [0-9.]+ +[0-9.]+ \.\. [0-9.]+ +[0-9]+( +UNSTABLE.*)?$' <<<"$out")"
+  [ "$rows" = 22 ] || { echo "expected 22 rows (21 cases and the empty loop), got $rows: ${out//$'\n'/ | }"; return 1; }
+  plans="$(bash "$LAB/run.sh" 8.5 php /lab/micro/feed-plans.php 2>&1)" || { echo "feed-plans.php failed: ${plans//$'\n'/ | }"; return 1; }
+  [ "$plans" = "$(cat "$LAB/micro/feed-run/feed-plans.txt")" ] || { echo "lab/micro/feed-run/feed-plans.txt is not what lab/micro/feed-plans.php prints: regenerate it"; return 1; }
+}
+
 # The challenge app passes the challenge's own test suite (42 checks), twice in a row: the second run starts from a fresh copy of the
 # seed (the suite's golden answers fail on a database the first run wrote to), and no container is left behind.
 check_challenge_test_passes_on_app() {
@@ -1585,6 +1640,7 @@ CHECKS=(
   check_run_limits
   check_micro_sample
   check_micro_ffi_bench
+  check_micro_feed_bench
   check_micro_skips_failed_case
   check_micro_skips_case_failing_in_later_process
   check_micro_refuses_wrong_state
@@ -1612,9 +1668,12 @@ CHECKS=(
   check_stress_fails_on_wrong_echo
   check_uring_noop_holds_connections_without_fds
   check_app_cases
+  check_app_variants_cases
   check_challenge_test_passes_on_app
   check_challenge_test_fails_on_wrong_golden
   check_challenge_test_passes_with_soft_limit_zero
+  check_challenge_test_passes_each_s6_variant
+  check_s6_switches_reach_the_server
   check_soft_limit_closes_the_third_connection
   check_soft_limit_keeps_idle_connections
   check_soft_limit_serves_churn_at_256_fds
