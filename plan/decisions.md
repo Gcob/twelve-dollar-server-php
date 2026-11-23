@@ -277,6 +277,11 @@
   bench estimate, scope 12's prediction. Our image runs Swoole 6.2.6 (theirs 6.2.3); tzimpel's buffer patch is applied
   if cheap, else stock Swoole, said so. Both entries join scope 12's AWS runs if that costs little (Jacob, 2026-11-22
   22:10, through the planning session, [notes.md](notes.md) 22:03).
+- **D62:** the step lab's TIME_WAIT gate counts every address the lab's clients use, the idle client's (127.0.0.2
+  to .8) included, and keeps its limit of 2,500 per address. Scope 6 found the gate blind to the idle client: with the
+  default, a second run at the real shape died with `Cannot assign requested address`, and its workaround
+  (`--time-wait-max 1`) adds about 58 s per run. Built at the start of scope 13, which runs at that shape next (project
+  manager, phase 5, 2026-11-23, scope 6's hand-back).
 
 ## History
 
