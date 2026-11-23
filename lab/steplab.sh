@@ -6,7 +6,7 @@
 #
 #   bash lab/steplab.sh --image 8.5 --rate 24000 --think-scale 0.02 --idle 60000 --seconds 60 --pairs 3 \
 #       --variant ref= --variant telemetry-on=APP_TELEMETRY=1 [--server-variant <name>=<php file under lab/>]... \
-#       [--warmup <req/s>,<s>] [--floor <us>] [--label <text>] [--out <folder>] [--time-wait-max <n>] [--idle-time-wait-max <n>] [--time-wait-wait <s>]
+#       [--warmup <req/s>,<s>] [--floor <us>] [--label <text>] [--out <folder>] [--first-round <n>] [--time-wait-max <n>] [--idle-time-wait-max <n>] [--time-wait-wait <s>]
 #                       [--local-ips <range>] [--lag-gate <s>] [--port <n>] [--vu-cap <n>] [--ramp <s>] [--k6-memory <MiB>] [--ext <name>]...
 #
 # --variant <name>=<K=V,K=V...> sets environment variables on the server (an empty list, `ref=`, is the skeleton as it is);
@@ -30,6 +30,9 @@
 # A count that does not drop within --time-wait-wait seconds (default 150) is a harness failure: something else is churning connections.
 # The counts, before and after each run, are in the run's JSON (`steplab.time_wait`).
 #
+# --first-round <n> (default 1) numbers the rounds from n, so more pairs can be added to a folder that already holds rounds 1 to n-1
+# (the summary then covers them all); a folder's earlier runs are never overwritten by it, but a round number given twice is.
+#
 # The output folder (default lab/results/steplab-...) holds each run's JSON (<variant>-<round>.json, the realistic run's JSON with a
 # `steplab` object added), its table (<variant>-<round>.txt), summary.json and summary.txt, which lab/steplab-summary.sh rebuilds from
 # the JSON files alone. The verdict needs a floor (--floor <us>, from an A/A calibration): without it nothing is judged.
@@ -46,7 +49,7 @@ usage() {
 usage: lab/steplab.sh --image <variant> --rate <req/s> --think-scale <s> --seconds <plateau s> --pairs <n>
                       --variant <name>=<K=V,K=V...> [--variant ...] [--server-variant <name>=<php file under lab/>]...
                       [--variant-args <name>=<arguments>]... [--idle <n>] [--warmup <req/s>,<s>] [--floor <us>] [--label <text>] [--out <folder>]
-                      [--time-wait-max <n>] [--idle-time-wait-max <n>] [--time-wait-wait <s>] [--local-ips <range>] [--lag-gate <s>] [--port <n>]
+                      [--first-round <n>] [--time-wait-max <n>] [--idle-time-wait-max <n>] [--time-wait-wait <s>] [--local-ips <range>] [--lag-gate <s>] [--port <n>]
                       [--vu-cap <n>] [--ramp <s>] [--k6-memory <MiB>] [--ext <name>]...
 the first variant is the reference; an empty list (`ref=`) is the skeleton as it is
 EOF
@@ -57,7 +60,7 @@ fail() { echo "steplab: $*" >&2; exit 1; }
 command_line="lab/steplab.sh $*"
 command_line="${command_line//$REPO/.}"
 
-image="" rate="" think_scale="" seconds="" pairs="" idle="" warmup="" floor="" label="" out=""
+image="" rate="" think_scale="" seconds="" pairs="" idle="" warmup="" floor="" label="" out="" first_round=1
 tw_max=2500 idle_tw_max=100000 tw_wait=150 local_ips="127.0.1.1-127.0.1.4"
 # The idle client's source addresses (FIRST_OCTET to LAST_OCTET of lab/conns/client.php): its sockets keep their ports for 60 s too.
 idle_ips="127.0.0.2-127.0.0.254"
@@ -83,6 +86,7 @@ while [ "$#" -gt 0 ]; do
     --think-scale) think_scale="$2" ;;
     --seconds) seconds="$2" ;;
     --pairs) pairs="$2" ;;
+    --first-round) first_round="$2" ;;
     --idle) idle="$2" ;;
     --warmup) warmup="$2" ;;
     --floor) floor="$2" ;;
@@ -135,7 +139,7 @@ done
 lab_require_variant "$image" || exit 2
 [ "${#v_names[@]}" -ge 1 ] || { echo "give at least one --variant (the first is the reference)" >&2; usage; }
 [[ "$idle_tw_max" =~ ^[0-9]+$ ]] || { echo "--idle-time-wait-max must be a whole number from 0, got '$idle_tw_max'" >&2; usage; }
-for n in rate seconds pairs tw_max tw_wait; do
+for n in rate seconds pairs first_round tw_max tw_wait; do
   [[ "${!n}" =~ ^[1-9][0-9]*$ ]] || { echo "--${n//_/-} must be a whole number from 1, got '${!n}'" >&2; usage; }
 done
 [[ "$think_scale" =~ ^[0-9]+([.][0-9]+)?$ ]] || { echo "--think-scale must be a number, got '$think_scale'" >&2; usage; }
@@ -213,7 +217,8 @@ wait_for_time_wait() {
 echo "steplab: ${#v_names[@]} variant(s) x $pairs round(s), $rate req/s for ${seconds}s (think scale $think_scale${idle:+, $idle idle connections}), warm-up $warmup, into ${out#"$REPO"/}"
 total=$(( ${#v_names[@]} * pairs ))
 done_runs=0
-for round in $(seq 1 "$pairs"); do
+last_round=$(( first_round + pairs - 1 ))
+for round in $(seq "$first_round" "$last_round"); do
   for i in "${!v_names[@]}"; do
     name="${v_names[$i]}"
     id="$name-$round"
@@ -250,7 +255,7 @@ for round in $(seq 1 "$pairs"); do
     tw_after="$(time_wait_json)" || fail "cannot count the TIME_WAIT sockets"
 
     # The run's own JSON stays as it is; the runner adds one object.
-    jq --arg variant "$name" --argjson index "$i" --argjson round "$round" --argjson rounds "$pairs" --arg reference "${v_names[0]}" \
+    jq --arg variant "$name" --argjson index "$i" --argjson round "$round" --argjson rounds "$last_round" --arg reference "${v_names[0]}" \
       --argjson env "$(jq -Rnc '[inputs | select(length > 0)]' <<<"${v_env[$i]}")" --arg server "${v_server[$i]:+${v_server[$i]#"$LAB"/}}" \
       --argjson rate "$rate" --arg warmup "$warmup" --argjson before "$TW_BEFORE" --argjson after "$tw_after" --arg command "$command_line" '
       . + {steplab: {variant: $variant, variant_index: $index, round: $round, rounds: $rounds, reference: $reference, variant_env: $env,

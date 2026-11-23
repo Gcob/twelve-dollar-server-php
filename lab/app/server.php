@@ -10,7 +10,7 @@
 // and APP_LOCKING=normal|exclusive (off by default; exclusive: no other process can open the database while the server runs), and the
 // S9 switches: APP_GROUP_COMMIT=1 (off by default: the writes of one turn of the loop are committed together, lab/servers/diy-server.php) and
 // APP_CHECKPOINTER=<ms> (off by default: a second process checkpoints the WAL every <ms> milliseconds, lab/app/checkpointer.php; refused
-// with APP_LOCKING=exclusive).
+// with APP_LOCKING=exclusive; don't use it as it is: under a steady writer the WAL never restarts and grows without bound).
 //
 // It starts with the extensions loaded in this order: `--ext sockets --ext event`. It listens only once the database is open.
 // lab/challenge-test.sh starts it on a fresh copy of the seed.

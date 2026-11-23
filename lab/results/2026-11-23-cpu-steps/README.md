@@ -115,7 +115,11 @@ Every series starts with `docker ps` showing no container: the VM is quiet. No i
 - **`APP_CHECKPOINTER` was not run** (it failed its own bound, below). **`APP_IO` was not built**, so S8 has the one variant, `APP_LOCKING=exclusive`.
 - **The first reference run of the series (mmap-off's) started with 200 TIME_WAIT sockets on one of k6's addresses**, left by the lab's own check a minute earlier: far
   under the limit of 2,500, in the JSON (`tw/addr`).
-- **No run was invalid.** Every counted run: `valid: true`, `other_containers: 0`, 60,000 idle held and none closed by the server.
+- **Two more `mmap-off` pairs were asked for after the first review, and neither was counted.** They ran from 09:20 on 2026-11-23, with `lab/steplab.sh --first-round 2` (a flag added for it: the rounds number on from the
+  folder's last). Round 2's reference ran at 09:20 on a VM with no other container and failed the 97 % rule at 35.2 µs/req (87.4 % of offered, p99 293 ms: the same state as the held rate's control in
+  `2026-11-23-step-lab-together`, which also read 35.2 µs/req); its `mmap-off` run started when the Docker VM filled with other containers (19 of them in the run's JSON) and read 58.6 µs/req at 15,092 req/s. The pair is not counted: both runs are kept in
+  `s6-mmap-off/pair-2-not-counted/` with the runner's log, and the run in flight when round 3 started was stopped before it left a file. So `mmap-off` has its one counted pair (-1.31 µs), and the two more that the review asked for wait for a quiet VM.
+- **Every run counted below:** `valid: true`, `other_containers: 0`, 60,000 idle held and none closed by the server.
 - **Scratch paths** (`<tmp>`) were scrubbed from the runs' `command` fields and tables, as in the earlier folders; the syscall counts carry no `other_containers`
   field (`docker ps` was empty before each).
 
@@ -220,6 +224,19 @@ Rule: a variant is beyond the noise when it has at least 2 pairs, every paired d
 | s8-exclusive | exclusive | 1 | 26.71 | 25.86 | -0.85 | 2.57 | 27.46 | 19.79 | screen: not better in one pair |
 | s9-group-commit | group-commit | 1 | 26.49 | 27.68 | +1.18 | 2.57 | 19.5 | 25.11 | screen: not better in one pair |
 
+### `APP_PRAGMAS=mmap-off`, its 1 counted pair(s), against both readings of the floor
+
+The floor of the five A/A pairs is **2.57 µs/req**, but its largest pair is the one whose run failed the 97 % rule; the floor of the 4 A/A pairs whose runs both passed it is **0.27 µs/req**. Each pair is the variant's µs/req minus the reference's of the same round (the reference runs first).
+
+| Pair (round) | reference µs/req | mmap-off µs/req | paired difference µs | reference p99 ms | mmap-off p99 ms |
+|---|---|---|---|---|---|
+| 1 | 26.37 | 25.06 | -1.31 | 21.64 | 24.02 |
+
+| Reading of the floor | floor µs/req | median paired difference µs | pairs with the same sign | verdict of the rule |
+|---|---|---|---|---|
+| the 5 A/A pairs | 2.57 | -1.31 | true | screen: not better in one pair |
+| the 4 A/A pairs that passed the 97 % rule | 0.27 | -1.31 | true | screen: beats the floor |
+
 ### S9: group commit, judged on its latency first (telemetry on for both sides)
 
 | Run | µs CPU/req | p99 ms | median per-second p99 ms | largest per-second max ms | stalled seconds of the plateau (max latency above 100 ms) | longest callback ms (the most of any second) | commits | mean batch | largest batch |
@@ -229,7 +246,7 @@ Rule: a variant is beyond the noise when it has at least 2 pairs, every paired d
 
 ### The micro bench of the S6 variants beside the macro pairs (ns per feed: query and JSON, 5 processes, JIT on; one developer's run on the Mac's VM)
 
-| Variant | micro: median ns per feed | micro: against the reference | macro: paired difference µs/req (one pair) | macro: against the reference's µs/req |
+| Variant | micro: median ns per feed | micro: against the reference | macro: median paired difference µs/req | macro: against the reference's µs/req |
 |---|---|---|---|---|
 | `APP_PRAGMAS=mmap-off` | 29954 | -3.2 % | -1.31 | -5 % |
 | `APP_PRAGMAS=cache-256m` | 30030 | -3 % | -2.22 | -8.2 % |
@@ -331,7 +348,8 @@ The old client stopped the run on its first `Cannot assign requested address`. W
 ## The checkpointer (D63): a finding, not a pair
 
 `APP_CHECKPOINTER` was not run. It failed its own bound in the smoke of the scope that built it, which ran it once at the pair's rate (24,000 req/s, 60,000 idle,
-2 minutes, telemetry on, `docker ps` empty): these are its figures, from that scope's hand-back (scratch runs, not in this folder: counts only).
+2 minutes, telemetry on, `docker ps` empty): these are its figures, from that scope's hand-back (scratch runs, not in this folder: counts only). A 2-minute rerun of that smoke, saved in this folder so that anyone can reproduce the numbers,
+was planned for `s9-checkpointer/` and not run: it waits for a quiet VM.
 
 | Smoke (one run each) | achieved req/s | µs CPU/req | p99 ms | WAL frames in use (`mxFrame`, the sampler) | WAL file |
 |---|---|---|---|---|---|
@@ -347,8 +365,11 @@ and the WAL restarts. At that rate a 5-minute run would write about 8 GB. `wal_c
 ## The reading
 
 - **No variant beat the floor.** Three of the four are lower than the reference (cache-256m -2.22 µs, mmap-off -1.31, exclusive -0.85) and group commit is higher (+1.18), every
-  one under 2.57. One pair is a screen, not a verdict. The A/A at this rate (`2026-11-23-s1-fd-wall/aa-24000`) had four of its five pairs within 0.3 µs and one at 2.57, so
-  a difference of 2 µs is not out of what two identical runs do now and then; the references of this folder (26.37, 27.06, 26.71 and, with telemetry on, 26.49) spread by 0.7 µs.
+  one under 2.57. One pair is a screen, not a verdict. The A/A at this rate (`2026-11-23-s1-fd-wall/aa-24000`) had four of its five pairs within 0.3 µs and one at 2.57, and that 2.57 pair is the one whose run (b-2: 28.48 µs/req, p99 51 ms, 96.7 %) failed the 97 % rule: the floor
+  of 2.57 is set by a run that would not have counted as a pass, so a difference of 2 µs is not out of what two identical runs do now and then; the references of this folder (26.37, 27.06, 26.71 and, with telemetry on, 26.49) spread by 0.7 µs.
+- **`mmap-off`, against both readings of the floor:** the floor of the five A/A pairs is 2.57 µs/req, set by the one pair whose run failed the 97 % rule; the floor of the four pairs that passed it is **0.27 µs/req**. The one counted pair is -1.31 µs: not
+  better than 2.57 (51 % of it), and 4.9 times 0.27. One pair is a screen under both readings, and the table "against both readings of the floor" above is where the two more pairs will land. Which reading is the right one, and so whether S6 takes `mmap-off`,
+  is Jacob's to choose (D65); this folder does not change the choice.
 - **S6, the pragmas:** both presets are lower by the sign the micro bench gave them (-3.2 % and -3.0 % of a feed), and by more at the macro (-5 % and -8 % of a request),
   but the micro's 3 % is about 1 µs of a feed (31 µs for the query and the JSON), and a feed is 47 % of the requests, so it is worth 0.4 to 0.5 µs of an average request; the macro's 1.3 and 2.2 are
   three to five times that. The cache preset is
@@ -359,7 +380,7 @@ and the WAL restarts. At that rate a 5-minute run would write about 8 GB. `wal_c
 - **S9, group commit:** +1.18 µs (+4.5 %) and a worse p99 in this pair (25.11 against 19.5 ms), but the four references' own p99 run from 19.5 to 27.5 ms, so the p99 did not clearly move.
   Batches: a mean of 1.45 writes per commit (the server's whole life, warm-up included) and a largest of 79, as the smoke of the scope that built it said (1.56, 76): at the bench's rate there
   is almost nothing to share, and each turn pays the `loop(LOOP_ONCE)` call and the flush. The longest callback of any second is 28.5 ms against the reference's 16.1; stalled seconds
-  (max latency above 100 ms) 3 of 58 against 2 of 58.
+  (max latency above 100 ms) 3 of 58 against 2 of 58. This pair ran with telemetry on on both sides, against a floor measured with it off, so its own noise may be wider than the floor says.
 - **The skeleton today costs what it cost:** the median of the three telemetry-off references is 26.71 µs/req, against 26.11 for the S1 series' 10 A/A runs before `respond()` and the
   `instanceof Closure` test (+0.6, inside the noise) and 27.15 for the baseline (probes on). The one more method call per request is not visible.
 - **The profile did not move:** S6 51.2 % of the samples (51.7 % in the baseline), S8 20.6 % (20.2), S2 8.1 % (8.0), S7 9.4 % (9.7), the event loop 6.3 % (6.5), 31 % of the CPU in the kernel

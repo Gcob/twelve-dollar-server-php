@@ -36,6 +36,7 @@ const APP_POST_SELECT = 'SELECT p.id, p.body, p.created_at, u.username AS author
 //                     and only then the responses go out. 0 or unset: every write commits before its own response, as always.
 //   APP_CHECKPOINTER  <ms>: the server connection never checkpoints (wal_autocheckpoint = 0) and a second process, started at boot with its own
 //                     connection, runs PRAGMA wal_checkpoint(PASSIVE) every <ms> milliseconds (lab/app/checkpointer.php). It ends with the server.
+//                     Don't use it as it is: under a steady writer the WAL never restarts and grows without bound (about 3 GB in 2 minutes).
 const APP_FEED_SQL_VARIANTS = ['reference', 'join', 'two-step'];
 const APP_FETCH_VARIANTS = ['assoc', 'num', 'assoc-loop', 'num-loop'];
 const APP_LOCKING_VARIANTS = ['normal', 'exclusive'];

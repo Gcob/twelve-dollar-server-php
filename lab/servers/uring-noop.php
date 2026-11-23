@@ -25,10 +25,9 @@
 // Where the spike got (smoke runs on an aarch64 Docker VM with 6.12 kernel and PHP 8.5, one CPU for the server, quiet VM): every step of
 // the spike's plan was reached. conformance: 8 of 8 cases. stress: 2,000,000 requests with unique ids over 1,000 connections, one at a
 // time and pipelined, 0 mismatches, 0 lost. connections: 60,000 held and answered on one ring with 10 file descriptors in the process,
-// and 80,000 over two rings (11 descriptors). CPU per request at 7,000 req/s on /noop: about the DIY server's (20.1 against 19.5
-// microseconds the same evening) because a turn handles one request at that rate, so the ring pays one io_uring_enter per request
-// and the kernel's TCP work, which both servers pay, dominates. At 24,000 req/s: 10.5 against the DIY server's 11.3, and 9.1 with
-// URING_MIN_COMPLETE=8 URING_MIN_WAIT_US=100, which makes a turn handle 6 requests.
+// and 80,000 over two rings (11 descriptors). The CPU per request against the DIY server's, at 7,000 and at 24,000 req/s and with the
+// batching settings below, is measured in lab/results/2026-11-23-s1-fd-wall/README.md ("The ring"): that record is the one to quote,
+// not a smoke run's number.
 //
 // Docker's default seccomp filter refuses io_uring (EPERM): lab/macro.sh, lab/conformance.sh, lab/conns.sh and lab/stress.sh take
 // --seccomp-unconfined for this server, and no other server uses it.

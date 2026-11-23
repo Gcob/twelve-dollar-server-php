@@ -28,6 +28,9 @@ runs_of() { jq -s 'map(select(type == "object" and has("steplab")))' "$1"/*.json
 
 # The A/A floor at 24,000 req/s (telemetry off): the largest absolute paired difference of the S1 series' pairs, to two decimals as the step lab was told.
 FLOOR="$(runs_of "$S1/aa-24000" | jq -r "$PRELUDE"'map(select(counted)) | group_by(.steplab.round) | map(select(length == 2) | ((.[] | select(.steplab.variant == "b") | us) - (.[] | select(.steplab.variant == "a") | us)) | fabs) | max | r2')"
+# The same floor over the pairs whose two runs both passed the 97 % rule: the largest pair (b-2, 28.48 µs/req, p99 51 ms) is the one run of ten that failed it.
+FLOOR_PASSING="$(runs_of "$S1/aa-24000" | jq -r "$PRELUDE"'map(select(counted)) | group_by(.steplab.round) | map(select(length == 2 and all(.[]; .results.steps[0].pass)) | ((.[] | select(.steplab.variant == "b") | us) - (.[] | select(.steplab.variant == "a") | us)) | fabs) | max | r2')"
+FLOOR_PASSING_PAIRS="$(runs_of "$S1/aa-24000" | jq -r "$PRELUDE"'map(select(counted)) | group_by(.steplab.round) | map(select(length == 2 and all(.[]; .results.steps[0].pass))) | length')"
 AA_MEDIAN="$(runs_of "$S1/aa-24000" | jq -r "$PRELUDE"'map(select(counted) | us) | med | r2')"
 
 # Every run file of the series, as one array.
@@ -37,8 +40,8 @@ echo "### The floor and the reference"
 echo
 runs_of "$S1/aa-24000" | jq -r "$PRELUDE"'"The A/A floor at 24,000 req/s (the S1 series, `2026-11-23-s1-fd-wall/aa-24000`): **\($floor) µs/req**, the largest absolute paired difference of its \(map(select(counted)) | group_by(.steplab.round) | map(select(length == 2)) | length) pairs; the median of its \(map(select(counted)) | length) runs is \($m) µs/req."' --argjson floor "$FLOOR" --arg m "$AA_MEDIAN"
 echo
-all_runs | jq -r "$PRELUDE"'map(select(counted and .steplab.variant_index == 0 and (.server.env | index("APP_TELEMETRY=0") != null)) | us) as $off
-  | map(select(counted and .steplab.variant_index == 0 and (.server.env | index("APP_TELEMETRY=1") != null)) | us) as $on
+all_runs | jq -r "$PRELUDE"'map(select(counted and .steplab.round == 1 and .steplab.variant_index == 0 and (.server.env | index("APP_TELEMETRY=0") != null)) | us) as $off
+  | map(select(counted and .steplab.round == 1 and .steplab.variant_index == 0 and (.server.env | index("APP_TELEMETRY=1") != null)) | us) as $on
   | "Today'"'"'s skeleton, the reference of every pair: telemetry off (S6 and S8) \($off | map(r2) | join(", ")) µs/req, median **\($off | med | r2)**; telemetry on (S9) \($on | map(r2) | join(", ")) µs/req. The baseline'"'"'s was 27.15 (phase 4, probes on), before the `respond()` split and the `instanceof Closure` test of a request."'
 
 echo
@@ -76,6 +79,25 @@ for s in $SERIES; do
     | "| \($dir) | \($v.variant) | \($v.pairs | length) | \($ref | map(.us_per_request) | med | r2) | \($v.median_us | r2) | \($v.median_difference_us | sgn) | \($floor) | \($ref | map(.p99_ms) | med | r2) | \($v.median_p99_ms | r2) | \($v.verdict) |"' --arg dir "$s" --argjson floor "$FLOOR" "$TMP/$s.json"
 done
 
+if [ -f "$TMP/s6-mmap-off.json" ]; then
+  echo
+  echo "### \`APP_PRAGMAS=mmap-off\`, its $(jq '.variants[1].pairs | length' "$TMP/s6-mmap-off.json") counted pair(s), against both readings of the floor"
+  echo
+  echo "The floor of the five A/A pairs is **$FLOOR µs/req**, but its largest pair is the one whose run failed the 97 % rule; the floor of the $FLOOR_PASSING_PAIRS A/A pairs whose runs both passed it is **$FLOOR_PASSING µs/req**. Each pair is the variant's µs/req minus the reference's of the same round (the reference runs first)."
+  echo
+  echo "| Pair (round) | reference µs/req | mmap-off µs/req | paired difference µs | reference p99 ms | mmap-off p99 ms |"
+  echo "|---|---|---|---|---|---|"
+  jq -r "$PRELUDE"'.runs as $r | .variants[] | select(.reference | not) | .pairs[] | . as $p
+    | ($r | map(select(.round == $p.round and .index == 0))[0].p99_ms) as $rp | ($r | map(select(.round == $p.round and .index == 1))[0].p99_ms) as $vp
+    | "| \($p.round) | \($p.reference_us | r2) | \($p.us_per_request | r2) | \($p.difference_us | sgn) | \($rp | r2) | \($vp | r2) |"' "$TMP/s6-mmap-off.json"
+  bash "$LAB/steplab-summary.sh" s6-mmap-off --floor "$FLOOR_PASSING" --json "$TMP/s6-mmap-off-passing.json" >/dev/null
+  echo
+  echo "| Reading of the floor | floor µs/req | median paired difference µs | pairs with the same sign | verdict of the rule |"
+  echo "|---|---|---|---|---|"
+  jq -r "$PRELUDE"'.variants[] | select(.reference | not) | "| the 5 A/A pairs | \($f) | \(.median_difference_us | sgn) | \(.same_sign) | \(.verdict) |"' --arg f "$FLOOR" "$TMP/s6-mmap-off.json"
+  jq -r "$PRELUDE"'.variants[] | select(.reference | not) | "| the \($n) A/A pairs that passed the 97 % rule | \($f) | \(.median_difference_us | sgn) | \(.same_sign) | \(.verdict) |"' --arg f "$FLOOR_PASSING" --arg n "$FLOOR_PASSING_PAIRS" "$TMP/s6-mmap-off-passing.json"
+fi
+
 if [ -d s9-group-commit ]; then
   echo
   echo "### S9: group commit, judged on its latency first (telemetry on for both sides)"
@@ -89,7 +111,7 @@ fi
 echo
 echo "### The micro bench of the S6 variants beside the macro pairs (ns per feed: query and JSON, 5 processes, JIT on; one developer's run on the Mac's VM)"
 echo
-echo "| Variant | micro: median ns per feed | micro: against the reference | macro: paired difference µs/req (one pair) | macro: against the reference's µs/req |"
+echo "| Variant | micro: median ns per feed | micro: against the reference | macro: median paired difference µs/req | macro: against the reference's µs/req |"
 echo "|---|---|---|---|---|"
 for pair in "mmap-off s6-mmap-off" "cache-256m s6-cache-256m"; do
   read -r variant dir <<<"$pair"
@@ -129,7 +151,7 @@ if [ -f profile/skeleton.json ]; then
   echo "### The profile of today's skeleton (Excimer, 1 ms CPU time, one run: 24,000 req/s, \`s = 0.02\`, 60,000 idle, telemetry off), beside the baseline's"
   echo
   jq -r '.profile | "Profiled window (the server'"'"'s whole life after its first answer: warm-up, ramps and plateau): \(.samples) samples at \(.period_s * 1000) ms, the cgroup'"'"'s user CPU \(.cgroup.user_usec / 1000 | round) ms and system CPU \(.cgroup.system_usec / 1000 | round) ms (**\(.cgroup.system_share * 100 | round) % in the kernel**), the samples cover \(.samples_over_cgroup_cpu * 100 | round) % of that CPU, unclassified \(.unclassified_share * 100 | . * 10 | round / 10) %. The run is valid: \(.valid_note // "see the run table")."' profile/skeleton.json 2>/dev/null | sed 's/ The run is valid: see the run table\.//'
-  us="$(all_runs | jq -r "$PRELUDE"'map(select(counted and .steplab.variant_index == 0 and (.server.env | index("APP_TELEMETRY=0") != null)) | us) | med')"
+  us="$(all_runs | jq -r "$PRELUDE"'map(select(counted and .steplab.round == 1 and .steplab.variant_index == 0 and (.server.env | index("APP_TELEMETRY=0") != null)) | us) | med')"
   echo
   echo "Share of all the samples per step, the baseline's profile (phase 4, probes on) and today's (the all column of the fold):"
   echo

@@ -40,7 +40,7 @@ jq -r "$PRELUDE"'.runs as $r | .variants[] | select(.reference | not) as $v
 
 echo
 echo "### The staircase (the combination is S1-d alone: no switch of the screen was confirmed), one run per file"
-staircase_table() { # file
+staircase_table() { # path of the run's JSON, without .json
   jq -r "$PRELUDE"'
     "Run `\($f).json`: think scale \(.load.think_scale), VU cap \(.load.vu_cap), warm-up \(.load.warmup // "none"), \(.load.plateau_s) s plateaus, lag gate \(.aggregator.lag_gate_s) s, server environment `\(.server.env | join(" "))`; valid \(.valid), other containers \(.other_containers.count), idle held \(.idle.held_at_start) at the start and \(.idle.held_at_end) at the end, aggregator max lag \(.aggregator.max_lag_s) s, k6 connection errors \(.k6_connection_errors), limit closes \(.server_connections.telemetry.close_responses), accept pauses \(.server_connections.telemetry.accept_pauses), most connections open \(.server_connections.telemetry.open_peak).",
     "",
@@ -48,7 +48,7 @@ staircase_table() { # file
     "|---|---|---|---|---|---|---|---|---|---|---|",
     (.results.steps[] | "| \(.step) | \(.vus) | \(.offered_rps | r1) | \(.achieved_rps | r1) | \(.users | r0) | \(.cpu_usec_per_request | r1) | \(.latency_ms.overall.p95 | r2) | \(.latency_ms.overall.p99 | r2) | \(.error_rate * 100 | r2) % | \(.k6_cpu_percent_of_one_cpu // "-") | \(if .pass then "pass" else "FAIL: " + (.reasons | join("; ")) end) |"),
     "",
-    (if .results.stopped_at_step then "Stopped at step \(.results.stopped_at_step): \(.results.stop_reasons | join("; "))." else "No step failed." end)' --arg f "staircase/$1" "staircase/$1.json"
+    (if .results.stopped_at_step then "Stopped at step \(.results.stopped_at_step): \(.results.stop_reasons | join("; "))." else "No step failed." end)' --arg f "$1" "$1.json"
 }
 for json in staircase/staircase-coarse-?.json staircase/staircase-fine*.json; do
   [ -f "$json" ] || continue
@@ -56,7 +56,7 @@ for json in staircase/staircase-coarse-?.json staircase/staircase-fine*.json; do
   echo
   echo "**$f**"
   echo
-  staircase_table "$f"
+  staircase_table "staircase/$f"
 done
 
 HOLDS="$(ls holds/hold-[0-9].json 2>/dev/null || true)"
@@ -80,6 +80,20 @@ if [ -n "$HOLDS" ]; then
   echo
   jq -nr "$PRELUDE"'[inputs | select(counted) | .results.steps[0] | select(.pass) | .cpu_usec_per_request] as $h
     | "The median of the 3 holds is **\($h | med | r2) µs/req**, \(($h | med) - 27.15 | sgn) µs from the baseline'"'"'s 27.15 (\((($h | med) - 27.15) / 27.15 * 100 | sgn) %). The holds run, in µs/req: \($h | map(r2) | join(", ")) (the baseline'"'"'s: 27.71, 27.15, 27.06)."' $HOLDS </dev/null
+fi
+
+if [ -f control/staircase.json ]; then
+  echo
+  echo "### The control: the skeleton alone, with none of S1-d's accounting (no \`APP_SOFT_CONN_LIMIT\`), the same flags as the staircase above"
+  echo
+  staircase_table control/staircase
+  if [ -f control/hold.json ]; then
+    echo
+    echo "| Run | valid | other containers | offered req/s | achieved req/s | µs CPU/req | p95 ms | p99 ms | errors | idle held (start / end) | result |"
+    echo "|---|---|---|---|---|---|---|---|---|---|---|"
+    jq -r "$PRELUDE"'.results.steps[0] as $s
+      | "| control/hold | \(.valid) | \(.other_containers.count) | \($s.offered_rps | r1) | \($s.achieved_rps | r1) | \($s.cpu_usec_per_request | r2) | \($s.latency_ms.overall.p95 | r2) | \($s.latency_ms.overall.p99 | r2) | \($s.error_rate * 100 | r2) % | \(.idle.held_at_start) / \(.idle.held_at_end) | \(if $s.pass then "pass" else "FAIL: " + ($s.reasons | join("; ")) end) |"' control/hold.json
+  fi
 fi
 
 PROFILE=profile/profile.json

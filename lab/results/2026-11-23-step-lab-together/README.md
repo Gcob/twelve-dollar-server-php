@@ -117,6 +117,8 @@ invalid is kept and shown, not counted. Every counted run says `other_containers
   profile run each started a minute after the one before: 0 retries and 6 addresses. The idle client's wall at 7,020 sockets on an address is left alone.
 - **The first start of the screen failed twice, at no cost:** the script was not executable (run with `bash`), and `docker image inspect php-lab:8.5` said "No such image" for about a minute at 07:54 (a Docker blip, as the S1 series saw);
   it was fine at 07:55 and nothing had run.
+- **The control ran last, after the rest, and its result is above:** the skeleton alone, one 2-step staircase (22,250 and 23,000 req/s, `s = 0.02`, 60,000 idle, `--vu-cap 5400`, lag gate 5.5 s, warm-up 2,000 req/s for 60 s, telemetry and probes on, no soft limit), run at 09:16, after the phase's other runs and the review of its first pass.
+  Its first step failed, which ends a staircase, so 23,000 and the hold were not run.
 - **Nothing was invalid.** Every counted run: `valid: true`, `other_containers: 0`, 60,000 idle held at the end, none closed by the server. `docker ps` was empty before each run (07:51 to 08:42, 2026-11-23).
 - **Scratch paths** (`<tmp>`) were scrubbed from the screen's run files, as in the earlier folders.
 
@@ -184,6 +186,16 @@ Stopped at step 2: achieved below 97 % of offered.
 | baseline: median of its 3 holds (the skeleton before the CPU steps, telemetry on) | | | 24002.3 | 23386.4 | 221002 | 27.15 | 11.93 | 28.29 | | | | | | | | |
 
 The median of the 3 holds is **27.58 µs/req**, +0.43 µs from the baseline's 27.15 (+1.6 %). The holds run, in µs/req: 27.65, 27.58, 27.08 (the baseline's: 27.71, 27.15, 27.06).
+
+### The control: the skeleton alone, with none of S1-d's accounting (no `APP_SOFT_CONN_LIMIT`), the same flags as the staircase above
+
+Run `control/staircase.json`: think scale 0.02, VU cap 5400, warm-up 2000,60, 60 s plateaus, lag gate 5.5 s, server environment `APP_TELEMETRY=1`; valid true, other containers 0, idle held 60000 at the start and 60000 at the end, aggregator max lag 3.034 s, k6 connection errors 0, limit closes 0, accept pauses 0, most connections open 64239.
+
+| Step | VUs | offered req/s | achieved req/s | users | µs CPU/req | p95 ms | p99 ms | errors | k6 CPU % of one | result |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | 4204 | 22250.4 | 19713.3 | 186290 | 35.2 | 91.72 | 297.35 | 0 % | 370.26 | FAIL: achieved below 97 % of offered |
+
+Stopped at step 1: achieved below 97 % of offered.
 
 ### The profile (Excimer, 1 ms CPU time, one run: the held rate, `s = 0.02`, 60,000 idle, telemetry off), beside the baseline's and today's skeleton's
 
@@ -266,7 +278,14 @@ Users from the leaderboard's formula (about 8.0 million over the µs per request
 - **The held rate is lower: 22,000 req/s, against 24,000.** The CPU per request is the same, but the 97 % rule failed at 23,000 (22,173 achieved, 96.4 %, p99 76.7 ms against 33.3 for the baseline at the same rate) and at 22,250
   (96.6 %), and passed at 22,000 (97.7 %, 98.2 % in the third hold). The baseline passed 23,000 at 97.5 % and 24,000 in 13 of 17 runs. Three readings that this folder cannot tell apart: the rule's line is noisy (the baseline's
   24,000 failed 4 of 17 times, so one failing step is a run of luck); S1-d's accounting on every request and every connection costs latency the CPU per request does not show; the Mac was busier today (impression: the host's load was not recorded, and the harness's own k6 takes 3
-  of the VM's CPUs). A control with the skeleton alone, under the same flags, at 22,250 and 23,000 would separate the first two: not run, see the questions of the hand-back.
+  of the VM's CPUs). The control that was meant to separate the first two (below) failed too, so it did not.
+- **The control: the skeleton alone failed at 22,250 as well, and worse.** The run (the skeleton with no `APP_SOFT_CONN_LIMIT`, the same flags, 22,250 then 23,000, 2026-11-23 09:16 to 09:19, `other_containers: 0`,
+  60,000 idle held, 0 closed) stopped at its first step: **19,713 req/s achieved of 22,250 (88.6 %), p99 297 ms, 35.2 µs/req**, against S1-d's 22,250 at 96.6 % (p99 42.9 ms) in the fine staircase. So no hold was run and 23,000 was not reached. The
+  CPU per request is 27 % above the 27.4 to 28.5 of every S1-d step of the day, which a per-request accounting cost cannot explain in a run that has none of it: the server did the same work for more CPU, the sign of a slower host or VM
+  (a neighbour on the Mac or in the VM's CPUs), not of the skeleton. The next run, the reference of an `APP_PRAGMAS=mmap-off` pair at 24,000 req/s started at 09:20 (kept in `cpu-steps/s6-mmap-off/pair-2-not-counted/`, not counted), came out the same: 35.2 µs/req,
+  87.4 % of the 24,002 offered, p99 293 ms. **The reading: the skeleton does not hold 22,250 either under that state, so the 8 % drop of the held rate is not shown to be S1-d's. It is not shown to be the day's either:** the control cannot pass in the state it ran in, so it
+  says nothing about the state of 08:00 to 08:40, when S1-d failed at 23,000 and 22,250 at normal CPU per request (28.5 and 28.0). For phase 5b: S1-d's per-request path (one comparison, one counter at each accept) is 0.4 µs in the profile, and the question of whether
+  it moves the knee needs the skeleton and S1-d run interleaved, on a day when the skeleton passes 24,000, before S1-d is blamed or cleared. The host's load was not recorded for the S1-d staircase; during the control the Mac's load average was 12 to 14 (the run's own k6 and VM included).
 - **Not above the harness floor:** the held rate is a floor of the harness at `s = 0.02` (the server is 59 % busy at 22,000 req/s), so the result is the µs/req, which did not move. The mapped users at the held rate fell with the rate
   (203,239 against 221,002); by the leaderboard's formula on the µs they are 290,025 against 294,659.
 - **The profile has not moved:** S6 50.6 % of the samples (51.7 % in the baseline), S8 20.9 % (20.2), S7 10.0 % (9.7), S2 8.2 % (8.0), the loop 6.5 % (6.5), 31 % of the CPU in the kernel (30). The feed's query alone is 38.0 % (38.8).

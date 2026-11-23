@@ -627,7 +627,8 @@ those is refused at boot (exit 1, the message names the variable and the value).
 reader allows. It reads a pipe whose other end is the server: when the server ends, killed or not, the pipe closes and the checkpointer ends
 (a test kills the server with SIGKILL and looks for the process). **It cannot run with `APP_LOCKING=exclusive`**: that process could not open
 the database ("database is locked"), so the server refuses the pair at boot and says why. Group commit and exclusive locking do go together
-(one process commits).
+(one process commits). **Don't use it as it is:** under a steady writer the WAL never restarts and grows without bound (at the bench's write rate,
+about 3 GB in 2 minutes), so a run of any length fills the disk; the measured figures are in `results/2026-11-23-cpu-steps/README.md` ("The checkpointer").
 
 **A trap of ext-event, and why `turn()` is a method of the server:** the loop's callbacks are private methods of `DiyServer`, and ext-event
 calls a callback in the scope of whoever runs the loop. `$base->loop(EventBase::LOOP_ONCE)` called from outside the class (a test, a
