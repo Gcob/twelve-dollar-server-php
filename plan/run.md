@@ -2,12 +2,13 @@
 
 **Pace:** 🟢 full · 5-hour 10 % · weekly 29 % at 17:35 · 5-hour resets 20:20 · away
 
-**Status:** 🏁 Delivered, your review
+**Status:** 🏁 Delivered and merged
 **Progress:** delivered at 19:05 · started 2026-11-22 10:50 · 8 h 15
 **Since your last read:** phase 4 is delivered on `phase-4-claude` (pushed, clean). Both final reviews are OK.
 The baseline: at least 23,386 req/s (221,002 users, CPU-equivalent), 27.15 µs of CPU per request, p99 28 ms. The
-history is cleaned of the container names; only the force push of `main` is left for you. See "Delivery" below.
-**👉 Your turn:** W3, force-push the cleaned `main` (command in "Delivery"), then review and merge. Q11, not blocking.
+history is cleaned of the container names. You force-pushed `main` at 20:22 (W3 done) and merged the branch in
+`03552e4`. See "Delivery" below.
+**👉 Your turn:** Q11, not blocking.
 
 ## Steps
 

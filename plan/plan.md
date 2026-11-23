@@ -1,13 +1,13 @@
 # $12 server challenge in PHP
 
-**Status:** 🏁 Phase 4 delivered, your review (force push of `main` first) · 1 question open (not blocking) · approved on 2026-11-21 · snapshot
+**Status:** 🏁 Phase 4 delivered and merged · 1 question open (not blocking) · approved on 2026-11-21 · snapshot
 2026-11-21-0920 · **Round:** 3
 **Since your last read:** phase 4 is delivered (🏁 in 👉). The skeleton holds **at least 23,386 req/s, about
 221,000 users at 9.45**, with 60,000 idle connections, at **27.15 µs of CPU per request** (median of 3 five-minute
 holds, p99 28 ms, arm64, not a score). The rate is a floor set by the harness (D47), and one process caps the real
 bench near 71,000 users whatever the CPU, so S1's fd wall comes first in phase 5. The blind review found your
-container names in two result files on the public branch: the history is cleaned (Q12), and only the force push of
-`main` is left for you. Progress in [run.md](run.md).
+container names in two result files on the public branch: the history is cleaned (Q12), you force-pushed `main`,
+and the branch is merged. Progress in [run.md](run.md).
 **Project:** this repo, `plan/` · **Submission:**
 `submissions/php-<runtime>-Gcob/` · **Jira:** none
 
@@ -71,11 +71,8 @@ branch is gone).
 
 **What I need from you:**
 
-- [ ] 🔴 **Force-push the cleaned `main`** (W3): my push was refused by the permission check. Command in
-  [run.md](run.md), "Delivery". Until then, `origin/main` holds the old history, and the plan commits since 18:40
-  can't be pushed.
-- [ ] **Review and merge `phase-4-claude`:** where to look, the PR description and the commands are in
-  [run.md](run.md), "Delivery".
+- [x] 🔴 **Force-push the cleaned `main`** (W3): done by you at 20:22. No old commit is on a GitHub branch.
+- [x] **Review and merge `phase-4-claude`:** merged in `03552e4`.
 - [ ] **Q11** below, before phase 5's plan.
 
 ### Q11/12 [run, step-lab-metric] : the held rate is the harness's floor: is CPU per request enough to judge phase 5?
