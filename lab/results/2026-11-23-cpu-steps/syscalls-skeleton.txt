@@ -1,0 +1,20 @@
+syscalls: a realistic hold of 2000 req/s (think scale 0.1, 1890 VUs, plateau 28s), strace for 20s from 3s into the plateau
+
+image 8.5, server.php, strace 6.8: 20 s of strace -c -f, requests counted by the aggregator over the same seconds
+39875 requests in the window (offered 2000 req/s; the server serves fewer while it is traced)
+syscall                     calls  calls/request   errors
+fcntl                       97926          2.456        0
+recvfrom                    39871              1        0
+sendto                      39870              1        0
+pwrite64                    22810          0.572        0
+epoll_pwait                 20447          0.513        0
+pread64                      2564          0.064        0
+fdatasync                      30          0.001        0
+ftruncate                      20          0.001        0
+fstat                          10              0        0
+mremap                         10              0        0
+brk                             3              0        0
+mprotect                        2              0        0
+total                      223563          5.607        0
+write family (write, sendto, writev): 1 per request
+wrote lab/results/2026-11-23-cpu-steps/syscalls-skeleton.json

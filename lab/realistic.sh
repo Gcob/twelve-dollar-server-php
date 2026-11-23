@@ -669,10 +669,16 @@ conn_counts=null
 if [ "$telemetry_value" = 1 ]; then
   sleep 1.2
   conn_counts="$(docker logs "$SERVER" 2>&1 | sed -n 's/^telemetry //p' | jq -Rnc '
-    [inputs | fromjson? | .connections // empty] as $c
+    [inputs | fromjson?] as $l
+    | [$l[] | .connections // empty] as $c
+    | [$l[] | .group_commit // empty] as $g
     | if ($c | length) == 0 then null
       else {close_responses: ($c | map(.limit_closes) | add), accept_pauses: ($c | map(.accept_pauses) | add),
-            open_peak: ($c | map(.open_peak) | max), telemetry_seconds: ($c | length)} end')"
+            open_peak: ($c | map(.open_peak) | max), telemetry_seconds: ($c | length),
+            longest_callback_ms_max: ([$l[] | .longest_callback_ms // empty] | max),
+            group_commit: (if ($g | length) == 0 then null
+                           else {commits: ($g | map(.commits) | add), batch_mean: (($g | map(.commits * .batch_mean) | add) / ($g | map(.commits) | add) * 100 | round / 100),
+                                 batch_max: ($g | map(.batch_max) | max)} end)} end')"
 fi
 invalid_all="$(jq -r --arg extra "$extra_invalid" '(map(select(.invalid != "") | .invalid) + (if $extra == "" then [] else [$extra] end)) | join("; ")' "$tmp/runs.json")"
 

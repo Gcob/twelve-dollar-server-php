@@ -1,0 +1,76 @@
+{
+  "floor_us": 2.57,
+  "rule": "a variant is beyond the noise when it has at least 2 pairs, every paired difference (its µs CPU/req minus the reference's in the same round) has the same sign and the median paired difference is at least 2.57 µs in absolute value; otherwise it is within the noise. A round where either run is invalid has no pair. One pair with a floor: a screen (beats the floor when lower by at least the floor, else not better), never a verdict. No pair: no verdict. No floor: not judged (the floor comes from an A/A calibration).",
+  "reference": "ref",
+  "runs": [
+    {
+      "variant": "ref",
+      "index": 0,
+      "round": 1,
+      "valid": true,
+      "counted": true,
+      "achieved_rps": 23373.310344827587,
+      "us_per_request": 26.705685294213314,
+      "p95_ms": 11.408,
+      "p99_ms": 27.46,
+      "result": "pass",
+      "time_wait_before_max": 7187,
+      "other_containers": 0
+    },
+    {
+      "variant": "exclusive",
+      "index": 1,
+      "round": 1,
+      "valid": true,
+      "counted": true,
+      "achieved_rps": 23485.293103448275,
+      "us_per_request": 25.858142220908334,
+      "p95_ms": 9.124,
+      "p99_ms": 19.79,
+      "result": "pass",
+      "time_wait_before_max": 7153,
+      "other_containers": 0
+    }
+  ],
+  "variants": [
+    {
+      "variant": "ref",
+      "index": 0,
+      "reference": true,
+      "runs": 1,
+      "valid_runs": 1,
+      "median_us": 26.705685294213314,
+      "min_us": 26.705685294213314,
+      "max_us": 26.705685294213314,
+      "median_p99_ms": 27.46,
+      "pairs": [],
+      "median_difference_us": null,
+      "same_sign": false,
+      "verdict": "reference",
+      "reason": "the others are judged against it"
+    },
+    {
+      "variant": "exclusive",
+      "index": 1,
+      "reference": false,
+      "runs": 1,
+      "valid_runs": 1,
+      "median_us": 25.858142220908334,
+      "min_us": 25.858142220908334,
+      "max_us": 25.858142220908334,
+      "median_p99_ms": 19.79,
+      "pairs": [
+        {
+          "round": 1,
+          "us_per_request": 25.858142220908334,
+          "reference_us": 26.705685294213314,
+          "difference_us": -0.8475430733049798
+        }
+      ],
+      "median_difference_us": -0.8475430733049798,
+      "same_sign": true,
+      "verdict": "screen: not better in one pair",
+      "reason": "one pair, not lower by 2.57 µs"
+    }
+  ]
+}
