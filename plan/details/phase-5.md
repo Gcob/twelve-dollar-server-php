@@ -391,7 +391,9 @@ build during a measurement. New for phase 5:
 - **The machine:** one `c5.2xlarge` (Xeon, AVX-512; `m5.2xlarge` if no capacity), Ubuntu 24.04, Docker, the lab
   cloned at the branch's commit, the images built there, the seed built there. `lab/lib.sh` gets a CPU layout for an
   8-vCPU host (today's `4-11` for k6 doesn't exist there), picked by an env variable. The server pinned to one vCPU whose
-  hyperthread sibling stays idle, k6 on the others: the same harness as the Mac. SSH open to Jacob's IP only. The
+  hyperthread sibling stays idle (read from `/sys/devices/system/cpu/cpu*/topology/thread_siblings_list`: a
+  `c5.2xlarge` is 4 cores of 2 threads), k6 and the idle client on the other cores, never on that sibling: the same
+  harness as the Mac. SSH open to Jacob's IP only. The
   instance's CPU model is recorded (`/proc/cpuinfo` model name only).
 - **Runs:** `steplab.sh` with two variants, the baseline's skeleton and scope 11's configuration (plus scope 13's two
   Swoole entries if they cost under 30 minutes more, so their factor is checked on x86), 3 runs each at a
