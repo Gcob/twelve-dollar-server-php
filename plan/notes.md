@@ -475,8 +475,8 @@ on some numbers on the Mac, shouldn't we beat them on any machine?
   at the same rate, and connections held.
 - **Fail fast (D60):** one scope, no new code beyond running their entry in the lab, one pair of runs each.
 
-**Verdict:** ✅ Claude's take: a scope in 5a, before the x86 calibration, since it sharpens what scope 12 checks. Open
-until Jacob gives the go.
+**Verdict:** ✅ a scope in 5a, before the x86 calibration, since it sharpens what scope 12 checks. Jacob, 22:10:
+"Yes, add it." Sent to the project manager.
 
 ### 2026-11-22 18:08 · 💡 Idea: try io_uring anyway, something nobody tried in PHP
 
