@@ -4,10 +4,12 @@
 // checkpoint). Off by default; when on it costs two hrtime() calls around each callback of the loop and one timer a second.
 //
 //   telemetry {"second":1764000000,"requests":{...},"longest_callback_ms":1.234,"gc_runs":0,"gc_collected":0,"wal_bytes":4096,
-//              "minflt":12,"majflt":0}
+//              "minflt":12,"majflt":0,"connections":{"open_peak":3,"limit_closes":0,"accept_pauses":0}}
 //
 // `second` is the second the line describes (the one that just ended); the counts are that second's, not running totals. `requests` and
 // `wal_bytes` come from the closure the app gives (and it resets its own counters); the loop's own numbers are made here.
+// `connections` is there when a server hands its DiyConnectionCount over (watchConnections()): the most client connections open at once in
+// the second, the `Connection: close` responses the soft limit caused, and the times accept() ran out of file descriptors.
 
 final class DiyTelemetry
 {
@@ -17,6 +19,7 @@ final class DiyTelemetry
     /** @var array{int, int} */
     private array $faults;
     private ?Event $timer = null;
+    private ?DiyConnectionCount $connections = null;
     private int $boundary = 0;
     /** The timer is set a little after the whole second, so that what the server did in the second that ended is in the counters. */
     private const MARGIN_S = 0.002;
@@ -28,6 +31,12 @@ final class DiyTelemetry
         $this->gcRuns = $gc['runs'];
         $this->gcCollected = $gc['collected'];
         $this->faults = self::faults();
+    }
+
+    /** From now on a line also holds what the server's connection count saw in its second (the count starts over at each line). */
+    public function watchConnections(DiyConnectionCount $connections): void
+    {
+        $this->connections = $connections;
     }
 
     /** The same callback, timed: the longest one of the second is what a stalled loop shows. */
@@ -77,6 +86,12 @@ final class DiyTelemetry
             'minflt' => $faults[0] - $this->faults[0],
             'majflt' => $faults[1] - $this->faults[1],
         ];
+        if ($this->connections !== null) {
+            $line['connections'] = ['open_peak' => $this->connections->peak, 'limit_closes' => $this->connections->limitCloses,
+                'accept_pauses' => $this->connections->acceptPauses];
+            $this->connections->limitCloses = $this->connections->acceptPauses = 0;
+            $this->connections->resetPeak();
+        }
         $this->longestNs = 0;
         $this->gcRuns = $gc['runs'];
         $this->gcCollected = $gc['collected'];

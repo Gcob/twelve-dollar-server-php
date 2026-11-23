@@ -528,8 +528,11 @@ variant of every step of a request, on purpose: later work measures the alternat
 - **`lab/challenge-test.sh`** runs the challenge's own `test/test.sh`, unchanged, against it:
 
   ```bash
-  bash lab/challenge-test.sh --image 8.5 [--server lab/app/server.php] [--ext sockets --ext event] [--port 18110]
+  bash lab/challenge-test.sh --image 8.5 [--server lab/app/server.php] [--ext sockets --ext event] [--env K=V]... [--port 18110]
   ```
+
+  `--env K=V` (repeatable) goes to the server container, after `JWT_SECRET` and `SQLITE_PATH`: `--env APP_SOFT_CONN_LIMIT=0` runs the
+  suite on the soft connection limit (every response says `Connection: close`) and it still passes.
 
   It starts the server on a fresh copy, waits for `GET /health` (60 s at most, like the challenge's `test/run.sh`), prints the
   suite's output and exits with its code (`passed=42 failed=0`, exit 0). Both containers are removed at the end, whatever
@@ -639,7 +642,14 @@ running, and prints k6's memory per VU (the difference between the two plateaus)
   bounds nothing;
 - the scale is the `s` that puts 20,000 req/s under the cap: `cap * 2.17 / (20,000 * 20.5)`, with the margin the 97 % rule leaves
   (`0.29 * s` s of mean latency per request);
-- the harness **refuses more VUs than the cap** (`--vu-cap`, default 5,400): exit 2, before any container starts.
+- the harness **refuses more VUs than the cap** (`--vu-cap`, default 5,400): exit 2, before any container starts. **With
+  `--env APP_SOFT_CONN_LIMIT=<n>`** every k6 request reconnects and the server closes the connection after its response (see "Connection
+  limits"), so k6's VUs no longer hold the server's descriptors: the default cap is then the smaller of k6's memory (`LAB_K6_MIB_PER_VU`,
+  0.343 MiB a VU, against the budget) and its local ports (10,500 per source address, 4 addresses by default). `--vu-cap` given by
+  hand still wins. The JSON says which one bound the cap: `load.vu_cap_bound_by` is `file descriptors`, `k6 memory`, `local ports` or
+  `--vu-cap`, and the refusal names it. `server_connections` in the JSON holds the soft limit, what the server's telemetry counted over
+  its life (`close_responses`, `accept_pauses`, `open_peak`) and `fds_peak`, the peak of the server's file descriptors from the sampler
+  (null, with `fds_peak_note`, under `--no-series`: nothing read them).
 
 Smoke runs on the Docker VM with 23 other projects' containers running (7,935 MiB, 12 vCPUs; not a measurement), the app on 8.5
 (the JSON files are in `lab/results/2026-11-22-realistic-calibration/`; this table is typed by hand from them: that folder has no `summarize.sh`, so the results check skips it):
@@ -744,13 +754,14 @@ exit 3). A client that cannot open them all (`held` below `<n>` with a failure) 
 APP_TELEMETRY=...` is given (a later measurement compares on against off). One line a second on stdout, from `lab/servers/diy-telemetry.php`:
 
 ```text
-telemetry {"second":1795370018,"requests":{"GET /feed":8253,"GET /posts/:id":7948},"wal_bytes":4161232,"longest_callback_ms":9.815,"gc_runs":0,"gc_collected":0,"minflt":28,"majflt":0}
+telemetry {"second":1795370018,"requests":{"GET /feed":8253,"GET /posts/:id":7948},"wal_bytes":4161232,"longest_callback_ms":9.815,"gc_runs":0,"gc_collected":0,"minflt":28,"majflt":0,"connections":{"open_peak":60004,"limit_closes":0,"accept_pauses":0}}
 ```
 
 `second` is the one that just ended (the timer is set for 2 ms after the whole second, and a line takes the second it was set for, never
 the clock's: a timer that fires early must not repeat the second before). Requests are counted per endpoint by the app (`app_count`,
 one call per request), `longest_callback_ms` is the longest callback of the event loop that second (two `hrtime` calls around each
-callback, `accept`, read and write alike), `gc_*` are the deltas of `gc_status()`, `minflt` and `majflt` the process's own. When the
+callback, `accept`, read and write alike), `gc_*` are the deltas of `gc_status()`, `minflt` and `majflt` the process's own, and `connections`
+what the server's connection count saw that second (see "Connection limits"). When the
 event loop stalls for 5 ms, this is the line that says whether it was one callback (and the sampler's `majflt` whether it waited
 on the disk). The cost of having it on is not measured here.
 
@@ -770,6 +781,40 @@ series (20 to 27 a second at 400 req/s in the smoke run) and `memory.current` gr
 `results.series` is null, the server's memory peaks are null, `per_second_probes` is false and the table says the per-second part is off. The
 per-step results and `results.per_second` (the aggregator's latency, and the server's CPU from its cgroup) stay. The telemetry line stays too
 unless `--env APP_TELEMETRY=0` turns it off.
+
+### Connection limits (`lab/servers/diy-server.php`)
+
+Two limits on the client connections of a server on the DIY loop, the bake-off's included.
+
+**The hard limit** is the process's file descriptors (65,535 in the lab). When `accept()` fails for want of one (`EMFILE` or `ENFILE`) the
+loop deletes the listening event instead of firing it again at once (a busy loop: 205 ticks of CPU in 2 s on a server with 64 descriptors
+before this), and adds it back when a client connection closes. The clients wait in the kernel's backlog meanwhile. One line goes to stderr
+the first time (`diy-server: out of file descriptors ...`), nothing per failure after that. An idle connection is never closed to make room.
+It is not a variant: it fixes what the loop did at the limit.
+
+**The soft limit** is a variant, off unless `APP_SOFT_CONN_LIMIT=<n>` is set on `lab/app/server.php` (`0` is a limit; the bake-off's
+`bake-diy.php` never sets it). The server counts its client connections (accepted, not yet closed). A response built while more than `n`
+are open (strictly: with `n` open the `n`-th keeps alive, the `n + 1`-th closes) gets a `Connection: close` header and the connection
+ends once the response is written; a request pipelined behind it is not answered. Only a connection that has just got a response is
+closed, never an idle one (closing idle sockets scored 0 for two entries: k6 does not retry a POST sent on a socket the server just
+closed). One process then serves more users than it has descriptors, because the bench's users are idle more than 99 % of the time: their
+connections come and go as each one sends a request, and the idle ones the run holds stay. Unset, the server is byte for byte what it was.
+
+**Closing cleanly.** The server shuts down its sending side before it closes a connection that the limit ended. Why: a `close()` while the
+receive buffer holds bytes nobody read (the client sent its next request behind the one answered) makes Linux send a reset, and a client
+that reads after it gets `ECONNRESET` where it should get the end of the response (`TCPAbortOnClose` counts it in `/proc/net/netstat`);
+the FIN of the shutdown goes first, so the client reads the whole response and then the end of the stream. `diy-soft-limit-test.php`
+tests it on a TCP pair with 150 KB left unread.
+
+**What it counts** (`connections` in the telemetry line, `APP_TELEMETRY=1`): `open_peak` (the most client connections open at once in
+that second), `limit_closes` (the `Connection: close` responses the limit caused: a client that asked for the close is not one) and
+`accept_pauses`. `lab/realistic.sh` sums them in the JSON's `server_connections` (see below).
+
+**Checks:** `diy-soft-limit-test.php` (the connection on socket pairs, no loop), and on the real server `check_soft_limit_closes_the_third_connection`
+(limit 2, three keep-alive connections), `check_soft_limit_keeps_idle_connections` (50 idle, limit 50, 20 new ones), `check_soft_limit_serves_churn_at_256_fds`
+(256 descriptors, limit 200, 200 idle, 2,000 new connections one after the other), `check_hard_fd_limit_pauses_accepts` (64 descriptors,
+80 clients: the server's CPU stays under 0.2 s in 2 s while they wait), `check_challenge_test_passes_with_soft_limit_zero` and
+`check_realistic_soft_limit_run`. `lab/check/conn-client.php` is their client.
 
 ### The challenge app on `macro.sh`
 

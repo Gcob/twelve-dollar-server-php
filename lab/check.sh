@@ -384,6 +384,19 @@ check_diy_partial_write() {
   return 0
 }
 
+# The DIY server's soft connection limit, on a socket pair and one TCP pair, without the loop: below the limit the bytes are today's,
+# above it the response says close and the connection ends after it, a client that asked for close is not counted, and a close with
+# unread bytes in the receive buffer reaches the client as the end of the stream and not as a reset.
+check_diy_soft_limit() {
+  local out ok rc=0
+  out="$(bash "$LAB/run.sh" 8.5 php /lab/check/diy-soft-limit-test.php 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "diy-soft-limit-test.php exited $rc: ${out//$'\n'/ | }"; return 1; }
+  ok="$(grep -c '^ok  ' <<<"$out")"
+  [ "$ok" = 8 ] || { echo "expected 8 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
+  grep -q 'FAIL' <<<"$out" && { echo "a case failed: ${out//$'\n'/ | }"; return 1; }
+  return 0
+}
+
 # The DIY server passes every conformance case and prints the socket settings it read back from its listening socket.
 check_conformance_bake_diy() {
   local out ok rc=0
@@ -449,6 +462,109 @@ check_challenge_test_fails_on_wrong_golden() {
   grep -qx 'passed=41 failed=1' <<<"$out" || { echo "expected 'passed=41 failed=1': ${out//$'\n'/ | }"; return 1; }
   left="$(docker ps -a --format '{{.Names}}' | grep '^lab-challenge-' || true)"
   [ -z "$left" ] || { echo "containers left behind: ${left//$'\n'/ }"; return 1; }
+}
+
+# The suite of the challenge on the app with a soft limit of 0 (every response says close, so every request of the suite is a new
+# connection): the same 42 checks pass, and the variable did take effect: a client of a server with that limit sees the close.
+check_challenge_test_passes_with_soft_limit_zero() {
+  local out left rc=0 seq
+  out="$(bash "$LAB/challenge-test.sh" --image 8.5 --env APP_SOFT_CONN_LIMIT=0 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "lab/challenge-test.sh --env APP_SOFT_CONN_LIMIT=0 exited $rc: ${out//$'\n'/ | }"; return 1; }
+  grep -qx 'passed=42 failed=0' <<<"$out" || { echo "the summary is not 'passed=42 failed=0': ${out//$'\n'/ | }"; return 1; }
+  left="$(docker ps -a --format '{{.Names}}' | grep '^lab-challenge-' || true)"
+  [ -z "$left" ] || { echo "containers left behind: ${left//$'\n'/ }"; return 1; }
+  start_app_for_check lab-check-soft 18162 0 APP_SOFT_CONN_LIMIT=0 || return 1
+  seq="$(docker exec lab-check-soft php /lab/check/conn-client.php 18162 seq 5)"
+  docker rm -f lab-check-soft >/dev/null 2>&1
+  jq -e '.answered == 5 and .close_header == 5 and .server_closed == 5 and .errors == []' <<<"$seq" >/dev/null     || { echo "with a limit of 0 every response should say close and end: $seq"; return 1; }
+}
+
+# The Done-when of the soft limit: with a limit of 2, three keep-alive connections opened one after the other: the first two answer as
+# today and stay open, the third answers with Connection: close and the server ends it after the write.
+check_soft_limit_closes_the_third_connection() {
+  local seq
+  start_app_for_check lab-check-soft 18162 0 APP_SOFT_CONN_LIMIT=2 || return 1
+  seq="$(docker exec lab-check-soft php /lab/check/conn-client.php 18162 seq 3 --keep)"
+  docker rm -f lab-check-soft >/dev/null 2>&1
+  jq -e '.answered == 3 and .errors == [] and .connections == [{close_header: false, server_closed: false}, {close_header: false, server_closed: false}, {close_header: true, server_closed: true}]' <<<"$seq" >/dev/null     || { echo "expected the first two kept and the third closed with the header: $seq"; return 1; }
+}
+
+# soft_limit_scenario <port> <server nofile or ''> <soft limit> <idle> <new connections>: a server with that soft limit (and file descriptor
+# limit) holds <idle> connections from the idle client (each with its one request), then a second client opens <new> connections one after
+# the other, one request each. Prints one JSON object: the second client's summary (`seq`), the idle client's events (`idle_start`,
+# `idle_end`) and whether the server is still running. Returns 1 with a reason when the harness itself fails.
+soft_limit_scenario() {
+  local port="$1" nofile="$2" soft="$3" idle="$4" total="$5" server=lab-check-soft client=lab-check-soft-client events tmp seq running
+  tmp="$(mktemp -d)"
+  docker rm -f "$server" "$client" >/dev/null 2>&1
+  # Why the prefix: lab_run_server_container (lib.sh) reads LAB_SERVER_NOFILE (empty: the lab's 65,535) for this one start.
+  LAB_SERVER_NOFILE="$nofile" start_app_for_check "$server" "$port" 0 "APP_SOFT_CONN_LIMIT=$soft" || return 1
+  docker run -d --name "$client" --network host --ulimit nofile=20000:20000 -v "$LAB:/lab:ro" "$LAB_IMAGE:8.5" sleep 300 >/dev/null
+  : >"$tmp/events"
+  docker exec "$client" rm -f /tmp/idle-end
+  docker exec "$client" php -d display_errors=stderr /lab/conns/client.php "$port" --hold "$idle" --path /health --body-regex '^\{"status":"ok",.*\}$' \
+    --end-file /tmp/idle-end >"$tmp/events" 2>"$tmp/err" &
+  for _ in $(seq 1 120); do grep -q '"event":"held"' "$tmp/events" && break; sleep 0.5; done
+  grep -q '"event":"held"' "$tmp/events" || { echo "the idle client did not hold: $(cat "$tmp/events" "$tmp/err" 2>/dev/null | tr '\n' ' ')"; docker rm -f "$server" "$client" >/dev/null 2>&1; return 1; }
+  seq="$(docker exec "$client" php /lab/check/conn-client.php "$port" seq "$total" 2>&1 | tail -n 1)"
+  docker exec "$client" touch /tmp/idle-end
+  wait
+  running="$(docker inspect -f '{{.State.Running}}' "$server")"
+  docker rm -f "$server" "$client" >/dev/null 2>&1
+  jq -c -n --argjson seq "${seq:-null}" --slurpfile events "$tmp/events" --arg running "$running" \
+    '{seq: $seq, idle_start: ($events | map(select(.event == "held")) | .[0]), idle_end: ($events | map(select(.event == "ended")) | .[0]), running: ($running == "true")}'
+  rm -rf "$tmp"
+}
+
+# The idle count equals the soft limit: 50 idle connections each with its request keep alive, 20 new connections each close after their
+# response, and the 50 are still open at the end.
+check_soft_limit_keeps_idle_connections() {
+  local out
+  out="$(soft_limit_scenario 18163 "" 50 50 20)" || { echo "$out"; return 1; }
+  jq -e '.running and .seq.answered == 20 and .seq.close_header == 20 and .seq.server_closed == 20 and .seq.errors == []
+         and .idle_start.held == 50 and .idle_start.closed_by_server == 0 and .idle_end.held == 50 and .idle_end.closed_by_server == 0' <<<"$out" >/dev/null     || { echo "expected 20 closes after the response and the 50 idle still open: $out"; return 1; }
+}
+
+# A server limited to 256 file descriptors with a soft limit of 200: 200 idle connections are held and 2,000 new connections, one after
+# the other, are all answered (each closed after its response, so the seat is free for the next) with no error; the 200 are still open.
+check_soft_limit_serves_churn_at_256_fds() {
+  local out
+  out="$(soft_limit_scenario 18163 256 200 200 2000)" || { echo "$out"; return 1; }
+  jq -e '.running and .seq.answered == 2000 and .seq.close_header == 2000 and .seq.server_closed == 2000 and .seq.errors == []
+         and .idle_start.held == 200 and .idle_start.closed_by_server == 0 and .idle_end.held == 200 and .idle_end.closed_by_server == 0' <<<"$out" >/dev/null     || { echo "expected 2,000 answered with no error and the 200 idle still open: $(jq -c '{running, seq: (.seq | del(.errors) + {errors: (.errors | .[0:3])}), idle_start, idle_end}' <<<"$out")"; return 1; }
+}
+
+# The hard limit: a server with 64 file descriptors and no soft limit, 80 clients at once. The ones over the limit wait in the backlog, the
+# server stops listening (a busy loop would show as CPU while they wait: under 0.2 s of CPU in 2 s), prints one line on stderr however many
+# times it pauses, counts the pauses in its telemetry, and answers the waiting clients once the first ones close.
+check_hard_fd_limit_pauses_accepts() {
+  local server=lab-check-hard client=lab-check-hard-client tmp phase1 cpu0 cpu1 pauses lines left
+  tmp="$(mktemp -d)"
+  docker rm -f "$server" "$client" >/dev/null 2>&1
+  # Why the prefix: lab_run_server_container (lib.sh) reads LAB_SERVER_NOFILE for this one start.
+  LAB_SERVER_NOFILE=64 start_app_for_check "$server" 18164 0 APP_TELEMETRY=1 || return 1
+  docker run -d --name "$client" --network host --ulimit nofile=20000:20000 -v "$LAB:/lab:ro" "$LAB_IMAGE:8.5" sleep 300 >/dev/null
+  docker exec "$client" php /lab/check/conn-client.php 18164 burst 80 5 >"$tmp/events" 2>&1 &
+  for _ in $(seq 1 40); do grep -q '"event":"phase1"' "$tmp/events" && break; sleep 0.5; done
+  phase1="$(grep '"event":"phase1"' "$tmp/events")"
+  # The client holds for 5 s after its first 1.5 s: this window is inside it.
+  cpu0="$(docker exec "$server" awk '{ print $14 + $15 }' /proc/1/stat)"
+  sleep 2
+  cpu1="$(docker exec "$server" awk '{ print $14 + $15 }' /proc/1/stat)"
+  wait
+  sleep 1.2
+  pauses="$(docker logs "$server" 2>&1 | sed -n 's/^telemetry //p' | jq -s 'map(.connections.accept_pauses // 0) | add')"
+  lines="$(docker logs "$server" 2>&1 | grep -c 'out of file descriptors' || true)"
+  docker rm -f "$server" "$client" >/dev/null 2>&1
+  [ -n "$phase1" ] || { echo "the client printed no first phase: $(tr '\n' ' ' <"$tmp/events")"; return 1; }
+  jq -e '.answered > 0 and .answered < 80 and .answered + .waiting == 80' <<<"$phase1" >/dev/null     || { echo "expected some of the 80 clients answered and the rest waiting: $phase1"; return 1; }
+  jq -es 'map(select(.event == "done")) | .[0] | .answered == 80 and .errors == []' "$tmp/events" >/dev/null     || { echo "the waiting clients were not all answered: $(tr '\n' ' ' <"$tmp/events")"; return 1; }
+  [ $(( cpu1 - cpu0 )) -lt 20 ] || { echo "the server used $(( cpu1 - cpu0 )) ticks of CPU (1/100 s) in 2 s while clients waited: it spins"; return 1; }
+  [ "${pauses:-0}" -ge 1 ] || { echo "the telemetry counts no accept pause ($pauses)"; return 1; }
+  [ "$lines" = 1 ] || { echo "expected one 'out of file descriptors' line on stderr, got $lines"; return 1; }
+  left="$(docker ps -a --format '{{.Names}}' | grep '^lab-check-hard' || true)"
+  [ -z "$left" ] || { echo "containers left behind: ${left//$'\n'/ }"; return 1; }
+  rm -rf "$tmp"
 }
 
 # The aggregator's library on rows copied from a real k6 run: the histogram error, the percentiles of a known set, the rows it keeps,
@@ -588,6 +704,30 @@ check_realistic_refuses_vus_above_the_cap() {
   [ -z "$(docker ps -a --format '{{.Names}}' | grep '^lab-realistic-' || true)" ] || { echo "a container was started"; return 1; }
 }
 
+# The VU cap and what binds it, refused before any container starts. Today's cap is the file descriptors the idle connections leave
+# (5,400); with APP_SOFT_CONN_LIMIT in --env every request of k6 reconnects, so the file descriptors no longer bind: the cap is k6's
+# memory or the local ports of its source addresses, whichever is lower. A cap given by hand wins, and the message says which one bound.
+check_realistic_vu_cap_is_bound_by() {
+  local out rc
+  rc=0
+  out="$(bash "$LAB/realistic.sh" --image 8.5 --think-scale 1 --hold 573,5 2>&1)" || rc=$?
+  [ "$rc" = 2 ] && grep -q 'above the VU cap of 5400, bound by file descriptors' <<<"$out" \
+    || { echo "without a soft limit the cap is the file descriptors' 5,400 (exit $rc): ${out//$'\n'/ | }"; return 1; }
+  rc=0
+  out="$(bash "$LAB/realistic.sh" --image 8.5 --think-scale 1 --hold 200000,5 --env APP_SOFT_CONN_LIMIT=1000 2>&1)" || rc=$?
+  [ "$rc" = 2 ] && grep -q -E 'above the VU cap of [0-9]+, bound by k6 memory' <<<"$out" && ! grep -q 'cap of 5400' <<<"$out" \
+    || { echo "with a soft limit the cap should be k6's memory (exit $rc): ${out//$'\n'/ | }"; return 1; }
+  rc=0
+  out="$(bash "$LAB/realistic.sh" --image 8.5 --think-scale 1 --hold 200000,5 --env APP_SOFT_CONN_LIMIT=1000 --local-ips 127.0.1.1-127.0.1.1 2>&1)" || rc=$?
+  [ "$rc" = 2 ] && grep -q 'above the VU cap of 10500, bound by local ports' <<<"$out" \
+    || { echo "with one source address the cap should be its 10,500 ports (exit $rc): ${out//$'\n'/ | }"; return 1; }
+  rc=0
+  out="$(bash "$LAB/realistic.sh" --image 8.5 --think-scale 1 --hold 1000,5 --env APP_SOFT_CONN_LIMIT=1000 --vu-cap 100 2>&1)" || rc=$?
+  [ "$rc" = 2 ] && grep -q 'above the VU cap of 100, bound by --vu-cap' <<<"$out" \
+    || { echo "a cap given by hand wins (exit $rc): ${out//$'\n'/ | }"; return 1; }
+  [ -z "$(docker ps -a --format '{{.Names}}' | grep '^lab-realistic-' || true)" ] || { echo "a container was started"; return 1; }
+}
+
 # A run whose aggregator falls behind (a gate no real run can meet) or whose k6 passes its memory budget (a budget k6 cannot live in)
 # is printed, marked INVALID with its reason, and exits 3.
 check_realistic_marks_invalid_run() {
@@ -661,7 +801,7 @@ check_telemetry_cases() {
   [ "$rc" = 0 ] || { echo "telemetry-test.php exited $rc: ${out//$'\n'/ | }"; return 1; }
   grep -q '^FAIL' <<<"$out" && { echo "a case failed: ${out//$'\n'/ | }"; return 1; }
   ok="$(grep -c '^ok  ' <<<"$out")"
-  [ "$ok" -ge 14 ] || { echo "expected at least 14 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
+  [ "$ok" -ge 17 ] || { echo "expected at least 17 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
   return 0
 }
 
@@ -700,7 +840,7 @@ check_cold_start_evicts_the_copy() {
   # Reads that need the pages: the feed and a few posts.
   docker exec lab-check-cold sh -c 'for i in 1 2 3 4 5 6 7 8; do curl -s -o /dev/null http://127.0.0.1:18160/posts/$((i * 50000)); done; curl -s -o /dev/null http://127.0.0.1:18160/feed'
   sleep 2.5
-  majors="$(docker logs lab-check-cold 2>&1 | sed -n 's/^telemetry .*"majflt":\([0-9]*\)}$/\1/p' | awk '{ s += $1 } END { print s + 0 }')"
+  majors="$(docker logs lab-check-cold 2>&1 | sed -n 's/^telemetry .*"majflt":\([0-9]*\).*/\1/p' | awk '{ s += $1 } END { print s + 0 }')"
   docker rm -f lab-check-cold >/dev/null 2>&1
   size="$(sed -n 's/.*size_bytes=\([0-9]*\).*/\1/p' <<<"$warm")"
   res="$(sed -n 's/.*resident_bytes=\([0-9]*\).*/\1/p' <<<"$warm")"
@@ -733,7 +873,7 @@ check_app_telemetry() {
   [ "$(awk 'NR > 1 && $1 != prev + 1 { bad = 1 } { prev = $1 } END { print bad + 0 }' <<<"$seconds")" = 0 ] || { echo "the seconds are not consecutive: ${seconds//$'\n'/ }"; return 1; }
   total="$(sed -n 's/^telemetry {"second":[0-9]*,"requests":{\(.*\)},"wal_bytes".*/\1/p' <<<"$log" | tr ',' '\n' | awk -F: 'NF > 1 { s += $NF } END { print s + 0 }')"
   [ "$total" = 5 ] || { echo "5 requests were sent (3 feed, 1 post, 1 health), the lines count $total: $(tr '\n' ' ' <<<"$log")"; return 1; }
-  grep -q '^telemetry {"second":[0-9]*,"requests":{"GET /feed":3,"GET /posts/:id":1},"wal_bytes":[0-9]*,"longest_callback_ms":[0-9.]*,"gc_runs":[0-9]*,"gc_collected":[0-9]*,"minflt":[0-9]*,"majflt":[0-9]*}$' <<<"$log" \
+  grep -q '^telemetry {"second":[0-9]*,"requests":{"GET /feed":3,"GET /posts/:id":1},"wal_bytes":[0-9]*,"longest_callback_ms":[0-9.]*,"gc_runs":[0-9]*,"gc_collected":[0-9]*,"minflt":[0-9]*,"majflt":[0-9]*,"connections":{"open_peak":[0-9]*,"limit_closes":0,"accept_pauses":0}}$' <<<"$log" \
     || { echo "no line holds the first four requests under their endpoints: $(tr '\n' ' ' <<<"$log")"; return 1; }
 }
 
@@ -843,6 +983,39 @@ check_realistic_idle_run() {
   check_series_rows "$json" '.results.series' || return 1
   left="$(docker ps -a --format '{{.Names}}' | grep '^lab-realistic-' || true)"
   [ -z "$left" ] || { echo "containers left behind: ${left//$'\n'/ }"; return 1; }
+}
+
+# The realistic mode with a soft limit equal to the idle count (300): every k6 request is a new connection that the server closes after its
+# response, the 300 idle connections are all held at the end, k6 has no connection error, the server's close count is k6's request count
+# within 1 %, nothing paused accepting, and the JSON says what bound the VU cap and the peak of the server's file descriptors (which a
+# --no-series run does not read, and says so).
+check_realistic_soft_limit_run() {
+  local out rc=0 json verdict
+  json="$(mktemp -d)/realistic.json"
+  out="$(bash "$LAB/realistic.sh" --image 8.5 --think-scale 0.1 --idle 300 --hold 100,15 --env APP_SOFT_CONN_LIMIT=300 --label test --out "$json" 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "lab/realistic.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
+  grep -qx 'VALID' <<<"$out" || { echo "the run is not marked VALID: ${out//$'\n'/ | }"; return 1; }
+  verdict="$(jq -c '
+    ($ARGS.named.requests) as $k6
+    | .server_connections as $c
+    | {clauses: {
+         idle_held: (.idle.held_at_start == 300 and .idle.held_at_end == 300 and .idle.closed_by_server_at_end == 0),
+         no_k6_connection_error: (.k6_connection_errors == 0),
+         closes_within_1_percent: ($c.telemetry != null and ($c.telemetry.close_responses - $k6 | fabs) <= 0.01 * $k6),
+         no_accept_pause: ($c.telemetry.accept_pauses == 0),
+         open_peak_above_the_idle: ($c.telemetry.open_peak > 300),
+         soft_limit_recorded: ($c.soft_limit == 300),
+         cap_not_bound_by_fds: (.load.vu_cap_bound_by == "k6 memory" or .load.vu_cap_bound_by == "local ports"),
+         fds_peak_read: ($c.fds_peak > 300 and $c.fds_peak_note == null)},
+       numbers: {k6_requests: $k6, server_connections: $c, bound_by: .load.vu_cap_bound_by}}' --argjson requests "$(jq '.results.run_total | map(.count) | add' "$json")" "$json")"
+  jq -e '.clauses | all' <<<"$verdict" >/dev/null \
+    || { echo "the JSON does not hold the run, failing clauses $(jq -c '[.clauses | to_entries[] | select(.value == false) | .key]' <<<"$verdict"), numbers $(jq -c '.numbers' <<<"$verdict")"; return 1; }
+  grep -q '^server connections: soft limit 300, ' <<<"$out" || { echo "the table does not report the server's connections: ${out//$'\n'/ | }"; return 1; }
+  out="$(bash "$LAB/realistic.sh" --image 8.5 --think-scale 0.1 --idle 100 --hold 40,8 --env APP_SOFT_CONN_LIMIT=100 --no-series --label test --out "$json" 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "--no-series: lab/realistic.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
+  jq -e '.server_connections.fds_peak == null and (.server_connections.fds_peak_note | contains("--no-series")) and .server_connections.telemetry.close_responses > 0' "$json" >/dev/null \
+    || { echo "--no-series: the JSON should say the fd peak was not read: $(jq -c '.server_connections' "$json")"; return 1; }
+  [ -z "$(docker ps -a --format '{{.Names}}' | grep '^lab-realistic-' || true)" ] || { echo "containers left behind"; return 1; }
 }
 
 # A server that closes connections idle for 2 s: the run is INVALID with the reason (every one of the 200 idle connections was closed), exits 3,
@@ -1335,11 +1508,17 @@ CHECKS=(
   check_macro_bake_workerman_posts_is_valid
   check_diy_parser
   check_diy_partial_write
+  check_diy_soft_limit
   check_conformance_bake_diy
   check_macro_bake_diy_posts_is_valid
   check_app_cases
   check_challenge_test_passes_on_app
   check_challenge_test_fails_on_wrong_golden
+  check_challenge_test_passes_with_soft_limit_zero
+  check_soft_limit_closes_the_third_connection
+  check_soft_limit_keeps_idle_connections
+  check_soft_limit_serves_churn_at_256_fds
+  check_hard_fd_limit_pauses_accepts
   check_aggregate_cases
   check_series_cases
   check_telemetry_cases
@@ -1349,6 +1528,7 @@ CHECKS=(
   check_realistic_no_series
   check_realistic_stops_at_a_failing_step
   check_realistic_refuses_vus_above_the_cap
+  check_realistic_vu_cap_is_bound_by
   check_realistic_marks_invalid_run
   check_realistic_cleans_up_after_failure
   check_realistic_calibrates
@@ -1356,6 +1536,7 @@ CHECKS=(
   check_app_telemetry
   check_idle_client_hold_mode
   check_realistic_idle_run
+  check_realistic_soft_limit_run
   check_realistic_idle_closed_by_the_server_fails
   check_macro_fresh_db_cold_per_second
   check_macro_cold_needs_fresh_db

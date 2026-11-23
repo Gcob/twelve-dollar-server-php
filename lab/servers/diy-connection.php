@@ -16,6 +16,43 @@
 // version. An HTTP/1.0 client that asks for keep-alive gets it (the connection stays open) without a `Connection: keep-alive`
 // header in the answer, so most of them will close on their own.
 
+/**
+ * What the server knows about its client connections, shared with each DiyConnection when a soft limit is set: the connections open now
+ * (accepted, not yet closed), the most open at once since the last reset, and what the limits did. The loop counts a connection when it
+ * accepts it and when it closes it.
+ */
+final class DiyConnectionCount
+{
+    public int $open = 0;
+    public int $peak = 0;
+    /** Responses that said `Connection: close` because more than $softLimit connections were open (the client had not asked for it). */
+    public int $limitCloses = 0;
+    /** Times accept() failed for want of a file descriptor and the loop stopped listening until a connection closed. */
+    public int $acceptPauses = 0;
+
+    /** @param int|null $softLimit null: no limit. A response built while more than this many connections are open ends its connection. */
+    public function __construct(public readonly ?int $softLimit = null)
+    {
+    }
+
+    public function opened(): void
+    {
+        if (++$this->open > $this->peak) {
+            $this->peak = $this->open;
+        }
+    }
+
+    public function closed(): void
+    {
+        $this->open--;
+    }
+
+    public function resetPeak(): void
+    {
+        $this->peak = $this->open;
+    }
+}
+
 final class DiyConnection
 {
     /** Reading pauses, and requests already received are not answered, while this many response bytes wait for the client. */
@@ -52,9 +89,15 @@ final class DiyConnection
     private string $authorization = '';
     private int $bodyLength = 0;
     private bool $closeAfter = false;
+    /** The soft limit made this connection say `Connection: close`: it shuts down its sending side before it closes (see close()). */
+    private bool $limitClosed = false;
 
-    /** @param resource $stream a non-blocking stream */
-    public function __construct(private $stream)
+    /**
+     * @param resource $stream a non-blocking stream
+     * @param DiyConnectionCount|null $limit given only when a soft limit is set: a response built while more connections than its limit
+     *                                       are open says `Connection: close`, and the connection ends once it is written
+     */
+    public function __construct(private $stream, private readonly ?DiyConnectionCount $limit = null)
     {
     }
 
@@ -98,6 +141,12 @@ final class DiyConnection
     public function close(): void
     {
         if (is_resource($this->stream)) {
+            // Why: a close with bytes the server never read (a request the client sent behind the one answered) makes the kernel send a
+            // reset, and a client that reads after it gets an error instead of the end of the response. The FIN of a shutdown goes first,
+            // so the client reads the whole response and then the end of the stream.
+            if ($this->limitClosed) {
+                @stream_socket_shutdown($this->stream, STREAM_SHUT_WR);
+            }
             fclose($this->stream);
         }
     }
@@ -156,9 +205,15 @@ final class DiyConnection
                 fwrite(STDERR, 'diy-connection: the handler failed: ' . get_class($e) . ': ' . $e->getMessage() . "\n");
                 [$status, $payload] = [500, self::INTERNAL_ERROR];
             }
-            $this->wbuf .= self::HEAD[$status] . strlen($payload) . "\r\n\r\n" . $payload;
-            if ($this->closeAfter) {
-                $this->closing = true;
+            if ($this->limit !== null && $this->limit->open > $this->limit->softLimit) {
+                $this->wbuf .= self::HEAD[$status] . strlen($payload) . "\r\nConnection: close\r\n\r\n" . $payload;
+                $this->limit->limitCloses += (int) !$this->closeAfter;
+                $this->closing = $this->limitClosed = true;
+            } else {
+                $this->wbuf .= self::HEAD[$status] . strlen($payload) . "\r\n\r\n" . $payload;
+                if ($this->closeAfter) {
+                    $this->closing = true;
+                }
             }
         }
         $this->rbuf = $this->closing || $pos >= $length ? '' : ($pos === 0 ? $rbuf : substr($rbuf, $pos));

@@ -3,6 +3,7 @@
 // next. The timer, the loop and the app's own counters are covered by lab/check.sh's run against the real server.
 // Run: bash lab/run.sh 8.5 php /lab/check/telemetry-test.php
 
+require __DIR__ . '/../servers/diy-connection.php';
 require __DIR__ . '/../servers/diy-telemetry.php';
 require __DIR__ . '/../macro/series-lib.php';
 
@@ -73,6 +74,24 @@ check('a tick on time is followed by the next second', DiyTelemetry::nextBoundar
 check('a tick fired 0.5 ms early is still followed by the next second, not the same one', DiyTelemetry::nextBoundary(1000, 999.9995) === 1001);
 check('a tick fired 3.4 s late skips the seconds the loop missed', DiyTelemetry::nextBoundary(1000, 1003.4) === 1004);
 check('a tick 1.5 ms after the boundary (inside the margin) still goes to the next second', DiyTelemetry::nextBoundary(1000, 1000.0015) === 1001);
+
+// The connection count the server hands over: a line has its second's peak, limit closes and accept pauses, and the next line starts
+// over (the peak from what is open then).
+$noConnections = telemetry_parse($t->tick(506) . "\n")[506];
+check('a line has no `connections` until a server hands its count over', !array_key_exists('connections', $noConnections), json_encode($noConnections));
+$count = new DiyConnectionCount(1);
+$t->watchConnections($count);
+foreach ([1, 2, 3, 4] as $_) {
+    $count->opened();
+}
+$count->closed();
+$count->closed();
+$count->limitCloses = 5;
+$count->acceptPauses = 2;
+$row = telemetry_parse($t->tick(507) . "\n")[507];
+check('the line holds the second\'s peak, limit closes and accept pauses', ($row['connections'] ?? null) === ['open_peak' => 4, 'limit_closes' => 5, 'accept_pauses' => 2], json_encode($row['connections'] ?? null));
+$row = telemetry_parse($t->tick(508) . "\n")[508];
+check('the next line starts over: closes and pauses at 0, the peak is what is open now (2)', ($row['connections'] ?? null) === ['open_peak' => 2, 'limit_closes' => 0, 'accept_pauses' => 0], json_encode($row['connections'] ?? null));
 
 echo $failures === 0 ? "all ok\n" : "$failures failed\n";
 exit($failures === 0 ? 0 : 1);

@@ -3,7 +3,9 @@
 // configured: SQLITE_PATH (the database it opens, never a copy), JWT_SECRET, HOST (default 0.0.0.0) and PORT (default 8080), and
 // APP_TELEMETRY=1 (off by default): one line a second on stdout about the loop and the database (lab/servers/diy-telemetry.php), and
 // APP_PROFILE=<file> (off by default, needs `--ext excimer`): a CPU-time profiler whose collapsed stacks are written to that file every
-// 2 s, one sample every APP_PROFILE_PERIOD seconds of CPU time (default 0.001; lab/servers/diy-profile.php).
+// 2 s, one sample every APP_PROFILE_PERIOD seconds of CPU time (default 0.001; lab/servers/diy-profile.php), and
+// APP_SOFT_CONN_LIMIT=<n> (off by default; 0 is a limit): a response built while more than <n> client connections are open says
+// `Connection: close` and its connection ends once it is written (lab/servers/diy-server.php).
 //
 // It starts with the extensions loaded in this order: `--ext sockets --ext event`. It listens only once the database is open.
 // lab/challenge-test.sh starts it on a fresh copy of the seed.
@@ -35,8 +37,20 @@ $profile = null;
 if ((string) getenv('APP_PROFILE') !== '') {
     $profile = new DiyProfile((string) getenv('APP_PROFILE'), (float) (getenv('APP_PROFILE_PERIOD') ?: 0.001));
 }
-$server = new DiyServer($listener, $telemetry, $profile);
+$softLimit = null;
+$softLimitValue = getenv('APP_SOFT_CONN_LIMIT');
+if ($softLimitValue !== false && $softLimitValue !== '') {
+    if (!ctype_digit($softLimitValue)) {
+        fwrite(STDERR, "server: APP_SOFT_CONN_LIMIT must be a whole number, got '$softLimitValue'\n");
+        exit(1);
+    }
+    $softLimit = (int) $softLimitValue;
+}
+$server = new DiyServer($listener, $telemetry, $profile, $softLimit);
 echo "listening on $host:$port\n";
+if ($softLimit !== null) {
+    echo "soft connection limit: $softLimit\n";
+}
 echo 'loop: ' . $server->loopMethod() . "\n";
 echo diy_socket_line($listener, $backlog) . "\n";
 $server->run();

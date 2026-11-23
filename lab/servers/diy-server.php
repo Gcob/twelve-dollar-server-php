@@ -7,6 +7,12 @@
 // read event and accepts until the queue is empty. A connection has a persistent read event all its life, except while its write
 // buffer is over the limit (DiyConnection::WRITE_LIMIT), and a write event only while it has bytes the socket did not take.
 //
+// Two limits on connections. The hard one is the process's file descriptors: when accept() fails for want of one the loop stops
+// listening (the clients wait in the kernel's backlog) and listens again when a client connection closes. The soft one is optional
+// (the constructor's $softConnLimit): a response built while more connections than that are open says `Connection: close`, and its
+// connection ends once it is written, so a process serves more users than it has descriptors when they rarely send a request.
+// An idle connection is never closed by either limit.
+//
 // A server starts with the extensions loaded in this order: `--ext sockets --ext event` (sockets before event, which depends on
 // it; sockets also sets TCP_NODELAY and reads it back).
 
@@ -35,6 +41,10 @@ final class DiyServer
     private EventBase $base;
     private Event $listen;
     private bool $nodelayChecked = false;
+    private readonly DiyConnectionCount $count;
+    /** True while the listening event is deleted because accept() ran out of file descriptors. */
+    private bool $acceptPaused = false;
+    private bool $pauseReported = false;
     /** @var array{object, string}|Closure the loop's callbacks: method names when nothing wraps them, so that a profile names the frame */
     private readonly array|Closure $onReadable;
     private readonly array|Closure $onWritable;
@@ -45,9 +55,13 @@ final class DiyServer
      *                                      (lab/servers/diy-telemetry.php, loaded by the caller); null: nothing is added to the loop
      * @param DiyProfile|null $profile when given, the profiler starts when the loop does (lab/servers/diy-profile.php, loaded by the
      *                                 caller); null: nothing is added to the loop
+     * @param int|null $softConnLimit when given, a response built while more client connections than this are open says
+     *                                `Connection: close` and ends its connection; null: connections end only when the client says so
      */
-    public function __construct($listener, private readonly ?object $telemetry = null, private readonly ?object $profile = null)
+    public function __construct($listener, private readonly ?object $telemetry = null, private readonly ?object $profile = null, private readonly ?int $softConnLimit = null)
     {
+        $this->count = new DiyConnectionCount($softConnLimit);
+        $telemetry?->watchConnections($this->count);
         $this->base = new EventBase();
         // Why: a first-class callable of a method shows in a profile as `{closure:file(line)}`, whose line moves with every edit; the
         // callable array shows as `DiyServer::onReadable`, which a profile's rules can name.
@@ -80,9 +94,13 @@ final class DiyServer
     /** @param resource $listener */
     private function onAccept($fd, int $what, $listener): void
     {
-        // Until the queue is empty: a burst of connections is taken in one callback. At the fd limit accept() fails the same
-        // way, and the listening event fires again at once (shedding there is for a later phase).
-        while (($client = @stream_socket_accept($listener, 0)) !== false) {
+        // Until the queue is empty: a burst of connections is taken in one callback.
+        while (true) {
+            error_clear_last();
+            $client = @stream_socket_accept($listener, 0);
+            if ($client === false) {
+                break;
+            }
             stream_set_blocking($client, false);
             // Why: PHP gives each socket an 8 KiB read buffer by default; nothing here reads through it.
             stream_set_read_buffer($client, 0);
@@ -91,9 +109,24 @@ final class DiyServer
                 $nodelay = (int) (bool) socket_get_option(socket_import_stream($client), SOL_TCP, TCP_NODELAY);
                 echo "accepted socket: tcp_nodelay=$nodelay\n";
             }
-            $peer = new DiyPeer(new DiyConnection($client), $client);
+            $this->count->opened();
+            $peer = new DiyPeer(new DiyConnection($client, $this->softConnLimit === null ? null : $this->count), $client);
             $peer->read = new Event($this->base, $client, Event::READ | Event::PERSIST, $this->onReadable, $peer);
             $peer->read->add();
+        }
+        // An empty queue and a process out of file descriptors both end the loop above. In the second the connection stays in the backlog
+        // and the listening event would fire again at once: stop listening until a client connection closes and frees a descriptor.
+        $error = error_get_last()['message'] ?? '';
+        if (str_contains($error, 'Too many open files')) {
+            $this->listen->del();
+            $this->acceptPaused = true;
+            $this->count->acceptPauses++;
+            // Why a flag of its own: the telemetry resets the count's pauses every second, and the line is printed once per process.
+            if (!$this->pauseReported) {
+                $this->pauseReported = true;
+                fwrite(STDERR, "diy-server: out of file descriptors with {$this->count->open} client connections open ($error): " .
+                    "accepting again when one closes, clients wait in the backlog meanwhile\n");
+            }
         }
     }
 
@@ -116,6 +149,11 @@ final class DiyServer
             $peer->write?->free();
             $peer->read = $peer->write = null;
             $peer->conn->close();
+            $this->count->closed();
+            if ($this->acceptPaused) {
+                $this->acceptPaused = false;
+                $this->listen->add();
+            }
             return;
         }
         $wantsWrite = $peer->conn->wantsWrite();
