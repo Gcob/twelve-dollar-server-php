@@ -1031,6 +1031,138 @@ check_replay_keeps_up() {
     || { echo "the aggregator did not keep up ($fed): $(jq -c '{rows, requests, unparsed, lag_max_s}' <<<"$result")"; return 1; }
 }
 
+# steplab_verdicts <case> [floor]: one line per non-reference variant of a recorded comparison (lab/check/fixtures/steplab/<case>): its
+# name, verdict, median paired difference and the rounds that made a pair.
+steplab_verdicts() {
+  local dir="$LAB/check/fixtures/steplab/$1" summary floor_args=()
+  [ -z "${2:-}" ] || floor_args=(--floor "$2")
+  summary="$(mktemp)"
+  bash "$LAB/steplab-summary.sh" "$dir" ${floor_args[@]+"${floor_args[@]}"} --json "$summary" >/dev/null 2>&1 || { echo "summary.sh failed on $1"; return 1; }
+  jq -r '.variants[] | select(.reference | not) | [.variant, .verdict, (.median_difference_us | tostring), (.pairs | map(.round | tostring) | join(","))] | join("|")' "$summary"
+  rm -f "$summary"
+}
+
+# The step lab's verdict on recorded run files (fixtures, no container): identical variants are within the noise; a variant 1 ms slower in
+# every round is beyond it (and its twin of the reference is not); mixed signs are within, even with a median over the floor; the same
+# sign under the floor is within; no floor means not judged; a round where either run is invalid has no pair; fewer than 2 pairs have no
+# verdict. The tables list the runs round by round in the variants' order, and print the rule.
+check_steplab_verdicts() {
+  local got out
+  got="$(steplab_verdicts identical 5)" || { echo "$got"; return 1; }
+  [ "$got" = "twin|within the noise|0|1,2,3" ] || { echo "identical variants: $got"; return 1; }
+  got="$(steplab_verdicts beyond 5)" || { echo "$got"; return 1; }
+  [ "$got" = $'slow|beyond the noise|1000|1,2,3\nsame|within the noise|0|1,2,3' ] || { echo "a variant 1 ms slower: $got"; return 1; }
+  got="$(steplab_verdicts mixed 5)" || { echo "$got"; return 1; }
+  [ "$got" = "var|within the noise|10|1,2,3" ] || { echo "mixed signs: $got"; return 1; }
+  got="$(steplab_verdicts under-floor 5)" || { echo "$got"; return 1; }
+  [ "$got" = "var|within the noise|2.5|1,2,3" ] || { echo "under the floor: $got"; return 1; }
+  got="$(steplab_verdicts under-floor)" || { echo "$got"; return 1; }
+  [ "$got" = "var|no floor: not judged|2.5|1,2,3" ] || { echo "no floor: $got"; return 1; }
+  got="$(steplab_verdicts invalid-round 5)" || { echo "$got"; return 1; }
+  [ "$got" = "var|beyond the noise|11|1,3" ] || { echo "an invalid round of the variant: $got"; return 1; }
+  got="$(steplab_verdicts ref-invalid 5)" || { echo "$got"; return 1; }
+  [ "$got" = "var|beyond the noise|11|1,3" ] || { echo "an invalid round of the reference: $got"; return 1; }
+  got="$(steplab_verdicts one-pair 5)" || { echo "$got"; return 1; }
+  [ "$got" = "var|no verdict|10|1" ] || { echo "a single pair: $got"; return 1; }
+  out="$(bash "$LAB/steplab-summary.sh" "$LAB/check/fixtures/steplab/beyond" --floor 5 2>&1)" || { echo "summary.sh failed: ${out//$'\n'/ | }"; return 1; }
+  [ "$(grep -E '^ +[123] +(ref|slow|same) +' <<<"$out" | awk '{ printf "%s%s ", $1, $2 }')" = "1ref 1slow 1same 2ref 2slow 2same 3ref 3slow 3same " ] \
+    || { echo "the rows are not one per run in round order: ${out//$'\n'/ | }"; return 1; }
+  grep -q '^Rule: a variant is beyond the noise when' <<<"$out" || { echo "the rule is not printed: ${out//$'\n'/ | }"; return 1; }
+  grep -qE '^slow +3/3 .*\+1000 \+1000 \+1000 .*beyond the noise' <<<"$out" || { echo "the variant table has no row for slow with its pairs and verdict: ${out//$'\n'/ | }"; return 1; }
+}
+
+# The count of lab/syscalls.sh reads strace -c's table (a real one, lab/check/fixtures/strace-c.txt) into `<syscall> <calls> <errors>` lines,
+# whatever the errors column does (strace leaves it blank when a syscall never failed), the time columns dropped, the total last.
+check_syscalls_table_parse() {
+  local got want
+  got="$(awk -f "$LAB/syscalls-table.awk" "$LAB/check/fixtures/strace-c.txt")" || { echo "awk failed"; return 1; }
+  want=$'read 1899 0\nopenat 1267 633\nfstat 1268 0\nclock_nanosleep 633 0\nnewfstatat 633 633\nclose 633 0\nlseek 634 0\nrestart_syscall 1 0\ntotal 6968 1266'
+  [ "$got" = "$want" ] || { echo "the table is not read as expected: ${got//$'\n'/ | }"; return 1; }
+}
+
+# The TIME_WAIT count on k6's source addresses (probe.sh time-wait) reads a real /proc/net/tcp (lab/check/fixtures/proc-net-tcp-time-wait.txt:
+# 3 sockets the client closed first on 127.0.1.2, 2 the server closed first on 127.0.1.3 (the address is then the remote one), 2 on
+# 127.0.1.4, 1 on 127.0.0.9 outside the range): each address counts the sockets that have it at either end, the busiest address is the max.
+check_time_wait_count() {
+  local got want
+  got="$(bash "$LAB/macro/probe.sh" time-wait 127.0.1.1-127.0.1.4 "$LAB/check/fixtures/proc-net-tcp-time-wait.txt" 2>&1)" || { echo "probe.sh failed: ${got//$'\n'/ | }"; return 1; }
+  want=$'time_wait 127.0.1.1 0\ntime_wait 127.0.1.2 3\ntime_wait 127.0.1.3 2\ntime_wait 127.0.1.4 2\ntime_wait_summary max 3\ntime_wait_summary in_range 7\ntime_wait_summary all 8'
+  [ "$got" = "$want" ] || { echo "the count is not the fixture's: ${got//$'\n'/ | }"; return 1; }
+}
+
+# lab_containers_left: the containers and volume the realistic runs and the syscall sidecar leave, as one line (empty when none).
+lab_containers_left() {
+  local left
+  left="$(docker ps -a --format '{{.Names}}' | grep -E '^lab-(realistic|syscalls)-' || true)"
+  docker volume ls --format '{{.Name}}' | grep -x lab-realistic-run >/dev/null && left="$left lab-realistic-run (volume)"
+  echo "${left//$'\n'/ }"
+}
+
+# The step lab live, at a low rate and a short plateau (the shape of its output, not a measurement): two variants for two rounds, the
+# second one sets an environment variable the server must receive. One row per run in round order, one per variant with 2 pairs and a
+# verdict (the floor is given), the TIME_WAIT counts before and after every run in the run's JSON, the idle connections held to the end,
+# the telemetry off, and no container left behind.
+check_steplab_live() {
+  local out dir rc=0 pairs
+  dir="$(mktemp -d)"
+  out="$(bash "$LAB/steplab.sh" --image 8.5 --rate 100 --think-scale 0.2 --idle 200 --seconds 6 --pairs 2 --warmup 20,3 --floor 5 \
+    --variant ref= --variant twin=APP_UNUSED=1 --out "$dir" 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "lab/steplab.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
+  [ "$(grep -E '^ +[12] +(ref|twin) +' <<<"$out" | awk '{ printf "%s%s ", $1, $2 }')" = "1ref 1twin 2ref 2twin " ] \
+    || { echo "the rows are not one per run in round order: ${out//$'\n'/ | }"; return 1; }
+  grep -qE '^twin +2/2 .* (beyond|within) the noise$' <<<"$out" || { echo "no row for twin with its 2 valid runs and a verdict: ${out//$'\n'/ | }"; return 1; }
+  grep -q '^Rule: a variant is beyond the noise when' <<<"$out" || { echo "the rule is not printed: ${out//$'\n'/ | }"; return 1; }
+  for f in ref-1 ref-2 twin-1 twin-2; do
+    jq -e '.steplab.time_wait.before.max >= 0 and .steplab.time_wait.after.max >= 0 and .steplab.time_wait.before.all >= .steplab.time_wait.before.in_range
+           and (.steplab.time_wait.before.per_address | length) == 4 and .steplab.time_wait.before.limit_per_address == 1000
+           and .per_second_probes == false and .valid == true and .idle.held_at_end == 200 and (.server.env | index("APP_TELEMETRY=0") != null)
+           and .load.warmup == "20,3" and .results.steps[0].cpu_usec_per_request > 0' "$dir/$f.json" >/dev/null \
+      || { echo "$f.json does not hold the run as the runner sets it up: $(jq -c '{valid, steplab: .steplab.time_wait, env: .server.env, idle: .idle.held_at_end}' "$dir/$f.json" 2>&1)"; return 1; }
+  done
+  jq -e '.server.env | index("APP_UNUSED=1") != null' "$dir/twin-1.json" >/dev/null || { echo "the variant's environment did not reach the server"; return 1; }
+  jq -e '.server.env | index("APP_UNUSED=1") == null' "$dir/ref-1.json" >/dev/null || { echo "the reference got the variant's environment"; return 1; }
+  jq -e '.steplab.variant_index == 1 and .steplab.round == 2 and .steplab.reference == "ref"' "$dir/twin-2.json" >/dev/null || { echo "the run's steplab object is wrong"; return 1; }
+  pairs="$(jq -r '.variants[] | select(.variant == "twin") | .pairs | length' "$dir/summary.json")"
+  [ "$pairs" = 2 ] || { echo "summary.json has $pairs pairs for twin, expected 2"; return 1; }
+  [ -z "$(lab_containers_left)" ] || { echo "left behind: $(lab_containers_left)"; return 1; }
+}
+
+# A server that dies at boot is a harness failure: exit 1 with the run's reason, and no container or volume left behind.
+check_steplab_cleans_up_after_failure() {
+  local out rc=0
+  out="$(bash "$LAB/steplab.sh" --image 8.5 --rate 100 --think-scale 0.2 --seconds 6 --pairs 1 --warmup 20,3 \
+    --server-variant crash="$LAB/check/fixtures/crash-app.php" --out "$(mktemp -d)" 2>&1)" || rc=$?
+  [ "$rc" = 1 ] || { echo "expected exit 1 when the server dies, got $rc: ${out//$'\n'/ | }"; return 1; }
+  grep -q 'the server container exited' <<<"$out" || { echo "the reason is not reported: ${out//$'\n'/ | }"; return 1; }
+  [ -z "$(lab_containers_left)" ] || { echo "left behind: $(lab_containers_left)"; return 1; }
+}
+
+# The syscall count live, at a low rate: the table's total per request is positive, the write family (one response per request on the
+# skeleton) is near 1, the window holds as many rows as seconds, the JSON keeps no path, and no container is left behind.
+check_syscalls_live() {
+  local out json rc=0
+  json="$(mktemp -d)/syscalls.json"
+  out="$(bash "$LAB/syscalls.sh" --image 8.5 --rate 300 --think-scale 0.2 --seconds 5 --out "$json" 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "lab/syscalls.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
+  grep -qE '^total +[0-9]+ +[0-9.]+ +[0-9]+$' <<<"$out" || { echo "the table has no total row: ${out//$'\n'/ | }"; return 1; }
+  jq -e '.total.calls_per_request > 0 and .requests > 0 and .window.seconds == 5 and (.syscalls | length) > 3
+         and (.write_family.calls_per_request >= 0.8 and .write_family.calls_per_request <= 1.3)
+         and (.syscalls | map(.calls_per_request) | all(. >= 0)) and (.syscalls | map(has("seconds") or has("usecs_per_call")) | any | not)' "$json" >/dev/null \
+    || { echo "the JSON does not hold the count: $(jq -c 'del(.syscalls)' "$json")"; return 1; }
+  grep -q '/Users/\|/home/' "$json" && { echo "the JSON holds a path"; return 1; }
+  [ -z "$(lab_containers_left)" ] || { echo "left behind: $(lab_containers_left)"; return 1; }
+  return 0
+}
+
+# A server that dies before its plateau ends the count with exit 1 and its reason, and leaves no container, sidecar or volume behind.
+check_syscalls_cleans_up_after_failure() {
+  local out rc=0
+  out="$(bash "$LAB/syscalls.sh" --image 8.5 --rate 300 --think-scale 0.2 --seconds 5 --server "$LAB/check/fixtures/crash-app.php" --out "$(mktemp -d)/x.json" 2>&1)" || rc=$?
+  [ "$rc" = 1 ] || { echo "expected exit 1 when the server dies, got $rc: ${out//$'\n'/ | }"; return 1; }
+  grep -q 'ended (exit 1) before its plateau' <<<"$out" || { echo "the reason is not reported: ${out//$'\n'/ | }"; return 1; }
+  [ -z "$(lab_containers_left)" ] || { echo "left behind: $(lab_containers_left)"; return 1; }
+}
+
 # The bash scripts of the lab, one repo-relative path per line: every `*.sh` and every file whose first line is a bash or sh
 # shebang, except the fixtures (they hold deliberate warnings) and the seed data.
 lab_bash_scripts() {
@@ -1223,6 +1355,13 @@ CHECKS=(
   check_excimer_calibration
   check_realistic_profile_smoke
   check_macro_profile
+  check_steplab_verdicts
+  check_syscalls_table_parse
+  check_time_wait_count
+  check_steplab_live
+  check_steplab_cleans_up_after_failure
+  check_syscalls_live
+  check_syscalls_cleans_up_after_failure
   check_shellcheck
   check_shellcheck_catches_warning
   check_results_check_catches_drift

@@ -146,6 +146,17 @@ lab_ensure_tools_image() {
   docker build -q -t "$LAB_TOOLS_IMAGE" -f "$LAB/images/Dockerfile.tools" "$LAB/images" >/dev/null
 }
 
+# The image of lab/syscalls.sh's sidecar: strace 6.8-0ubuntu2 on the same pinned Ubuntu (lab/images/Dockerfile.strace), built by
+# lab_ensure_strace_image on first use. A version pinned by apt, not a pulled image: the lab trusts one base image and one archive.
+LAB_STRACE_IMAGE=php-lab-strace:1
+
+# lab_ensure_strace_image: builds LAB_STRACE_IMAGE when it is missing. Needs LAB.
+lab_ensure_strace_image() {
+  docker image inspect "$LAB_STRACE_IMAGE" >/dev/null 2>&1 && return 0
+  echo "building $LAB_STRACE_IMAGE (once)" >&2
+  docker build -q -t "$LAB_STRACE_IMAGE" -f "$LAB/images/Dockerfile.strace" "$LAB/images" >/dev/null
+}
+
 # lab_in_container_path <file under lab/>: prints the file's path in the containers (lab/ is mounted at /lab). Returns 1 with a
 # message on stderr when the file is missing or is not under lab/. Needs LAB.
 lab_in_container_path() {

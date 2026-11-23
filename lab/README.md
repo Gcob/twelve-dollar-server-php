@@ -874,6 +874,78 @@ the harness's own polls, because the bench's journey never asks for it.
 asked for; the 8.6 image has no Excimer; and the CPU of a profiled run is higher than an unprofiled one's (the cost is measured, not assumed:
 run the same load with and without `--profile` and compare the `us/req` of the plateau).
 
+## The step lab
+
+Two instruments to judge a change to the server: `lab/steplab.sh` compares variants by CPU per request, `lab/syscalls.sh` counts the
+syscalls per request.
+
+### `lab/steplab.sh`: variants against a reference
+
+```bash
+bash lab/steplab.sh --image 8.5 --rate 24000 --think-scale 0.02 --idle 60000 --seconds 60 --pairs 3 \
+  --variant ref= --variant telemetry-on=APP_TELEMETRY=1 --floor 5 --out /tmp/steplab-telemetry
+```
+
+Each run is `lab/realistic.sh --hold <rate>,<seconds>` (a fresh seed copy, server and idle connections each time), with `--no-series`
+(no per-second probes) and the server's telemetry off unless the variant sets `APP_TELEMETRY`. The default warm-up is a tenth of the
+rate for 60 s (`--warmup <req/s>,<s>` changes it). `--variant <name>=<K=V,K=V...>` sets environment variables (an empty list is the
+skeleton as it is); `--server-variant <name>=<php file under lab/>` runs another server file. **The first variant is the
+reference.** Runs are **interleaved by round**: round 1 runs every variant once in the given order, round 2 again, and so on for
+`--pairs` rounds, so a slow drift of the VM hits every variant alike.
+
+**The judgment** (`lab/steplab-verdict.jq`, a pure function of the run JSON files): the number of a run is the server's CPU per
+request over the plateau (what the aggregator reads from the cgroup). A run counts when its JSON is valid. A variant's **paired
+differences** are its number minus the reference's of the same round; a round where either run is invalid has no pair. A variant is
+`beyond the noise` when it has at least 2 pairs, **every pair has the same sign** (a zero has none) **and** the median paired difference
+is at least `--floor <us>` in absolute value; otherwise `within the noise`. Fewer than 2 pairs: `no verdict`, with the count. Without
+`--floor`: `no floor: not judged` (the floor comes from an A/A calibration: two identical variants, the largest median paired difference
+they show). The rule is printed under the tables.
+
+**TIME_WAIT sockets.** Before each run the runner counts the TIME_WAIT sockets on k6's source addresses (`probe.sh time-wait`: the VM's
+`/proc/net/tcp`, a socket counts for an address that is at either end, because the side that closes first keeps the port busy) and waits
+until the busiest address holds at most `--time-wait-max` (default 1,000). A closed connection keeps its port for 60 s, the VM's
+ephemeral ports are 55000 to 65535 (about 10,500 per address) and k6 opens about one connection per VU, a quarter of them on each
+address (1,200 at 24,000 req/s), so under 1,000 a run has 9,500 free ports per address, and above it the sockets of the run before are
+still there. A count that does not drop within `--time-wait-wait` seconds (default 150) is a harness failure. The counts before and after
+each run (per address, the busiest, the total on k6's addresses, the total on the VM) are in the run's JSON, under `steplab.time_wait`,
+and the busiest address before each run is in the table (`tw/addr`).
+
+**What it writes** into `--out` (default `lab/results/steplab-<label>-<image>-<time>/`): `<variant>-<round>.json` (the realistic run's
+JSON with a `steplab` object: variant, index, round, the variant's env and server file, the TIME_WAIT counts), `<variant>-<round>.txt`
+(that run's table), `summary.json` and `summary.txt`. `bash lab/steplab-summary.sh <folder> [--floor <us>] [--json <file>]` rebuilds the
+two tables and the verdicts from the JSON files alone, so a results folder's `summarize.sh` calls it. Exit codes: 0 every run ran (an
+invalid run or a failing step is a result), 1 a harness failure, 2 usage. The runs of a comparison take what they take: a 60 s plateau
+with 60,000 idle connections is about 4 minutes a run, plus the drain of the TIME_WAIT sockets.
+
+`check_steplab_verdicts` runs the verdict on recorded run files (`lab/check/fixtures/steplab/<case>/`: identical variants, a variant
+1 ms slower in every round, mixed signs, the same sign under the floor, an invalid round of the variant or of the reference, a single
+pair), and `check_steplab_live` runs two variants for two rounds at a low rate and reads the tables' shape.
+
+### `lab/syscalls.sh`: syscalls per request
+
+```bash
+bash lab/syscalls.sh --image 8.5                       # the skeleton, 2,000 req/s, 20 s of strace
+bash lab/syscalls.sh --image 8.5 --env APP_X=1 --out /tmp/count.json
+```
+
+A realistic hold at `--rate` (default 2,000 req/s, `--think-scale` 0.1, no idle connections, no per-second probes, telemetry off) and,
+from 3 s into its plateau, a sidecar container in the server's pid namespace (`--pid container:<server>`, `--cap-add SYS_PTRACE`, on the
+probe CPUs) runs `strace -c -f -p <server pid>` for `--seconds` (default 20), then detaches. **Only counts are kept.** strace stops the
+server at each syscall, so it slows it down and its time columns mean nothing; they are dropped. The table gives each syscall's calls,
+calls per request, errors (an `EAGAIN` counts as an error) and the total per request. The requests are **the aggregator's** (one row per
+second of k6's own samples), summed over the whole seconds of the window, which starts on a whole second of the VM's clock: the traced
+server serves fewer requests than the nominal rate, so the division uses what it served. The JSON holds the table, the window, the
+request count and the command.
+
+strace comes from `lab/images/Dockerfile.strace`: the lab's pinned Ubuntu with strace 6.8-0ubuntu2 installed at that exact version
+(`lab_ensure_strace_image` builds it the first time). Its raw output stays in a temporary folder: no path or process id goes into the
+JSON, so a result can be committed. If the VM refuses ptrace, the script prints strace's own message and exits 1. Exit codes: 0, 1 a
+harness failure, 2 usage, 3 the realistic run was invalid.
+
+**Reading it.** On the skeleton (keep-alive, 2,000 req/s) the write family (`write`, `sendto`, `writev`) is 1 per request, one response
+each; `check_syscalls_live` asserts it is near 1 and that the total is positive. `check_syscalls_table_parse` reads strace's table from
+a real capture (`lab/check/fixtures/strace-c.txt`).
+
 ## Connection test
 
 `lab/conns.sh` measures how many idle keep-alive connections one server process holds, and what each one costs in memory:
