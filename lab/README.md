@@ -999,6 +999,39 @@ harness failure, 2 usage, 3 the realistic run was invalid.
 each; `check_syscalls_live` asserts it is near 1 and that the total is positive. `check_syscalls_table_parse` reads strace's table from
 a real capture (`lab/check/fixtures/strace-c.txt`).
 
+### The io_uring server (`lab/servers/uring-noop.php`)
+
+A spike: a server for `GET /noop` (and the bake-off handler's other routes, so `conformance.sh` runs on it) whose event loop is an io_uring
+ring driven through PHP's FFI, no C compiled (declarations in `lab/servers/uring-noop.h`). Multishot accept into direct descriptors (a
+sparse table as large as `RLIMIT_NOFILE`, 65,535 here), multishot receive from a provided buffer ring (a pool shared by all connections:
+2,048-byte buffers, nothing held per idle connection), one SEND per response from a pooled slot, no SQPOLL, `SINGLE_ISSUER` +
+`DEFER_TASKRUN` + `SUBMIT_ALL`, one `io_uring_enter` per turn. SQEs are written field by field in the ring's mapped memory, CQEs read with
+one `FFI::string` and one `unpack()` per turn. The header comment of the server file holds the design and the memory-ordering reasoning.
+
+```bash
+bash lab/conformance.sh --image 8.5 --server lab/servers/uring-noop.php --ext sockets --seccomp-unconfined
+bash lab/stress.sh --image 8.5 --server lab/servers/uring-noop.php --seccomp-unconfined [--env URING_RINGS=2]
+bash lab/conns.sh --image 8.5 --server lab/servers/uring-noop.php --ext sockets --seccomp-unconfined --steps 1000,30000,60000
+```
+
+- **`--seccomp-unconfined`** (`macro.sh`, `conformance.sh`, `conns.sh`, `stress.sh`; `LAB_SERVER_SECCOMP_UNCONFINED=1` in `lib.sh`): Docker's
+  default seccomp filter refuses the io_uring syscalls (`EPERM`), so this server's container runs without it. No other server uses it. The
+  kernel of the VM must be 6.6 or newer (`IORING_SETUP_NO_SQARRAY`); the min-wait knob below needs 6.12.
+- **`--ext sockets`**: the lab scripts default to `--ext swoole`; the ring server uses no extension, and `sockets` is loaded only to keep
+  the PHP the same as the DIY server's.
+- **`/noop?id=<digits>`** answers `{"status":"ok","id":<digits>}` (the only change to the DIY server's bytes); `lab/stress.sh` and
+  `lab/conformance/stress.php` send requests with unique ids over many connections, one at a time and pipelined (bursts of 1 to 16), and
+  check every response byte for byte, in order, per connection: 0 mismatches and 0 lost, or exit 1.
+- **The server prints `ring:` lines** (one a second while it works): turns (`io_uring_enter` calls), requests, CQEs, `requests_per_turn`.
+  At a low rate a turn handles one completion, so the ring pays one enter per request; `URING_MIN_COMPLETE` and `URING_MIN_WAIT_US` (the
+  kernel returns after that many microseconds when at least one completion is there) make a turn batch under load, at the price of that
+  much latency. Default off.
+- **`URING_RINGS=2`** adds a second ring with its own table (80,000 connections over two); the loop waits on the first with a timeout
+  (`URING_WAIT_US`, default 500) and enters the second when its `IORING_SQ_TASKRUN` flag shows work or it has SQEs queued.
+- **Traps:** an accept that finds the table full has already taken the connection off the queue and the kernel drops it, so the ring
+  cancels its accept 16 descriptors before the end of the table and arms it again once connections close; a ring that is not entered keeps
+  its queued SQEs (its first accept included); `FFI::cast('uintptr_t', $pointer)` reads 0, so pointers are made from integer addresses.
+
 ## Connection test
 
 `lab/conns.sh` measures how many idle keep-alive connections one server process holds, and what each one costs in memory:

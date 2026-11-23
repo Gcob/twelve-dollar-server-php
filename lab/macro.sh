@@ -5,7 +5,10 @@
 #   bash lab/macro.sh --image 8.4 --server lab/servers/noop-swoole.php --rate 2000 --duration 30
 #                     [--warmup 10] [--script lab/macro/k6/fixed-rate.js] [--out <path>] [--port 18080]
 #                     [--path /] [--pre-vus <n>] [--max-vus <n>] [--php-ini key=value]... [--ext <name>]... [--env K=V]...
-#                     [--label <text>] [--fresh-db] [--cold] [--per-second] [--profile <collapsed stacks file>]
+#                     [--label <text>] [--fresh-db] [--cold] [--per-second] [--profile <collapsed stacks file>] [--seccomp-unconfined]
+#
+# --seccomp-unconfined starts the server container without Docker's default seccomp filter, which refuses io_uring (only
+# lab/servers/uring-noop.php needs it).
 #
 # --fresh-db starts the CHALLENGE APP's way of running a server (lab_start_app: a fresh copy of the seed on the container's own disk, SQLITE_PATH
 # and JWT_SECRET set, APP_TELEMETRY=1, extensions `sockets event` unless --ext says otherwise) instead of a bake-off server that copies its own
@@ -60,7 +63,7 @@ usage() {
   echo "usage: lab/macro.sh --image <variant> --server <php file under lab/> --rate <req/s> --duration <s> [--warmup <s>]" >&2
   echo "                    [--script <k6 js under lab/>] [--out <path>] [--port <n>] [--path </url/path>]" >&2
   echo "                    [--pre-vus <n>] [--max-vus <n>] [--php-ini key=value]... [--ext <name>]... [--env K=V]..." >&2
-  echo "                    [--label <text>] [--fresh-db] [--cold] [--per-second] [--profile <collapsed stacks file>]" >&2
+  echo "                    [--label <text>] [--fresh-db] [--cold] [--per-second] [--profile <collapsed stacks file>] [--seccomp-unconfined]" >&2
   exit 2
 }
 fail() { echo "macro: $*" >&2; exit 1; }
@@ -76,6 +79,7 @@ while [ "$#" -gt 0 ]; do
     --fresh-db) fresh_db=1; shift; continue ;;
     --cold) cold=1; shift; continue ;;
     --per-second) per_second=1; shift; continue ;;
+    --seccomp-unconfined) export LAB_SERVER_SECCOMP_UNCONFINED=1; shift; continue ;;
   esac
   [ "$#" -ge 2 ] || { echo "missing value for $1" >&2; usage; }
   case "$1" in

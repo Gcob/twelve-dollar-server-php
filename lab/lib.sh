@@ -81,13 +81,16 @@ lab_build_php_flags() {
 # 2 GiB, the server CPU, host network, lab/ at /lab, the seed read-only at /lab/data), running <command> in php-lab:<variant>.
 # Needs LAB (the lab/ folder); LAB_ENV, an array of K=V, is passed with -e after PORT. Never mount lab/data writable here: a
 # server must copy feed.db, not open it (WAL files). LAB_SERVER_NOFILE, when set, replaces the container's `nofile` limit (a test
-# hook for lab/conns.sh: the later --ulimit of the same name wins).
+# hook for lab/conns.sh: the later --ulimit of the same name wins). LAB_SERVER_SECCOMP_UNCONFINED=1 starts the container without
+# Docker's default seccomp filter, which refuses the io_uring syscalls (EPERM): only the io_uring server uses it, through the
+# --seccomp-unconfined option of lab/macro.sh, lab/conformance.sh, lab/conns.sh and lab/stress.sh.
 lab_run_server_container() {
-  local name="$1" variant="$2" port="$3" env_args=() nofile_args=() kv
+  local name="$1" variant="$2" port="$3" env_args=() nofile_args=() seccomp_args=() kv
   shift 3
   for kv in "${LAB_ENV[@]+"${LAB_ENV[@]}"}"; do env_args+=(-e "$kv"); done
   [ -z "${LAB_SERVER_NOFILE:-}" ] || nofile_args=(--ulimit "nofile=$LAB_SERVER_NOFILE:$LAB_SERVER_NOFILE")
-  docker run -d --name "$name" "${LAB_RESOURCE_FLAGS[@]}" "${nofile_args[@]+"${nofile_args[@]}"}" --network host --cpuset-cpus "$LAB_CPUSET_SERVER" \
+  [ "${LAB_SERVER_SECCOMP_UNCONFINED:-}" != 1 ] || seccomp_args=(--security-opt seccomp=unconfined)
+  docker run -d --name "$name" "${LAB_RESOURCE_FLAGS[@]}" "${nofile_args[@]+"${nofile_args[@]}"}" "${seccomp_args[@]+"${seccomp_args[@]}"}" --network host --cpuset-cpus "$LAB_CPUSET_SERVER" \
     -v "$LAB:/lab:ro" -v "$LAB/data:/lab/data:ro" -e "PORT=$port" "${env_args[@]+"${env_args[@]}"}" \
     "$LAB_IMAGE:$variant" "$@" >/dev/null
 }

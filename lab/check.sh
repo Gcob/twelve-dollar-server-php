@@ -312,6 +312,53 @@ check_conns_back_to_back() {
     || { echo "both runs started from the same source address: $(jq -c '.client.source_addresses' "$json1")"; return 1; }
 }
 
+# The io_uring server (lab/servers/uring-noop.php, its loop on a ring through FFI) passes every conformance case, and says so at boot.
+check_uring_noop_conformance() {
+  local out ok rc=0
+  out="$(bash "$LAB/conformance.sh" --image 8.5 --server "$LAB/servers/uring-noop.php" --ext sockets --seccomp-unconfined 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "lab/conformance.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
+  ok="$(grep -c '^ok  ' <<<"$out")"
+  [ "$ok" = 8 ] || { echo "expected 8 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
+  grep -q '^event loop the server printed at boot: io_uring through FFI, 1 ring' <<<"$out" || { echo "the loop line is missing: ${out//$'\n'/ | }"; return 1; }
+}
+
+# A short stress run of the io_uring server, one request at a time and pipelined, with one ring and with two: every response echoes the id
+# of its request, 0 lost, and the server's own statistics line is there (requests per turn).
+check_uring_noop_stress() {
+  local out rc=0 rings
+  for rings in 1 2; do
+    out="$(bash "$LAB/stress.sh" --image 8.5 --server "$LAB/servers/uring-noop.php" --seccomp-unconfined --env "URING_RINGS=$rings" --connections 100 \
+      --requests 20000 --procs 2 --pipelines 1,16 2>&1)" || rc=$?
+    [ "$rc" = 0 ] || { echo "$rings ring(s): lab/stress.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
+    [ "$(grep -c '^ok    pipeline=.*"matched":20000,"mismatches":0,"lost":0' <<<"$out")" = 2 ] \
+      || { echo "$rings ring(s): not two clean runs of 20,000: ${out//$'\n'/ | }"; return 1; }
+    grep -q '^last busy second of the server: turns=[0-9]* requests=[0-9]* .*requests_per_turn=[0-9.]*' <<<"$out" \
+      || { echo "$rings ring(s): the server's statistics line is missing: ${out//$'\n'/ | }"; return 1; }
+  done
+}
+
+# A server that echoes the wrong id: the stress run finds the mismatches, names a first one, exits 1 and removes its containers.
+check_stress_fails_on_wrong_echo() {
+  local out rc=0 left
+  out="$(bash "$LAB/stress.sh" --image 8.5 --server "$LAB/check/fixtures/wrong-echo.php" --connections 10 --requests 500 --procs 1 --pipelines 1 2>&1)" || rc=$?
+  [ "$rc" = 1 ] || { echo "lab/stress.sh exited $rc, expected 1: ${out//$'\n'/ | }"; return 1; }
+  grep -q '^FAIL  pipeline=1: .*"mismatches":[1-9]' <<<"$out" || { echo "no mismatch reported: ${out//$'\n'/ | }"; return 1; }
+  left="$(docker ps -a --format '{{.Names}}' | grep '^lab-stress-' || true)"
+  [ -z "$left" ] || { echo "containers left behind: ${left//$'\n'/ }"; return 1; }
+}
+
+# The connection test on the io_uring server: every step is held and answered while the process's own file descriptors stay under 100
+# (the connections are direct descriptors of the ring, not descriptors of the process).
+check_uring_noop_holds_connections_without_fds() {
+  local out json rc=0
+  json="$(mktemp -d)/conns.json"
+  out="$(bash "$LAB/conns.sh" --image 8.5 --server "$LAB/servers/uring-noop.php" --ext sockets --seccomp-unconfined --steps 1000,3000 --out "$json" 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "lab/conns.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
+  jq -e '.results.max_connections == 3000 and .results.ceiling == null
+         and (.steps | all(.probe.server_fds > 0 and .probe.server_fds < 100 and .probe.tcp_established == .held and .probe.fresh_http_code == 200))' "$json" >/dev/null \
+    || { echo "the JSON does not hold 3000 connections with few descriptors: $(jq -c '[.steps[] | {target, held, fds: .probe.server_fds}]' "$json")"; return 1; }
+}
+
 # Workerman's 5 request caches (function-local statics) are all filled in the stock tree and all empty in the nocache tree,
 # after the same request went through the HTTP protocol twice.
 check_workerman_caches() {
@@ -1524,6 +1571,10 @@ CHECKS=(
   check_diy_soft_limit
   check_conformance_bake_diy
   check_macro_bake_diy_posts_is_valid
+  check_uring_noop_conformance
+  check_uring_noop_stress
+  check_stress_fails_on_wrong_echo
+  check_uring_noop_holds_connections_without_fds
   check_app_cases
   check_challenge_test_passes_on_app
   check_challenge_test_fails_on_wrong_golden
