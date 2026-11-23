@@ -15,10 +15,8 @@ setting would have closed the idle connections; settled as D51, D53, D56 to D59.
 > **Answer freely:** a letter or `ok`, your own choice (`other: …`), `?` if it's unclear, or
 > `badly framed: …` if an option is missing or the question doesn't hold.
 
-- 🔴 **Scope 12 waits for your AWS go:** attach the temporary policy (in the factory,
-  `aws/phase-5-x86-calibration-policy.json`: `ca-central-1`, one `c5.2xlarge`, everything tagged, deleted at the end)
-  to your personal CLI user, and tell me the CLI profile's name. Scopes 1 to 11 are done and pushed; their reviews
-  run while I wait.
+Nothing for you right now: your AWS go is in, scope 12 runs on one `c5.2xlarge`. Two plan questions come at the
+end of the phase.
 
 Q13 to Q15 are answered (A, A, A) and moved to
 [2026-11-22-2145.ronde-4.md](questions/2026-11-22-2145.ronde-4.md); your fail-fast principle is D60.
