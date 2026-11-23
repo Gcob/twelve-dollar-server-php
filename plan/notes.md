@@ -353,6 +353,13 @@ connections, and k6 on the Mac tops out around 20,000 req/s (D45, D46). The knee
 **Verdict:** 🔶 Claude's take: no remote VM for phase 4; a short x86 calibration after its baseline (one server VM,
 one generator), and the full-size check with several generators in phase 7. Open until Jacob decides.
 
+**Jacob, 20:39:** "we'll use my AWS personal account to test."
+
+**Verdict (20:39):** ✅ AWS, on Jacob's personal account, for the x86 calibration and the phase 7 score check.
+Machine types as above (`c5` or `m5` limited to 1 vCPU, never `t3`). Each creation still waits for Jacob's go (D7),
+with a short-lived IAM policy limited to what the phase creates, removed at the end. No account id, profile name or
+region-specific id goes into a public file.
+
 ### 2026-11-22 17:57 · ❓ Question: is there still room for improvement?
 
 **Jacob:** "Do you think there is still place for improvement somewhere, or we should finish next steps before asking
