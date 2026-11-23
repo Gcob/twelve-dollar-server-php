@@ -286,6 +286,12 @@
   keep 2,500, the idle client's get `--idle-time-wait-max`, default 0 (about a minute's wait after each 60,000-idle
   run). Scope 10 first tries the root fix, a retry in the idle client, time-boxed to 30 minutes (scope 13's
   hand-back).
+- **D63:** the background checkpointer (`APP_CHECKPOINTER`, D30) gets no run in scope 10: it failed its bound. In
+  scope 9's smoke at 24,000 req/s, a second process running `wal_checkpoint(PASSIVE)` every second copied the WAL
+  back but never let it restart, so the WAL grew all run: `mxFrame` 758,740 (58 times the bound), a 3.13 GB file
+  in 2 minutes. The in-process autocheckpoint, today's, keeps it near 4 MB. The switch stays in the code, refused
+  with `APP_LOCKING=exclusive`, and the finding goes in scope 10's README (D60: a failed gate stops; project
+  manager, phase 5, 2026-11-23 06:20, scope 9's hand-back).
 
 ## History
 
