@@ -1,0 +1,12 @@
+runs, in the order they ran (one round runs every variant once, the first variant is the reference)
+round  variant        valid      req/s    us/req   p95 ms   p99 ms   tw/addr  result
+    1  skeleton       yes       7390.4      53.5    10.59    20.39     26872  pass
+    1  php-swoole-tzimpel yes         7409      67.3     5.26     18.1     27732  pass
+tw/addr: the most TIME_WAIT sockets on one of k6's source addresses when the run started (0 when the runner did not count)
+
+variants (us is the server's CPU per request over the plateau)
+variant         valid median us        min to max   p99 ms  paired differences us     median  verdict
+skeleton          1/1      53.5      53.5 to 53.5    20.39  reference                      -  reference
+php-swoole-tzimpel    1/1      67.3      67.3 to 67.3     18.1  +13.8                      +13.8  no floor: not judged: run with --floor <µs> from an A/A calibration
+
+Rule: a variant is beyond the noise when it has at least 2 pairs, every paired difference (its µs CPU/req minus the reference's in the same round) has the same sign and the median paired difference is at least the floor in absolute value; otherwise it is within the noise. A round where either run is invalid has no pair. One pair with a floor: a screen (beats the floor when lower by at least the floor, else not better), never a verdict. No pair: no verdict. No floor: not judged (the floor comes from an A/A calibration).

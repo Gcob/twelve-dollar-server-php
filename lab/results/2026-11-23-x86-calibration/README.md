@@ -99,3 +99,231 @@ Added on 2026-11-23 at 04:34 from scope 13's factors (3.22 and 3.08), before any
    the Swoole pairs (27.94 and 28.34). The rate difference is said. A same-rate Mac pair waits for a quiet VM.
 7. **The end:** the instance terminated (3 hours at most from its launch), its security group and key pair deleted, and the describes of
    the teardown script checked (their output is in the hand-back, not here: it holds ids).
+
+## The machine
+
+| | |
+|---|---|
+| Instance | AWS `c5.2xlarge`, `ca-central-1`, Ubuntu 24.04 (kernel 7.0 aws), Docker Engine 29.10 (Docker's apt repository), 8 vCPUs, 15.6 GiB |
+| CPU model (`/proc/cpuinfo`) | Intel(R) Xeon(R) Platinum 8275CL CPU @ 3.00 GHz |
+| Layout (`LAB_CPU_LAYOUT=x86-8`) | siblings read on the instance: `0,4` `1,5` `2,6` `3,7`. Server on vCPU `1`, its sibling `5` idle, k6, the idle client and the aggregator on `0,2,3,4,6,7`, the probe on `0,4` |
+| Limits | the lab's: 1 CPU, 2 GiB, no swap, 65,535 fds; host network |
+| Built there | `php-lab:8.5` (229 s), `8.3-apt` (100 s), `8.3-apt-tzimpel` (52 s), the seed (its content hash matched) |
+| Lived | 1 hour 1 minute, one instance, nothing else on it (`other_containers: 0` in every run below) |
+
+## What differed from the plan of the runs
+
+- **The fixed rate is 7,500 req/s, not the Mac's 12,000 or 24,000.** The skeleton's staircase (4,000 to 10,000 in steps of 2,000, then 7,000 to 8,500 in
+  steps of 500) passes at 8,000 with 97.5 % of the offered rate and fails at 8,500 (96.8 %), so 8,000 passes by 0.5 point and the step below, 7,500
+  (98.0 %), became the rate. The server is 40 % busy at 7,500 (53.6 µs times 7,500) and 43 % at the knee: the 97 % rule fails on latency, not on the CPU, as it does
+  on the Mac at 24,000 (63 % busy). The cause was not isolated: the server's longest callback is 25 to 28 ms in the runs (16 to 28 on the Mac) and a 4 KiB
+  synchronous write on the instance's volume takes 2.8 ms (a `dd` with `oflag=dsync`, before the runs), so slow writes inside a callback are a
+  suspect, nothing more. The µs/req of the staircase steps are flat (see the table): the rate moves them by under 2 µs.
+- **No Mac run, and no A/A calibration on the instance.** The Mac's Docker VM is busy with other projects' containers. The factor is read against the
+  Mac's own skeleton runs at 12,000 req/s with telemetry on (the S1 series' S1-a and the skeleton of each Swoole pair), a different rate from the
+  Xeon's 7,500. With no A/A floor no pair is judged: the differences are read next to the skeleton's own spread on the Xeon (six runs, 53.24 to 54.42).
+- **Docker's cgroup driver is `cgroupfs` on the instance.** The lab's probe reads `/sys/fs/cgroup/docker/<id>`, which Docker Desktop uses; Docker Engine
+  on Ubuntu defaults to systemd's driver (`system.slice/docker-<id>.scope`), and the first staircase stopped at once with "no cgroup directory". A host
+  setting (`/etc/docker/daemon.json`), no change to the lab.
+- **The ephemeral ports are Ubuntu's 32768 to 60999** (28,232 an address), not the Mac VM's 55000 to 65535 (about 10,500); no `sysctl` was changed. Every
+  run leaves 26,000 to 27,700 TIME_WAIT sockets on the busiest address (the idle client's) and the next starts at once: its bind retries are in the tables
+  (50 in each run that follows another, 0 after a pause of a minute).
+- **Telemetry on in both variants of every pair**, as in the S1 series, so the limit closes are counted; the Swoole entries ignore the variable. S1-d is
+  `APP_SOFT_CONN_LIMIT=65450` (above the run's 62,000 connections: it never fires, 0 closes in every run), the only variant the step lab chose; scope 11's
+  combined screen (`cache-256m` with `exclusive`) did not confirm. The reconnect pair uses 60,000, as the S1 series did.
+- **Swoole entries on `8.3-apt` and `8.3-apt-tzimpel`**, their files unchanged, as in the Mac pairs; the skeleton on PHP 8.5. The JIT is PHP's x86-64 one here, the
+  arm64 one on the Mac: it is part of what the factor measures, and nothing here separates it from the CPU.
+- Nothing about the instance's identity is in this folder: no id, address, account or key (they are in the private run log).
+
+## Results
+
+<!-- BEGIN summarize -->
+### The staircases: the skeleton (PHP 8.5, telemetry on, probes on), `s = 0.02`, 60,000 idle, 60 s steps, the 97 % rule
+
+**coarse** (valid: true, other containers: 0, k6 connection errors: 0, CPU model and layout: x86-8, server cpuset 1, idle sibling 5, k6 cpuset 0,2,3,4,6,7, probe cpuset 0,4)
+
+| Offered req/s | VUs | achieved req/s | achieved / offered | µs CPU/req | p95 ms | p99 ms | result |
+|---|---|---|---|---|---|---|---|
+| 4001 | 756 | 3968.5 | 99.2 % | 55.43 | 0.935 | 8.47 | pass |
+| 6002 | 1134 | 5929.8 | 98.8 % | 54.36 | 5.5 | 18.37 | pass |
+| 8003 | 1512 | 7780.9 | 97.2 % | 54.49 | 19.209 | 38.673 | pass |
+| 10003 | 1890 | 9487.3 | 94.8 % | 53.97 | 36.984 | 73.359 | FAIL: achieved below 97 % of offered |
+
+**fine** (valid: true, other containers: 0, k6 connection errors: 0, CPU model and layout: x86-8, server cpuset 1, idle sibling 5, k6 cpuset 0,2,3,4,6,7, probe cpuset 0,4)
+
+| Offered req/s | VUs | achieved req/s | achieved / offered | µs CPU/req | p95 ms | p99 ms | result |
+|---|---|---|---|---|---|---|---|
+| 7002 | 1323 | 6872.8 | 98.2 % | 53.93 | 10.909 | 22.627 | pass |
+| 7505 | 1418 | 7355.2 | 98 % | 53.8 | 13.844 | 25.49 | pass |
+| 8003 | 1512 | 7806.2 | 97.5 % | 54.32 | 18.099 | 33.324 | pass |
+| 8500 | 1606 | 8225.8 | 96.8 % | 53.7 | 22.967 | 44.219 | FAIL: achieved below 97 % of offered |
+
+### The skeleton against S1-d (`APP_SOFT_CONN_LIMIT=65450`, above the run's connections), 7,500 req/s, 3 rounds, the skeleton first in each round
+
+| Run | valid | other containers | idle held at the end | closed by the server | limit closes | achieved req/s | achieved / offered | µs CPU/req | p95 ms | p99 ms | idle bind retries | result |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| skeleton-1 | true | 0 | 60000 | 0 | 0 | 7395.8 | 98.5 % | 53.59 | 9.541 | 18.646 | 50 | pass |
+| s1d-1 | true | 0 | 60000 | 0 | 0 | 7383.1 | 98.4 % | 53.38 | 9.977 | 20.388 | 50 | pass |
+| skeleton-2 | true | 0 | 60000 | 0 | 0 | 7387.8 | 98.4 % | 53.82 | 9.124 | 20.694 | 50 | pass |
+| s1d-2 | true | 0 | 60000 | 0 | 0 | 7382.2 | 98.4 % | 53.68 | 10.433 | 20.694 | 50 | pass |
+| skeleton-3 | true | 0 | 60000 | 0 | 0 | 7395.3 | 98.5 % | 53.24 | 9.977 | 20.694 | 50 | pass |
+| s1d-3 | true | 0 | 60000 | 0 | 0 | 7392 | 98.5 % | 53.52 | 9.977 | 21.319 | 50 | pass |
+
+```text
+runs, in the order they ran (one round runs every variant once, the first variant is the reference)
+round  variant        valid      req/s    us/req   p95 ms   p99 ms   tw/addr  result
+    1  skeleton       yes       7395.8      53.6     9.54    18.65     27732  pass
+    1  s1d            yes       7383.1      53.4     9.98    20.39     26703  pass
+    2  skeleton       yes       7387.8      53.8     9.12    20.69     26863  pass
+    2  s1d            yes       7382.2      53.7    10.43    20.69     26861  pass
+    3  skeleton       yes       7395.3      53.2     9.98    20.69     26867  pass
+    3  s1d            yes         7392      53.5     9.98    21.32     26878  pass
+tw/addr: the most TIME_WAIT sockets on one of k6's source addresses when the run started (0 when the runner did not count)
+
+variants (us is the server's CPU per request over the plateau)
+variant         valid median us        min to max   p99 ms  paired differences us     median  verdict
+skeleton          3/3      53.6      53.2 to 53.8    20.69  reference                      -  reference
+s1d               3/3      53.5      53.4 to 53.7    20.69  -0.2 -0.1 +0.3              -0.1  no floor: not judged: run with --floor <µs> from an A/A calibration
+
+Rule: a variant is beyond the noise when it has at least 2 pairs, every paired difference (its µs CPU/req minus the reference's in the same round) has the same sign and the median paired difference is at least the floor in absolute value; otherwise it is within the noise. A round where either run is invalid has no pair. One pair with a floor: a screen (beats the floor when lower by at least the floor, else not better), never a verdict. No pair: no verdict. No floor: not judged (the floor comes from an A/A calibration).
+```
+
+### The skeleton against S1-d with every request reconnecting (`APP_SOFT_CONN_LIMIT=60000`), 7,500 req/s, one round
+
+| Run | valid | other containers | idle held at the end | closed by the server | limit closes | achieved req/s | achieved / offered | µs CPU/req | p95 ms | p99 ms | idle bind retries | result |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| skeleton-1 | true | 0 | 60000 | 0 | 0 | 7390.9 | 98.5 % | 53.54 | 9.261 | 20.087 | 0 | pass |
+| s1d-every-1 | true | 0 | 60000 | 0 | 533307 | 7373.6 | 98.2 % | 77.23 | 10.589 | 21.319 | 50 | pass |
+
+```text
+runs, in the order they ran (one round runs every variant once, the first variant is the reference)
+round  variant        valid      req/s    us/req   p95 ms   p99 ms   tw/addr  result
+    1  skeleton       yes       7390.9      53.5     9.26    20.09     26870  pass
+    1  s1d-every      yes       7373.6      77.2    10.59    21.32     27732  pass
+tw/addr: the most TIME_WAIT sockets on one of k6's source addresses when the run started (0 when the runner did not count)
+
+variants (us is the server's CPU per request over the plateau)
+variant         valid median us        min to max   p99 ms  paired differences us     median  verdict
+skeleton          1/1      53.5      53.5 to 53.5    20.09  reference                      -  reference
+s1d-every         1/1      77.2      77.2 to 77.2    21.32  +23.7                      +23.7  no floor: not judged: run with --floor <µs> from an A/A calibration
+
+Rule: a variant is beyond the noise when it has at least 2 pairs, every paired difference (its µs CPU/req minus the reference's in the same round) has the same sign and the median paired difference is at least the floor in absolute value; otherwise it is within the noise. A round where either run is invalid has no pair. One pair with a floor: a screen (beats the floor when lower by at least the floor, else not better), never a verdict. No pair: no verdict. No floor: not judged (the floor comes from an A/A calibration).
+```
+
+### php-swoole-mattsplat (unchanged, PHP 8.3 from apt) against the skeleton, 7,500 req/s, one round
+
+| Run | valid | other containers | idle held at the end | closed by the server | limit closes | achieved req/s | achieved / offered | µs CPU/req | p95 ms | p99 ms | idle bind retries | result |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| skeleton-1 | true | 0 | 60000 | 0 | 0 | 7394.2 | 98.5 % | 54.42 | 9.541 | 19.79 | 0 | pass |
+| php-swoole-mattsplat-1 | true | 0 | 60000 | 0 | - | 7384.7 | 98.4 % | 57.69 | 11.408 | 21.639 | 50 | pass |
+
+```text
+runs, in the order they ran (one round runs every variant once, the first variant is the reference)
+round  variant        valid      req/s    us/req   p95 ms   p99 ms   tw/addr  result
+    1  skeleton       yes       7394.2      54.4     9.54    19.79         0  pass
+    1  php-swoole-mattsplat yes       7384.7      57.7    11.41    21.64     27732  pass
+tw/addr: the most TIME_WAIT sockets on one of k6's source addresses when the run started (0 when the runner did not count)
+
+variants (us is the server's CPU per request over the plateau)
+variant         valid median us        min to max   p99 ms  paired differences us     median  verdict
+skeleton          1/1      54.4      54.4 to 54.4    19.79  reference                      -  reference
+php-swoole-mattsplat    1/1      57.7      57.7 to 57.7    21.64  +3.3                        +3.3  no floor: not judged: run with --floor <µs> from an A/A calibration
+
+Rule: a variant is beyond the noise when it has at least 2 pairs, every paired difference (its µs CPU/req minus the reference's in the same round) has the same sign and the median paired difference is at least the floor in absolute value; otherwise it is within the noise. A round where either run is invalid has no pair. One pair with a floor: a screen (beats the floor when lower by at least the floor, else not better), never a verdict. No pair: no verdict. No floor: not judged (the floor comes from an A/A calibration).
+```
+
+### php-swoole-tzimpel (unchanged, PHP 8.3 from apt, his Swoole patch) against the skeleton, 7,500 req/s, one round
+
+| Run | valid | other containers | idle held at the end | closed by the server | limit closes | achieved req/s | achieved / offered | µs CPU/req | p95 ms | p99 ms | idle bind retries | result |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| skeleton-1 | true | 0 | 60000 | 0 | 0 | 7390.4 | 98.5 % | 53.45 | 10.589 | 20.388 | 0 | pass |
+| php-swoole-tzimpel-1 | true | 0 | 60000 | 0 | - | 7409 | 98.7 % | 67.27 | 5.26 | 18.099 | 50 | pass |
+
+```text
+runs, in the order they ran (one round runs every variant once, the first variant is the reference)
+round  variant        valid      req/s    us/req   p95 ms   p99 ms   tw/addr  result
+    1  skeleton       yes       7390.4      53.5    10.59    20.39     26872  pass
+    1  php-swoole-tzimpel yes         7409      67.3     5.26     18.1     27732  pass
+tw/addr: the most TIME_WAIT sockets on one of k6's source addresses when the run started (0 when the runner did not count)
+
+variants (us is the server's CPU per request over the plateau)
+variant         valid median us        min to max   p99 ms  paired differences us     median  verdict
+skeleton          1/1      53.5      53.5 to 53.5    20.39  reference                      -  reference
+php-swoole-tzimpel    1/1      67.3      67.3 to 67.3     18.1  +13.8                      +13.8  no floor: not judged: run with --floor <µs> from an A/A calibration
+
+Rule: a variant is beyond the noise when it has at least 2 pairs, every paired difference (its µs CPU/req minus the reference's in the same round) has the same sign and the median paired difference is at least the floor in absolute value; otherwise it is within the noise. A round where either run is invalid has no pair. One pair with a floor: a screen (beats the floor when lower by at least the floor, else not better), never a verdict. No pair: no verdict. No floor: not judged (the floor comes from an A/A calibration).
+```
+
+### The x86 factor: the Xeon's skeleton over the Mac's (µs of server CPU per request)
+
+| Mac reference | Mac µs/req (median) | Mac runs | factor (Xeon median over Mac median) |
+|---|---|---|---|
+| S1 series, S1-a, 12,000 req/s | 27.95 | 5 runs | 1.92 |
+| skeleton of the mattsplat pair, 12,000 req/s | 27.94 | 1 run | 1.92 |
+| skeleton of the tzimpel pair, 12,000 req/s | 28.34 | 1 run | 1.89 |
+
+The Xeon's skeleton at 7,500 req/s: median **53.57 µs/req** over 6 counted runs (53.59, 53.82, 53.24, 53.54, 54.42, 53.45; min 53.24, max 54.42). The Mac's reference runs are at 12,000 req/s (the Xeon cannot hold that rate, so the rates differ); the Xeon's µs/req in the staircases (probes on) run from 53.7 to 55.4 over rates from 4,000 to 10,000 req/s, so the rate moves them by under 2 µs: the factor is read as rate-free here, not measured at one rate.
+
+Factor against the S1 series: 1.92. The bench estimate of the skeleton (prediction 18) was 88 µs/req on the bench's VM; the Xeon reads 53.6 µs/req, 60.9 % of it.
+
+### The reconnect's price on the Xeon and S1-d's cost at the bench's sizes
+
+S1-d with every request reconnecting: the server sent 533307 `Connection: close` responses; k6 made 484385 requests, plus the warm-up's nominal 48750 (its rate times its plateau plus half its 10 s ramp; the server counts its whole life): a difference of 172, 0.03 % of the closes, so every request reconnected.
+
+One pair: the skeleton 53.54, S1-d with every request reconnecting 77.23 µs/req: **one reconnect costs 23.69 µs on the Xeon** (44.2 % of the skeleton's median). The Mac's was 6.62 µs (median of 5 pairs, S1 series): 3.58 times.
+
+S1-d with the soft limit L = 64,000 never closes an idle connection, so a share 1 - L / N of the requests reconnect (the S1 series' model). Added µs/req = share times the cost of one reconnect; the share of the skeleton is read against the Xeon's median above.
+
+| Users N | share that reconnect | added µs/req on the Xeon | as a share of the Xeon skeleton | the Mac's added µs/req (6.62) | above 15 %? |
+|---|---|---|---|---|---|
+| 100000 | 36 % | 8.53 | 15.9 % | 2.38 | yes |
+| 150000 | 57.3 % | 13.58 | 25.4 % | 3.8 | yes |
+| 200000 | 68 % | 16.11 | 30.1 % | 4.5 | yes |
+
+### The Swoole entries on the Xeon against the Mac
+
+| Entry | Xeon µs/req (its pair) | its pair's skeleton on the Xeon | entry over skeleton | Mac µs/req (scope-13 pair) | Xeon over Mac | bench µs/req (leaderboard) | bench over Xeon |
+|---|---|---|---|---|---|---|---|
+| php-swoole-mattsplat | 57.69 | 54.42 | 1.06 | 29.2 | 1.98 | 94 | 1.63 |
+| php-swoole-tzimpel | 67.27 | 53.45 | 1.26 | 32.77 | 2.05 | 101 | 1.5 |
+
+Through the Xeon, the leaderboard's 94 and 101 µs/req are 1.63 and 1.5 times the Xeon's entries (mean 1.57). The skeleton's Xeon median 53.57 µs/req times that mean is **83.9 µs/req on the bench** (87.3 and 80.4 with each factor alone), against 88 through the Mac (prediction 18, scope 13's factors).
+<!-- END summarize -->
+
+## The reading
+
+- **The x86 factor is 1.92.** The skeleton costs **53.57 µs/req** on the Xeon (median of six runs, 53.24 to 54.42, at 7,500 req/s with 60,000 idle) against the
+  Mac's 27.95 (S1-a, five runs) and 27.94 and 28.34 (the skeletons of the Swoole pairs): 1.92, 1.92 and 1.89. The rates differ (7,500 against 12,000); the
+  Xeon's µs/req do not move with the rate in the staircase, so the factor is read as rate-free, but it was not measured at one rate: the same-rate Mac
+  pair is a follow-up for a quiet VM (7,500 req/s, skeleton against itself would also give the Mac's own spread at that rate).
+- **S1-d that never fires costs nothing the Xeon sees:** 53.4, 53.7 and 53.5 against the skeleton's 53.6, 53.8 and 53.2 (paired differences -0.2, -0.1,
+  +0.3), 0 limit closes. No floor, so no verdict; the differences are inside the skeleton's own 0.6 µs spread.
+- **One reconnect costs 23.69 µs on the Xeon**, 3.58 times the Mac's 6.62 (one pair: 53.54 against 77.23 µs/req, every request reconnecting, the close count
+  within 0.03 % of k6's requests plus the nominal warm-up). That is 44 % of a request. Why it is 3.6 times and the request itself 1.9 times was not looked at:
+  most of a reconnect is the kernel's TCP work, so the instance's kernel (7.0) and its mitigations are the first suspects (impression).
+- **S1-d at the bench's sizes, with the Xeon's price** (the S1 series' model, a share `1 - 64,000 / N` of the requests reconnect): **+8.53 µs/req at 100,000
+  users (15.9 % of the Xeon's skeleton), +13.58 at 150,000 (25.4 %), +16.11 at 200,000 (30.1 %)**, against the Mac's +2.38, +3.8 and +4.5 (8.5, 13.6 and 16.1 %).
+  The Mac's 13.6 % at 150,000 stayed under the 15 % line that builds S1-b; the Xeon's 25.4 % is over it. The line is crossed with margin: the reconnect would have
+  to cost under 14.0 µs (instead of 23.69) to give 15 % at 150,000. It is one pair, though, and the model is the S1 series', not a run at 150,000 users.
+- **The Swoole entries on the Xeon:** php-swoole-mattsplat 57.69 µs/req against its pair's skeleton 54.42 (+3.3, +6 %; the Mac's +1.3, +4.5 %); php-swoole-tzimpel
+  67.27 against 53.45 (+13.8, +26 %; the Mac's +4.4, +15.6 %). Xeon over Mac: 1.98 and 2.05 (the skeleton 1.92). The order of the three is the Mac's, and
+  tzimpel's gap to the skeleton is wider on x86; one pair each, no floor.
+- **The bench through the Xeon:** the leaderboard's 94 and 101 µs/req are 1.63 and 1.50 times the Xeon's entries, so the bench's VM is about 1.5 to 1.6 times
+  slower per request than this core with its sibling idle (impression for why: a shared vCPU, a different CPU generation). The skeleton's Xeon median times
+  the mean (1.57) gives **83.9 µs/req on the bench (80.4 to 87.3)**, against 88 through the Mac: the two routes agree within 5 %. At that cost one CPU gives
+  about 11,900 req/s, or 112,000 users at 9.45 users per request a second (arithmetic at 100 % of the CPU; a real run passes the 97 % rule well before).
+
+## Did the predictions hold?
+
+| # | Verdict | Measured |
+|---|---|---|
+| 13 | **Held.** | 1.92 (1.89 to 1.92 by Mac reference), inside 1.8 to 3. |
+| 17 | **Half.** | The Xeon reads 1.92 times the Mac, inside 1.7 to 2.7. The bench estimate of 45 to 75 µs/req stays missed above (scope 13 already had 88; the Xeon route gives 83.9). |
+| 18 | **Missed, below.** | 1.92 times the Mac, not 2.9 to 3.4; the skeleton 53.57 µs/req on the Xeon, not about 88 (that is the bench's VM, 1.5 to 1.6 times slower than this core, not the Xeon). |
+
+## Follow-ups
+
+- The same-rate Mac pair (7,500 req/s, skeleton against itself) on a quiet VM, to make the factor a same-rate one and to give the Mac's own spread there.
+- The S1-b question (build or not) now depends on which machine the 15 % line is read on: the Mac says 13.6 % at 150,000 users, the Xeon 25.4 %. A second reconnect
+  pair on the Xeon, or a run at the real user count, would tighten the 23.69 µs.
+- Why the 97 % rule fails on the Xeon at 43 % CPU (see "What differed"): the longest callbacks and the volume's write latency were not separated.
