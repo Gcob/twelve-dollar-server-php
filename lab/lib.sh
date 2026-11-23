@@ -8,6 +8,9 @@ LAB_IMAGE=php-lab
 # php.net tarball with lab/images/Dockerfile.src.
 LAB_VARIANTS=(8.3-apt 8.3 8.4 8.5 8.6)
 LAB_SOURCE_VARIANTS=(8.3 8.4 8.5 8.6)
+# Images built on top of another one (lab/images/Dockerfile.<variant>): `lab/build.sh <variant>` builds them (after their base), `all` and
+# the micro benches' default list leave them out.
+LAB_DERIVED_VARIANTS=(8.3-apt-tzimpel)
 
 # lab_source_release <variant>: prints "<php version> <sha256 of its .tar.xz> <WITH_SWOOLE> <WITH_EVENT> <WITH_EXCIMER>".
 # The sha256 values are the ones php.net publishes (https://www.php.net/releases/?json&version=<branch>), read on
@@ -36,7 +39,7 @@ LAB_RESOURCE_FLAGS=(--cpus=1 --memory=2g --memory-swap=2g --ulimit nofile=65535:
 
 lab_known_variant() {
   local v
-  for v in "${LAB_VARIANTS[@]}"; do
+  for v in "${LAB_VARIANTS[@]}" "${LAB_DERIVED_VARIANTS[@]}"; do
     [ "$v" = "$1" ] && return 0
   done
   return 1
@@ -45,7 +48,7 @@ lab_known_variant() {
 # Exits non-zero with the list of known variants when $1 is not one of them.
 lab_require_variant() {
   if [ -z "${1:-}" ] || ! lab_known_variant "$1"; then
-    echo "unknown variant: '${1:-}'. Known variants: ${LAB_VARIANTS[*]}" >&2
+    echo "unknown variant: '${1:-}'. Known variants: ${LAB_VARIANTS[*]} ${LAB_DERIVED_VARIANTS[*]}" >&2
     return 1
   fi
 }
@@ -68,12 +71,16 @@ LAB_SERVER_PHP_FLAGS=(-d memory_limit=-1 -d opcache.enable_cli=1 -d opcache.jit=
   -d opcache.file_update_protection=0 -d zend.assertions=-1)
 
 # lab_build_php_flags: fills LAB_PHP_FLAGS with `-d extension=<name>` for each name of the array LAB_EXT, then
-# LAB_SERVER_PHP_FLAGS, then `-d <k=v>` for each entry of the array LAB_INI. The caller sets LAB_EXT and LAB_INI.
+# LAB_SERVER_PHP_FLAGS, then `-d <k=v>` for each entry of the array LAB_INI. The caller sets LAB_EXT and LAB_INI. A name that is a path
+# loads that file. With LAB_PHP_INI_FILE (a php.ini as the container sees it: a server that brings its own configuration, run as its
+# start.sh runs it) the flags are `-c <that file>` first and the lab's own LAB_SERVER_PHP_FLAGS are left out: the file is the whole
+# configuration, as it is in the entry.
 lab_build_php_flags() {
   local e kv
   LAB_PHP_FLAGS=()
+  [ -z "${LAB_PHP_INI_FILE:-}" ] || LAB_PHP_FLAGS+=(-c "$LAB_PHP_INI_FILE")
   for e in "${LAB_EXT[@]+"${LAB_EXT[@]}"}"; do LAB_PHP_FLAGS+=(-d "extension=$e"); done
-  LAB_PHP_FLAGS+=("${LAB_SERVER_PHP_FLAGS[@]}")
+  [ -n "${LAB_PHP_INI_FILE:-}" ] || LAB_PHP_FLAGS+=("${LAB_SERVER_PHP_FLAGS[@]}")
   for kv in "${LAB_INI[@]+"${LAB_INI[@]}"}"; do LAB_PHP_FLAGS+=(-d "$kv"); done
 }
 

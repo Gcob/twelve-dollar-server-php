@@ -10,7 +10,10 @@
 #                       [--local-ips <range>] [--lag-gate <s>] [--port <n>] [--vu-cap <n>] [--ramp <s>] [--k6-memory <MiB>] [--ext <name>]...
 #
 # --variant <name>=<K=V,K=V...> sets environment variables on the server (an empty list, `ref=`, is the skeleton as it is);
-# --server-variant <name>=<file> runs another server file (the same name in both flags: both apply). The first variant given is the
+# --server-variant <name>=<file> runs another server file (the same name in both flags: both apply); --variant-args <name>=<arguments>
+# adds arguments to that variant's lab/realistic.sh call, split on spaces, after the common ones (so a later --image or --ext of
+# the variant wins or adds: `--variant-args other='--image 8.3-apt --ext swoole --php-ini servers/x/php.ini'`; a path of --php-ini
+# is under lab/, relative to the current folder or absolute). The first variant given is the
 # reference. The default warm-up is a tenth of the rate for 60 s (the baseline's).
 #
 # Before each run the TIME_WAIT sockets on every source address the lab's clients use, k6's and the idle client's (127.0.0.2 and up), are
@@ -41,7 +44,7 @@ usage() {
   cat >&2 <<'EOF'
 usage: lab/steplab.sh --image <variant> --rate <req/s> --think-scale <s> --seconds <plateau s> --pairs <n>
                       --variant <name>=<K=V,K=V...> [--variant ...] [--server-variant <name>=<php file under lab/>]...
-                      [--idle <n>] [--warmup <req/s>,<s>] [--floor <us>] [--label <text>] [--out <folder>]
+                      [--variant-args <name>=<arguments>]... [--idle <n>] [--warmup <req/s>,<s>] [--floor <us>] [--label <text>] [--out <folder>]
                       [--time-wait-max <n>] [--idle-time-wait-max <n>] [--time-wait-wait <s>] [--local-ips <range>] [--lag-gate <s>] [--port <n>]
                       [--vu-cap <n>] [--ramp <s>] [--k6-memory <MiB>] [--ext <name>]...
 the first variant is the reference; an empty list (`ref=`) is the skeleton as it is
@@ -58,8 +61,9 @@ tw_max=2500 idle_tw_max=0 tw_wait=150 local_ips="127.0.1.1-127.0.1.4"
 # The idle client's source addresses (FIRST_OCTET to LAST_OCTET of lab/conns/client.php): its sockets keep their ports for 60 s too.
 idle_ips="127.0.0.2-127.0.0.254"
 pass_through=()
-# The variants, in the order given: names, their env (one K=V per line) and their server file (empty: the skeleton's).
-v_names=() v_env=() v_server=()
+# The variants, in the order given: names, their env (one K=V per line), their server file (empty: the skeleton's) and their extra
+# arguments for lab/realistic.sh (empty: none).
+v_names=() v_env=() v_server=() v_args=()
 # variant_index <name>: sets VI to the index of the variant, adding it when it is new (not a $(...): the arrays must change here).
 VI=0
 variant_index() {
@@ -67,7 +71,7 @@ variant_index() {
   for i in "${!v_names[@]}"; do
     [ "${v_names[$i]}" != "$1" ] || { VI="$i"; return; }
   done
-  v_names+=("$1") v_env+=("") v_server+=("")
+  v_names+=("$1") v_env+=("") v_server+=("") v_args+=("")
   VI=$(( ${#v_names[@]} - 1 ))
 }
 while [ "$#" -gt 0 ]; do
@@ -111,6 +115,13 @@ while [ "$#" -gt 0 ]; do
       variant_index "$vname"
       vi="$VI"
       v_server[vi]="$vfile"
+      ;;
+    --variant-args)
+      [[ "$2" == ?*=?* ]] || { echo "--variant-args wants <name>=<arguments of lab/realistic.sh>, got '$2'" >&2; usage; }
+      vname="${2%%=*}"
+      [[ "$vname" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "a variant's name may only hold letters, digits, . _ and -, got '$vname'" >&2; usage; }
+      variant_index "$vname"
+      v_args[VI]="${2#*=}"
       ;;
     *) echo "unknown option: $1" >&2; usage ;;
   esac
@@ -222,8 +233,10 @@ for round in $(seq 1 "$pairs"); do
     done <<<"${v_env[$i]}"
     [ -n "$telemetry_set" ] || run_args+=(--env APP_TELEMETRY=0)
 
+    variant_args=()
+    [ -z "${v_args[$i]}" ] || read -r -a variant_args <<<"${v_args[$i]}"
     run_rc=0
-    bash "$LAB/realistic.sh" "${run_args[@]}" "${pass_through[@]+"${pass_through[@]}"}" >"$tmp/$id.stdout" 2>"$tmp/$id.stderr" &
+    bash "$LAB/realistic.sh" "${run_args[@]}" "${pass_through[@]+"${pass_through[@]}"}" "${variant_args[@]+"${variant_args[@]}"}" >"$tmp/$id.stdout" 2>"$tmp/$id.stderr" &
     run_pid=$!
     wait "$run_pid" || run_rc=$?
     run_pid=""

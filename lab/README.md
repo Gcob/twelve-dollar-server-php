@@ -42,6 +42,7 @@ bash lab/run.sh 8.4 php-info
 | `8.4` | 8.4.28 | 6.2.6 | same |
 | `8.5` | 8.5.13 | 6.2.6 | same |
 | `8.6` | 8.6.0 | not built | same, `WITH_SWOOLE=0`: Swoole 6.2.6 does not compile on 8.6 (`results/swoole-on-php-8.6.md`) |
+| `8.3-apt-tzimpel` | 8.3.6 | 6.2.6 plus the `php-swoole-tzimpel` entry's memory patch, as a second extension in `/opt/swoole-tzimpel/swoole.so` | `FROM php-lab:8.3-apt` (`Dockerfile.8.3-apt-tzimpel`, `install-swoole-tzimpel.sh`); `bash lab/build.sh 8.3-apt-tzimpel` after `8.3-apt`, left out of `all` |
 
 The source builds share one Dockerfile and the same configure flags (CLI only, `pdo_sqlite` on the system libsqlite3,
 `mbstring`, `sodium`, `ffi`, `ctype`, `iconv`, OPcache with its JIT, `CFLAGS=-O2`; the reason for each is in
@@ -940,8 +941,9 @@ bash lab/steplab.sh --image 8.5 --rate 24000 --think-scale 0.02 --idle 60000 --s
 Each run is `lab/realistic.sh --hold <rate>,<seconds>` (a fresh seed copy, server and idle connections each time), with `--no-series`
 (no per-second probes) and the server's telemetry off unless the variant sets `APP_TELEMETRY`. The default warm-up is a tenth of the
 rate for 60 s (`--warmup <req/s>,<s>` changes it). `--variant <name>=<K=V,K=V...>` sets environment variables (an empty list is the
-skeleton as it is); `--server-variant <name>=<php file under lab/>` runs another server file. **The first variant is the
-reference.** Runs are **interleaved by round**: round 1 runs every variant once in the given order, round 2 again, and so on for
+skeleton as it is); `--server-variant <name>=<php file under lab/>` runs another server file; `--variant-args <name>=<arguments>` adds
+arguments to that variant's `lab/realistic.sh` call, split on spaces and given last, so a variant can run on another image and with its own
+extension and `php.ini` (`--variant-args "other=--image 8.3-apt --ext swoole"`). **The first variant is the reference.** Runs are **interleaved by round**: round 1 runs every variant once in the given order, round 2 again, and so on for
 `--pairs` rounds, so a slow drift of the VM hits every variant alike.
 
 **The judgment** (`lab/steplab-verdict.jq`, a pure function of the run JSON files): the number of a run is the server's CPU per
@@ -1007,6 +1009,28 @@ harness failure, 2 usage, 3 the realistic run was invalid.
 **Reading it.** On the skeleton (keep-alive, 2,000 req/s) the write family (`write`, `sendto`, `writev`) is 1 per request, one response
 each; `check_syscalls_live` asserts it is near 1 and that the total is positive. `check_syscalls_table_parse` reads strace's table from
 a real capture (`lab/check/fixtures/strace-c.txt`).
+
+### The two Swoole entries (`lab/servers/swoole-entries/`)
+
+The leaderboard's two real-PHP entries, `php-swoole-mattsplat` and `php-swoole-tzimpel`, run unchanged: their `server.php` (and tzimpel's
+`php.ini`) are byte copies of the challenge's files (`lab/check.sh` compares them; credit in `lab/NOTICE.md`), read from the same
+environment as the skeleton (`SQLITE_PATH`, `JWT_SECRET`, `HOST`, `PORT`). Their `install.sh` and `build.sh` are never run. What their
+`start.sh` runs, and how the lab reproduces it:
+
+| Entry | `start.sh` | In the lab |
+| --- | --- | --- |
+| mattsplat | `php -d extension=swoole -d memory_limit=-1 -d opcache.enable_cli=1 -d opcache.jit=tracing -d opcache.jit_buffer_size=32M server.php` | `--image 8.3-apt --ext swoole`: the lab's own flags are these four plus `opcache.file_update_protection=0` and `zend.assertions=-1` |
+| tzimpel | `php -c php.ini -d extension=$PWD/build/swoole.so server.php` | `--image 8.3-apt-tzimpel --php-ini <its php.ini> --ext /opt/swoole-tzimpel/swoole.so`: `--php-ini` passes `-c <file>` and leaves the lab's flags out, so the file is the whole configuration |
+
+`bash lab/build.sh 8.3-apt-tzimpel` builds the image: our Swoole 6.2.6 source (the same tarball and checksum as `8.3-apt`) with the one
+`perl -0pi` line of tzimpel's `build.sh` (the receive buffer freed once a request is done), copied byte for byte, and his check that it applied
+exactly twice (`check_tzimpel_patch_is_his` compares the two lines with the challenge's). The entries used Swoole 6.2.3.
+
+```bash
+bash lab/challenge-test.sh --image 8.3-apt --server lab/servers/swoole-entries/php-swoole-mattsplat/server.php --ext swoole
+bash lab/challenge-test.sh --image 8.3-apt-tzimpel --server lab/servers/swoole-entries/php-swoole-tzimpel/server.php \
+  --php-ini lab/servers/swoole-entries/php-swoole-tzimpel/php.ini --ext /opt/swoole-tzimpel/swoole.so
+```
 
 ### The io_uring server (`lab/servers/uring-noop.php`)
 

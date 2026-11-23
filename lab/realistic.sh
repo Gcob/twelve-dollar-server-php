@@ -92,8 +92,8 @@ LIMIT_ACHIEVED_RATIO=0.97
 usage() {
   cat >&2 <<'EOF'
 usage: lab/realistic.sh --image <variant> (--staircase <from>,<step>,<to>,<s> | --hold <rate>,<s> | --calibrate) [--think-scale <s>]
-                        [--server <php file under lab/>] [--ext <name>]... [--env K=V]... [--label <text>] [--warmup <rate>,<s>]
-                        [--vu-cap <n>] [--ramp <s>] [--out <path>] [--port <n>] [--local-ips <range>] [--lag-gate <s>] [--k6-memory <MiB>]
+                        [--server <php file under lab/>] [--php-ini <php.ini under lab/>] [--ext <name>]... [--env K=V]... [--label <text>]
+                        [--warmup <rate>,<s>] [--vu-cap <n>] [--ramp <s>] [--out <path>] [--port <n>] [--local-ips <range>] [--lag-gate <s>] [--k6-memory <MiB>]
                         [--calibrate-vus <a>,<b>] [--calibrate-seconds <s>] [--idle <n>] [--cold] [--no-series]
                         [--profile <collapsed stacks file>]
 rates are in req/s, <s> is the seconds of one plateau; --think-scale is the share of the bench's think time (default 1)
@@ -110,6 +110,9 @@ profile_out=""
 ramp="" out="" port=18120 local_ips="127.0.1.1-127.0.1.4" lag_gate=6 k6_memory="" calibrate_vus="50,300" calibrate_seconds=60 idle="" cold=""
 series=1
 LAB_EXT=() LAB_ENV=()
+LAB_PHP_INI_FILE=""
+# Why disable SC2034: lab_build_php_flags (lib.sh) reads LAB_PHP_INI_FILE, set below.
+# shellcheck disable=SC2034
 while [ "$#" -gt 0 ]; do
   if [ "$1" = --calibrate ]; then calibrate=1; shift; continue; fi
   if [ "$1" = --cold ]; then cold=1; shift; continue; fi
@@ -118,6 +121,7 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --image) image="$2" ;;
     --server) server_file="$2" ;;
+    --php-ini) LAB_PHP_INI_FILE="$(lab_in_container_path "$2")" || exit 2 ;;
     --ext) LAB_EXT+=("$2") ;;
     --env) LAB_ENV+=("$2") ;;
     --label) label="$2" ;;

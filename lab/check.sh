@@ -1336,6 +1336,31 @@ check_time_wait_count() {
   [ "$got" = "$want" ] || { echo "the count over two ranges is not the fixture's: ${got//$'\n'/ | }"; return 1; }
 }
 
+# The two Swoole entries run unchanged: the copies under lab/servers/swoole-entries/ are byte for byte the challenge's files, and the
+# two lines of tzimpel's build.sh that patch Swoole (the `perl -0pi` substitution and its "applied exactly twice" check) are the ones in
+# lab/images/install-swoole-tzimpel.sh.
+check_swoole_entries_are_unchanged() {
+  local sub="$REPO/reference/twelve-dollar-server-challenge/submissions" f
+  [ -d "$sub" ] || { echo "reference/twelve-dollar-server-challenge/submissions is missing"; return 1; }
+  for f in php-swoole-mattsplat/server.php php-swoole-tzimpel/server.php php-swoole-tzimpel/php.ini; do
+    cmp -s "$sub/$f" "$LAB/servers/swoole-entries/$f" || { echo "lab/servers/swoole-entries/$f is not the challenge's $f"; return 1; }
+  done
+  [ "$(sed -n 17,18p "$sub/php-swoole-tzimpel/build.sh")" = "$(grep -A1 '^perl -0pi' "$LAB/images/install-swoole-tzimpel.sh")" ] \
+    || { echo "the patch lines of lab/images/install-swoole-tzimpel.sh are not lines 17 and 18 of the entry's build.sh"; return 1; }
+}
+
+# `--php-ini` (lab_build_php_flags with LAB_PHP_INI_FILE) makes the file the whole configuration: `-c <file>`, the extensions, nothing of the
+# lab's own flags; without it the flags are the lab's, as before.
+# Why disable SC2034: lab_build_php_flags (lib.sh) reads the three variables.
+# shellcheck disable=SC2034
+check_php_ini_flags() {
+  local got
+  got="$(LAB_EXT=(/opt/x/swoole.so) LAB_INI=() LAB_PHP_INI_FILE=/lab/x/php.ini; lab_build_php_flags; echo "${LAB_PHP_FLAGS[*]}")"
+  [ "$got" = "-c /lab/x/php.ini -d extension=/opt/x/swoole.so" ] || { echo "with a php.ini the flags are: $got"; return 1; }
+  got="$(LAB_EXT=(swoole) LAB_INI=() LAB_PHP_INI_FILE=""; lab_build_php_flags; echo "${LAB_PHP_FLAGS[*]}")"
+  [ "$got" = "-d extension=swoole ${LAB_SERVER_PHP_FLAGS[*]}" ] || { echo "without a php.ini the flags are: $got"; return 1; }
+}
+
 # lab_containers_left: the containers and volume the realistic runs and the syscall sidecar leave, as one line (empty when none).
 lab_containers_left() {
   local left
@@ -1622,6 +1647,8 @@ CHECKS=(
   check_steplab_verdicts
   check_syscalls_table_parse
   check_time_wait_count
+  check_swoole_entries_are_unchanged
+  check_php_ini_flags
   check_steplab_live
   check_steplab_cleans_up_after_failure
   check_syscalls_live
