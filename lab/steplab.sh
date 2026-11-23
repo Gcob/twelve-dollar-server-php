@@ -6,19 +6,25 @@
 #
 #   bash lab/steplab.sh --image 8.5 --rate 24000 --think-scale 0.02 --idle 60000 --seconds 60 --pairs 3 \
 #       --variant ref= --variant telemetry-on=APP_TELEMETRY=1 [--server-variant <name>=<php file under lab/>]... \
-#       [--warmup <req/s>,<s>] [--floor <us>] [--label <text>] [--out <folder>] [--time-wait-max <n>] [--time-wait-wait <s>]
+#       [--warmup <req/s>,<s>] [--floor <us>] [--label <text>] [--out <folder>] [--time-wait-max <n>] [--idle-time-wait-max <n>] [--time-wait-wait <s>]
 #                       [--local-ips <range>] [--lag-gate <s>] [--port <n>] [--vu-cap <n>] [--ramp <s>] [--k6-memory <MiB>] [--ext <name>]...
 #
 # --variant <name>=<K=V,K=V...> sets environment variables on the server (an empty list, `ref=`, is the skeleton as it is);
 # --server-variant <name>=<file> runs another server file (the same name in both flags: both apply). The first variant given is the
 # reference. The default warm-up is a tenth of the rate for 60 s (the baseline's).
 #
-# Before each run the TIME_WAIT sockets on k6's source addresses are counted (lab/macro/probe.sh time-wait), and the run waits for the
-# busiest address to hold at most --time-wait-max of them (default 2,500). Why: a closed connection keeps its port for 60 s, the VM's
-# ephemeral ports are 55000 to 65535 (about 10,500 per address), and k6 opens about one connection per VU, a quarter of them per address
-# (1,200 at 24,000 req/s). Under the limit a run has 8,000 free ports per address, six times what it needs, and the sockets a run leaves
-# (1,134 per address at that rate) do not make the next one wait; above it the sockets of earlier runs are still there. A count that does not drop within --time-wait-wait seconds (default 150) is a harness failure: something
-# else is churning connections. The counts, before and after each run, are in the run's JSON (`steplab.time_wait`).
+# Before each run the TIME_WAIT sockets on every source address the lab's clients use, k6's and the idle client's (127.0.0.2 and up), are
+# counted (lab/macro/probe.sh time-wait). A closed connection keeps its port for 60 s, the VM's ephemeral ports are 55000 to 65535 (about
+# 10,500 per address).
+#  - k6 opens about one connection per VU, a quarter of them per address (1,200 at 24,000 req/s) and dials again when a port is taken, so
+#    the run waits for the busiest of its addresses to hold at most --time-wait-max (default 2,500): under it a run has 8,000 free ports per
+#    address, six times what it needs, and the sockets a run leaves (1,134 per address at that rate) do not make the next one wait.
+#  - The idle client opens its connections once, binds each to a random port of its address and never retries, so every socket already on
+#    that address is a port a connection may collide with (one in four at 2,500 of 10,000: 60,000 connections cannot all start). With --idle
+#    the run waits for the busiest of the idle client's addresses to hold at most --idle-time-wait-max (default 0), about a minute after a
+#    run that held 60,000: the sockets of the run before are what the client would hit (`Cannot assign requested address`).
+# A count that does not drop within --time-wait-wait seconds (default 150) is a harness failure: something else is churning connections.
+# The counts, before and after each run, are in the run's JSON (`steplab.time_wait`).
 #
 # The output folder (default lab/results/steplab-...) holds each run's JSON (<variant>-<round>.json, the realistic run's JSON with a
 # `steplab` object added), its table (<variant>-<round>.txt), summary.json and summary.txt, which lab/steplab-summary.sh rebuilds from
@@ -36,7 +42,7 @@ usage() {
 usage: lab/steplab.sh --image <variant> --rate <req/s> --think-scale <s> --seconds <plateau s> --pairs <n>
                       --variant <name>=<K=V,K=V...> [--variant ...] [--server-variant <name>=<php file under lab/>]...
                       [--idle <n>] [--warmup <req/s>,<s>] [--floor <us>] [--label <text>] [--out <folder>]
-                      [--time-wait-max <n>] [--time-wait-wait <s>] [--local-ips <range>] [--lag-gate <s>] [--port <n>]
+                      [--time-wait-max <n>] [--idle-time-wait-max <n>] [--time-wait-wait <s>] [--local-ips <range>] [--lag-gate <s>] [--port <n>]
                       [--vu-cap <n>] [--ramp <s>] [--k6-memory <MiB>] [--ext <name>]...
 the first variant is the reference; an empty list (`ref=`) is the skeleton as it is
 EOF
@@ -48,7 +54,9 @@ command_line="lab/steplab.sh $*"
 command_line="${command_line//$REPO/.}"
 
 image="" rate="" think_scale="" seconds="" pairs="" idle="" warmup="" floor="" label="" out=""
-tw_max=2500 tw_wait=150 local_ips="127.0.1.1-127.0.1.4"
+tw_max=2500 idle_tw_max=0 tw_wait=150 local_ips="127.0.1.1-127.0.1.4"
+# The idle client's source addresses (FIRST_OCTET to LAST_OCTET of lab/conns/client.php): its sockets keep their ports for 60 s too.
+idle_ips="127.0.0.2-127.0.0.254"
 pass_through=()
 # The variants, in the order given: names, their env (one K=V per line) and their server file (empty: the skeleton's).
 v_names=() v_env=() v_server=()
@@ -76,6 +84,7 @@ while [ "$#" -gt 0 ]; do
     --label) label="$2" ;;
     --out) out="$2" ;;
     --time-wait-max) tw_max="$2" ;;
+    --idle-time-wait-max) idle_tw_max="$2" ;;
     --time-wait-wait) tw_wait="$2" ;;
     --local-ips) local_ips="$2"; pass_through+=(--local-ips "$2") ;;
     --lag-gate|--port|--vu-cap|--ramp|--k6-memory|--ext) pass_through+=("$1" "$2") ;;
@@ -113,6 +122,7 @@ for n in image rate think_scale seconds pairs; do
 done
 lab_require_variant "$image" || exit 2
 [ "${#v_names[@]}" -ge 1 ] || { echo "give at least one --variant (the first is the reference)" >&2; usage; }
+[[ "$idle_tw_max" =~ ^[0-9]+$ ]] || { echo "--idle-time-wait-max must be a whole number from 0, got '$idle_tw_max'" >&2; usage; }
 for n in rate seconds pairs tw_max tw_wait; do
   [[ "${!n}" =~ ^[1-9][0-9]*$ ]] || { echo "--${n//_/-} must be a whole number from 1, got '${!n}'" >&2; usage; }
 done
@@ -150,33 +160,42 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM HUP
 
-# time_wait_json: the TIME_WAIT sockets of k6's addresses now, as one JSON object, from a short-lived container on the VM's host network.
+# time_wait_json: the TIME_WAIT sockets of every address the lab's clients use now, as one JSON object, from a short-lived container on the
+# VM's host network. per_address lists the addresses that hold at least one, max is the busiest of all of them, k6_max and idle_max the
+# busiest of each client's, in_range and all the sockets on the clients' addresses and on the VM.
 time_wait_json() {
-  docker run --rm --network host -v "$LAB:/lab:ro" "$LAB_IMAGE:$image" bash /lab/macro/probe.sh time-wait "$local_ips" |
+  docker run --rm --network host -v "$LAB:/lab:ro" "$LAB_IMAGE:$image" bash -c '
+    bash /lab/macro/probe.sh time-wait "$0" | sed "s/^/k6 /"
+    bash /lab/macro/probe.sh time-wait "$1" | sed "s/^/idle /"' "$local_ips" "$idle_ips" |
     jq -Rn '[inputs | split(" ")] as $l
-      | {per_address: ($l | map(select(.[0] == "time_wait") | {(.[1]): (.[2] | tonumber)}) | add),
-         max: ($l | map(select(.[0] == "time_wait_summary" and .[1] == "max") | .[2] | tonumber) | first),
-         in_range: ($l | map(select(.[0] == "time_wait_summary" and .[1] == "in_range") | .[2] | tonumber) | first),
-         all: ($l | map(select(.[0] == "time_wait_summary" and .[1] == "all") | .[2] | tonumber) | first)}'
+      | def summary($g; $k): $l | map(select(.[0] == $g and .[1] == "time_wait_summary" and .[2] == $k) | .[3] | tonumber) | first;
+        {per_address: ($l | map(select(.[1] == "time_wait" and (.[3] | tonumber) > 0) | {(.[2]): (.[3] | tonumber)}) | add // {}),
+         max: ([summary("k6"; "max"), summary("idle"; "max")] | max),
+         k6_max: summary("k6"; "max"), idle_max: summary("idle"; "max"),
+         in_range: (summary("k6"; "in_range") + summary("idle"; "in_range")),
+         all: summary("k6"; "all")}'
 }
 
-# wait_for_time_wait: counts, waits for the busiest address to drain under the limit, leaves the last count in TW_BEFORE (JSON) with the
-# seconds waited.
+# wait_for_time_wait: counts, waits for k6's busiest address to drain under --time-wait-max and, with --idle, the idle client's under
+# --idle-time-wait-max, leaves the last count in TW_BEFORE (JSON) with the seconds waited and the limits.
 TW_BEFORE=""
 wait_for_time_wait() {
-  local start now max waited=0
+  local start now k6_max idle_max waited=0 over
   start="$(date +%s)"
   while :; do
     TW_BEFORE="$(time_wait_json)" || fail "cannot count the TIME_WAIT sockets"
-    max="$(jq '.max' <<<"$TW_BEFORE")"
-    [ "$max" -gt "$tw_max" ] || break
+    k6_max="$(jq '.k6_max' <<<"$TW_BEFORE")" idle_max="$(jq '.idle_max' <<<"$TW_BEFORE")"
+    over=""
+    [ "$k6_max" -le "$tw_max" ] || over="$k6_max on the busiest of k6's addresses, above $tw_max"
+    [ -z "$idle" ] || [ "$idle_max" -le "$idle_tw_max" ] || over="${over:+$over, }$idle_max on the busiest of the idle client's addresses, above $idle_tw_max"
+    [ -n "$over" ] || break
     now="$(date +%s)"
     waited=$(( now - start ))
-    [ "$waited" -lt "$tw_wait" ] || fail "$max TIME_WAIT sockets on the busiest of k6's addresses after $waited s, above the limit of $tw_max: something else on the VM opens connections"
-    echo "  TIME_WAIT: $max on the busiest of k6's addresses, above $tw_max: waiting for them to drain (60 s a socket)" >&2
+    [ "$waited" -lt "$tw_wait" ] || fail "TIME_WAIT sockets after $waited s: $over: something else on the VM opens connections"
+    echo "  TIME_WAIT: $over: waiting for them to drain (60 s a socket)" >&2
     sleep 5
   done
-  TW_BEFORE="$(jq --argjson w "$waited" --argjson lim "$tw_max" '. + {waited_s: $w, limit_per_address: $lim}' <<<"$TW_BEFORE")"
+  TW_BEFORE="$(jq --argjson w "$waited" --argjson lim "$tw_max" --argjson idle_lim "$idle_tw_max" '. + {waited_s: $w, limit_per_address: $lim, idle_limit_per_address: $idle_lim}' <<<"$TW_BEFORE")"
 }
 
 echo "steplab: ${#v_names[@]} variant(s) x $pairs round(s), $rate req/s for ${seconds}s (think scale $think_scale${idle:+, $idle idle connections}), warm-up $warmup, into ${out#"$REPO"/}"
@@ -189,7 +208,7 @@ for round in $(seq 1 "$pairs"); do
     done_runs=$(( done_runs + 1 ))
     echo "[$done_runs/$total] round $round, $name"
     wait_for_time_wait
-    echo "  TIME_WAIT before: $(jq -r '"\(.max) on the busiest address, \(.in_range) in all on k6'"'"'s addresses, \(.all) on the VM, waited \(.waited_s) s"' <<<"$TW_BEFORE")"
+    echo "  TIME_WAIT before: $(jq -r '"\(.max) on the busiest address, \(.in_range) in all on the clients'"'"' addresses, \(.all) on the VM, waited \(.waited_s) s"' <<<"$TW_BEFORE")"
 
     run_args=(--image "$image" --think-scale "$think_scale" --hold "$rate,$seconds" --no-series --warmup "$warmup" --out "$tmp/$id.json"
       --label "${label:+$label-}$name")

@@ -954,13 +954,22 @@ pair` (the first look that decides which variants deserve more pairs). No pair: 
 `--floor`: `no floor: not judged` (the floor comes from an A/A calibration: two identical variants, the largest median paired difference
 they show). The rule is printed under the tables.
 
-**TIME_WAIT sockets.** Before each run the runner counts the TIME_WAIT sockets on k6's source addresses (`probe.sh time-wait`: the VM's
-`/proc/net/tcp`, a socket counts for an address that is at either end, because the side that closes first keeps the port busy) and waits
-until the busiest address holds at most `--time-wait-max` (default 2,500). A closed connection keeps its port for 60 s, the VM's
-ephemeral ports are 55000 to 65535 (about 10,500 per address) and k6 opens about one connection per VU, a quarter of them on each
-address (1,200 at 24,000 req/s), so under 2,500 a run has 8,000 free ports per address, six times what it needs, and the 1,134 per address that a run at that rate
-leaves do not make the next one wait; above it the sockets of earlier runs are still there. A count that does not drop within `--time-wait-wait` seconds (default 150) is a harness failure. The counts before and after
-each run (per address, the busiest, the total on k6's addresses, the total on the VM) are in the run's JSON, under `steplab.time_wait`,
+**TIME_WAIT sockets.** Before each run the runner counts the TIME_WAIT sockets on every source address the lab's clients use, k6's and
+the idle client's (`127.0.0.2` to `127.0.0.254`) (`probe.sh time-wait`, one /24 range per comma-separated item: the VM's
+`/proc/net/tcp`, a socket counts for an address that is at either end, because the side that closes first keeps the port busy). A closed
+connection keeps its port for 60 s and the VM's ephemeral ports are 55000 to 65535 (about 10,500 per address).
+
+- **k6's addresses:** k6 opens about one connection per VU, a quarter of them on each address (1,200 at 24,000 req/s), and dials again when a
+  port is taken. The run waits until the busiest holds at most `--time-wait-max` (default 2,500): a run then has 8,000 free ports per address,
+  six times what it needs, and the 1,134 per address that a run at that rate leaves do not make the next one wait.
+- **The idle client's addresses (with `--idle`):** it opens its connections once, binds each to a random port of its address and never
+  retries, so every socket already there is a port a connection may collide with (one in four at 2,500 of 10,000: 60,000 connections cannot all
+  start, `Cannot assign requested address`). The run waits until the busiest holds at most `--idle-time-wait-max` (default 0), which is about a
+  minute after a run that held 60,000 idle connections. A limit of 2,500 here, as for k6, is not enough: with 200 sockets left
+  on the first address a run of 60,000 connections already failed to bind.
+
+A count that does not drop within `--time-wait-wait` seconds (default 150) is a harness failure. The counts before and after
+each run (per address that holds any, the busiest, k6's and the idle client's busiest, the total on the clients' addresses, the total on the VM) are in the run's JSON, under `steplab.time_wait`,
 and the busiest address before each run is in the table (`tw/addr`).
 
 **What it writes** into `--out` (default `lab/results/steplab-<label>-<image>-<time>/`): `<variant>-<round>.json` (the realistic run's

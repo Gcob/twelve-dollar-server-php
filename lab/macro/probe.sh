@@ -15,7 +15,7 @@
 #   probe.sh fds <server container id>                       open file descriptors of the server's processes (`fds open <n>`)
 #   probe.sh client-ips <port>                               established connections to <port> by the client's address (`clients <ip> <n>`)
 #   probe.sh cgroup-memory <container id>                    memory of any container's cgroup: current, peak, anon, socket buffers and kernel (bytes)
-#   probe.sh time-wait <first ip>-<last ip> [file]           TIME_WAIT sockets (host network, /proc/net/tcp or <file>) with each address of the range
+#   probe.sh time-wait <first ip>-<last ip>[,...] [file]     TIME_WAIT sockets (host network, /proc/net/tcp or <file>) with each address of the range(s)
 #                                                            at either end (`time_wait <ip> <n>`), then max, in_range and all (`time_wait_summary`)
 set -euo pipefail
 
@@ -130,12 +130,16 @@ case "${1:-}" in
     # address of the range); when the server closes it is the remote one. Either way the 4-tuple, and so that source port, is taken for
     # that address. Column 2 is the local address, column 3 the remote one (`0101007F:C350`, IPv4 in little-endian hex), column 4 the
     # state (06 = TIME_WAIT).
-    first="${2%-*}" last="${2#*-}"
-    [ "${first%.*}" = "${last%.*}" ] || { echo "time-wait wants a range of one /24 (127.0.1.1-127.0.1.4), got '$2'" >&2; exit 2; }
+    # Why several ranges: the clients use more than one block (k6's addresses, the idle client's 127.0.0.2 and up); each range is one /24.
     map=""
-    for n in $(seq "${first##*.}" "${last##*.}"); do
-      IFS=. read -r o1 o2 o3 _ <<<"$first"
-      map="$map $(printf '%02X%02X%02X%02X' "$n" "$o3" "$o2" "$o1")=$o1.$o2.$o3.$n"
+    IFS=, read -r -a ranges <<<"$2"
+    for range in "${ranges[@]}"; do
+      first="${range%-*}" last="${range#*-}"
+      [ "${first%.*}" = "${last%.*}" ] || { echo "time-wait wants ranges of one /24 each (127.0.1.1-127.0.1.4,127.0.0.2-127.0.0.254), got '$2'" >&2; exit 2; }
+      for n in $(seq "${first##*.}" "${last##*.}"); do
+        IFS=. read -r o1 o2 o3 _ <<<"$first"
+        map="$map $(printf '%02X%02X%02X%02X' "$n" "$o3" "$o2" "$o1")=$o1.$o2.$o3.$n"
+      done
     done
     awk -v map="$map" '
       BEGIN { n = split(map, items, " "); for (i = 1; i <= n; i++) { split(items[i], kv, "="); ip[kv[1]] = kv[2]; order[i] = kv[1] } }

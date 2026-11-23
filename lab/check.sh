@@ -1328,6 +1328,12 @@ check_time_wait_count() {
   got="$(bash "$LAB/macro/probe.sh" time-wait 127.0.1.1-127.0.1.4 "$LAB/check/fixtures/proc-net-tcp-time-wait.txt" 2>&1)" || { echo "probe.sh failed: ${got//$'\n'/ | }"; return 1; }
   want=$'time_wait 127.0.1.1 0\ntime_wait 127.0.1.2 3\ntime_wait 127.0.1.3 2\ntime_wait 127.0.1.4 2\ntime_wait_summary max 3\ntime_wait_summary in_range 7\ntime_wait_summary all 8'
   [ "$got" = "$want" ] || { echo "the count is not the fixture's: ${got//$'\n'/ | }"; return 1; }
+  # Two ranges, as steplab counts them (k6's addresses, then the idle client's 127.0.0.2 to 127.0.0.9 here): the socket on 127.0.0.9 now counts.
+  got="$(bash "$LAB/macro/probe.sh" time-wait 127.0.1.1-127.0.1.4,127.0.0.2-127.0.0.9 "$LAB/check/fixtures/proc-net-tcp-time-wait.txt" 2>&1)" || { echo "probe.sh failed on two ranges: ${got//$'\n'/ | }"; return 1; }
+  want=$'time_wait 127.0.1.1 0\ntime_wait 127.0.1.2 3\ntime_wait 127.0.1.3 2\ntime_wait 127.0.1.4 2'
+  for n in 2 3 4 5 6 7 8; do want="$want"$'\n'"time_wait 127.0.0.$n 0"; done
+  want="$want"$'\ntime_wait 127.0.0.9 1\ntime_wait_summary max 3\ntime_wait_summary in_range 8\ntime_wait_summary all 8'
+  [ "$got" = "$want" ] || { echo "the count over two ranges is not the fixture's: ${got//$'\n'/ | }"; return 1; }
 }
 
 # lab_containers_left: the containers and volume the realistic runs and the syscall sidecar leave, as one line (empty when none).
@@ -1354,11 +1360,16 @@ check_steplab_live() {
   grep -q '^Rule: a variant is beyond the noise when' <<<"$out" || { echo "the rule is not printed: ${out//$'\n'/ | }"; return 1; }
   for f in ref-1 ref-2 twin-1 twin-2; do
     jq -e '.steplab.time_wait.before.max >= 0 and .steplab.time_wait.after.max >= 0 and .steplab.time_wait.before.all >= .steplab.time_wait.before.in_range
-           and (.steplab.time_wait.before.per_address | length) == 4 and .steplab.time_wait.before.limit_per_address == 2500
+           and ([.steplab.time_wait.after.per_address | keys[] | select(startswith("127.0.0."))] | length) >= 1
+           and .steplab.time_wait.before.limit_per_address == 2500 and .steplab.time_wait.before.idle_limit_per_address == 0
+           and .steplab.time_wait.before.idle_max == 0
            and .per_second_probes == false and .valid == true and .idle.held_at_end == 200 and (.server.env | index("APP_TELEMETRY=0") != null)
            and .load.warmup == "20,3" and .results.steps[0].cpu_usec_per_request > 0' "$dir/$f.json" >/dev/null \
       || { echo "$f.json does not hold the run as the runner sets it up: $(jq -c '{valid, steplab: .steplab.time_wait, env: .server.env, idle: .idle.held_at_end}' "$dir/$f.json" 2>&1)"; return 1; }
   done
+  # The idle client of the run before left its sockets on the idle addresses: the next run waited for them to go (its 200 connections would
+  # collide with them at random), where the gate once let it through.
+  jq -e '.steplab.time_wait.before.waited_s > 0' "$dir/twin-1.json" >/dev/null || { echo "the run after one with idle connections did not wait for their TIME_WAIT sockets: $(jq -c '.steplab.time_wait.before' "$dir/twin-1.json")"; return 1; }
   jq -e '.server.env | index("APP_UNUSED=1") != null' "$dir/twin-1.json" >/dev/null || { echo "the variant's environment did not reach the server"; return 1; }
   jq -e '.server.env | index("APP_UNUSED=1") == null' "$dir/ref-1.json" >/dev/null || { echo "the reference got the variant's environment"; return 1; }
   jq -e '.steplab.variant_index == 1 and .steplab.round == 2 and .steplab.reference == "ref"' "$dir/twin-2.json" >/dev/null || { echo "the run's steplab object is wrong"; return 1; }
