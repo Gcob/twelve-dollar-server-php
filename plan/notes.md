@@ -596,3 +596,32 @@ think?"
 
 **Verdict:** 🔶 Claude's take: the push guard first (it covers the whole repo), and the factory's working files
 private, the decisions, notes, details and results public. A change to D11: Jacob decides.
+
+**Jacob, 18:31:** "Yes, both: guard and a half private factory. What do you think about putting a new git private
+repo besides the project for the factory? This way, we could commit everything. We ask the lab to start writing in
+this private factory too." **18:35:** "go, name it twelve-dollar-server-factory, and you can commit and push."
+
+**Verdict (20:29):** ✅ done.
+
+- **The private repo:** `Gcob/twelve-dollar-server-factory`, cloned next to this one. It holds `run.md`, `run.yml`,
+  `state/`, `reviews/`, `runs/`, `snapshots/` (git-ignored here, reached through symlinks under `plan/`, so paths and
+  the decision board don't change), a `lab/` folder for raw environment diagnostics, and the guard's denylist. Raw
+  exchanges go in neither repo. Their past versions stay in this repo's history: the rule applies from here on.
+- **The guard:** `tools/public-guard.sh` refuses e-mail addresses, home paths and the private denylist's words. It
+  runs before every push (`.githooks/pre-push`, chained by the personal hook through `perso.chainHooksPath`) on the
+  lines a push adds and its commit messages, and in `lab/check.sh` on every tracked file. Without the denylist the
+  push is refused. Its first run found the home paths in `run.md` that the history audit had missed.
+- **D11 changes:** the project manager records it at the next phase.
+
+### 2026-11-22 18:31 · 👀 Observation: the history cleanup of `main`
+
+**Context:** after the leak above, `main` also held 3 short nickname phrases in plan files. Jacob: "please clean
+master and force push, and make sure the git history has no leak at all. Ask the PM to do it."
+
+**What happened:** the project manager rewrote every branch with `git filter-repo --replace-text` (the names lists
+dropped, the phrases replaced by "(names left out)"), and pushed `phase-4-claude` clean. Its own `push --force` on
+`main` was refused by its permission check, so Jacob ran it (20:22, `ebd2855` → `32a030f`).
+
+**Verdict:** ✅ verified at 20:23: the 23 container names return nothing on `origin/main`, `origin/phase-4-claude`
+and `origin/phase-3-claude`, apart from 2 generic service words in the audit note. GitHub may keep the old commits
+reachable by SHA until its support purges them: Jacob's call.
