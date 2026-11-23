@@ -332,6 +332,9 @@ build during a measurement. New for phase 5:
 ## Scope 10: S6, S8 and S9, measured
 
 - **Before any run:** the predictions copied unchanged into `lab/results/<date>-cpu-steps/README.md`; quiet VM.
+- **First, if it fits in 30 minutes (D62):** the idle client (`lab/conns/client.php`) retries the next port when a
+  connect fails with `Cannot assign requested address`, so `--idle-time-wait-max` can rise and the minute's wait after
+  each 60,000-idle run goes; proven by two back-to-back real-shape runs with no wait. Past 30 minutes, keep the wait.
 - **Method (D51, D60):** `steplab.sh` at 24,000 req/s (`s = 0.02`, 60,000 idle, the baseline's rate). Each variant is
   screened with one pair first; only a variant whose pair beats the reference by more than the floor gets its other
   pairs (3 in all, 5 for S9's), interleaved with the reference, judged with scope 6's floor for 24,000: "beyond" when every pair has
@@ -456,6 +459,11 @@ Added on 2026-11-22 at 22:08 with scope 13 (D61), before any of its runs:
     64 KiB receive buffer stays after each idle connection's first request; tzimpel's patch frees it).
 17. **The skeleton on the bench** (its Mac µs at 12,000 times the mean factor): 45 to 75 µs per request, so scope 12
     should read 1.7 to 2.7 times the Mac on the Xeon.
+
+Added on 2026-11-23 at 04:34 from scope 13's factors (3.22 and 3.08), before any x86 run; 13 and 17 stay as written:
+
+18. **x86, from scope 13:** a request costs 2.9 to 3.4 times more on the Xeon than on the Mac, and the skeleton
+    about 88 µs/req on the bench (86 to 90 with each factor alone).
 
 ## Out of scope
 

@@ -281,7 +281,11 @@
   to .8) included, and keeps its limit of 2,500 per address. Scope 6 found the gate blind to the idle client: with the
   default, a second run at the real shape died with `Cannot assign requested address`, and its workaround
   (`--time-wait-max 1`) adds about 58 s per run. Built at the start of scope 13, which runs at that shape next (project
-  manager, phase 5, 2026-11-23, scope 6's hand-back).
+  manager, phase 5, 2026-11-23, scope 6's hand-back). **Revised at 04:34:** one shared limit still failed (the idle
+  client binds a random port per connection and never retries, so one leftover socket can collide): k6's addresses
+  keep 2,500, the idle client's get `--idle-time-wait-max`, default 0 (about a minute's wait after each 60,000-idle
+  run). Scope 10 first tries the root fix, a retry in the idle client, time-boxed to 30 minutes (scope 13's
+  hand-back).
 
 ## History
 
