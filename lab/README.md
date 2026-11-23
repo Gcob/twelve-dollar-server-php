@@ -526,7 +526,7 @@ variant of every step of a request, on purpose: later work measures the alternat
   route, a plain match), `jwt_verify`, `id_validate`, `body_validate`, `feed_query`, `post_query`, `post_insert`, `post_exists`,
   `like_insert`, `feed_json`, `post_json`, `like_json`, `health_json`, `response_json`, `response_error`. Parsing and writing are
   `DiyConnection`'s. The SQL is the spec's reference SQL; every write is its own autocommit transaction, committed before the
-  response is built; the pragmas are the bake-off handler's. Every token is verified on every request, and a token without `exp`
+  response is built (with `APP_GROUP_COMMIT=1`, the writes of a loop turn share one transaction, committed before any of their responses); the pragmas are the bake-off handler's. Every token is verified on every request, and a token without `exp`
   is rejected. `lab/check/app-test.php` covers what the challenge's suite does not (the JWT and body rules, one like per user,
   the feed's order).
 - **`lab_start_app`** (`lab/lib.sh`) is how a harness starts the app on a fresh database: it copies `lab/data/feed.db` **with
@@ -593,6 +593,53 @@ The cost: while the server runs no other process can open the database (a second
 process gets "database is locked"), and `lab/macro/sampler.php`'s `mxFrame` reading has no `-shm` file to read. The locks go when the process
 ends, killed or not: a new server opens the database again (`lab/check/app-variants-test.php` kills a child with SIGKILL and boots again).
 `lab/syscalls.sh --image 8.5 --env APP_LOCKING=exclusive` counts the effect.
+
+### The S9 variants (group commit and a checkpointer)
+
+Two switches on `lab/app/server.php`, read once at boot by `app_variants` (unset or empty is off: the same loop, statements and bytes as
+before). `APP_GROUP_COMMIT` takes `0` or `1`; `APP_CHECKPOINTER` takes a whole number of milliseconds (1 or more). A value that is not one of
+those is refused at boot (exit 1, the message names the variable and the value). When one is set the boot prints
+`app variants: ... group_commit=on checkpointer=1000` (and `checkpointer: 1000 ms (process N)` with the process id).
+
+**Group commit** (`APP_GROUP_COMMIT=1`): the loop runs one turn at a time and the writes of a turn are committed together.
+
+- A write's request (`POST /posts`, `POST /posts/:id/like`) still checks the token, the body and the id at once, and a like still reads
+  `post_exists` at once (a read of that request: nothing is shared with another one). Its statement is queued as a `Closure`, the handler's
+  answer, instead of run.
+- At the end of the turn `DiyServer` hands the queued writes to `app_group_commit()`: one `BEGIN IMMEDIATE`, each write in its own
+  `SAVEPOINT`, one `COMMIT`. A write that throws is rolled back to its savepoint and answers `500 {"error":"internal server error"}`; the
+  others commit. A transaction that cannot start or commit commits nothing and every write of it answers 500. Only then do the responses go
+  out: **a write is never answered before it is committed.** There is no timer: at low load a batch is one write.
+- **Order:** a connection with a write waiting stops parsing and reading until that write's response is in its buffer. Its later requests stay in
+  the read buffer, so a like then a read pipelined on one connection answer in that order and the read sees the like. After the commit the
+  server answers the paused connections, parses what waited behind the write (which may queue the next write: another `BEGIN ... COMMIT`),
+  and goes round again until nothing is queued, so two pipelined writes are both answered with no stall. Reads on other connections are not
+  delayed.
+- **The loop:** `DiyServer::run()` calls `turn()` in a loop (`EventBase::loop(LOOP_ONCE)`, then the flush) instead of `dispatch()`. The group
+  commit needs to know where a turn ends: a zero-timeout timer added during a callback runs only after the next turn's I/O callbacks, so it
+  would flush a turn late.
+- **Telemetry** (`APP_TELEMETRY=1`, only with the switch on): `"group_commit":{"commits":N,"batch_mean":x,"batch_max":y}` in the line, the
+  commits of that second and the writes in each. The flush counts as a callback for `longest_callback_ms`.
+
+**The checkpointer** (`APP_CHECKPOINTER=<ms>`): the server's connection runs with `wal_autocheckpoint = 0`, and a second process
+(`lab/app/checkpointer.php`, started with `proc_open` before the server listens, in the server's cgroup) runs
+`PRAGMA wal_checkpoint(PASSIVE)` on its own connection every `<ms>`. It never blocks the writer or a reader and copies only as far as the oldest
+reader allows. It reads a pipe whose other end is the server: when the server ends, killed or not, the pipe closes and the checkpointer ends
+(a test kills the server with SIGKILL and looks for the process). **It cannot run with `APP_LOCKING=exclusive`**: that process could not open
+the database ("database is locked"), so the server refuses the pair at boot and says why. Group commit and exclusive locking do go together
+(one process commits).
+
+**A trap of ext-event, and why `turn()` is a method of the server:** the loop's callbacks are private methods of `DiyServer`, and ext-event
+calls a callback in the scope of whoever runs the loop. `$base->loop(EventBase::LOOP_ONCE)` called from outside the class (a test, a
+script that reached the base by reflection) calls none of them, with no error: the listening socket stays readable and the call returns
+at once, millions of times a second, with the port silent. `dispatch()` from outside fails the same way. A loop driven from a method
+of the class works. The checks of `lab/check/diy-group-commit-test.php` run a server and its clients in one process through `turn()`.
+
+**Checks:** `diy-group-commit-test.php` (the loop and the order rules, with a stub handler and a stub commit), `app-group-commit-test.php` (the
+switches, the batch, a write that fails inside it through a trigger of the test's database that makes one insert throw, a `DiyServer` with
+the real app in the test's process, and `lab/app/server.php` as a child process: a 201 survives SIGKILL, the checkpointer copies the WAL
+back and ends with the server, the telemetry line has the batches), and `check_challenge_test_passes_with_group_commit_and_checkpointer`
+(the 42 checks with each switch and both).
 
 ## The realistic mode
 

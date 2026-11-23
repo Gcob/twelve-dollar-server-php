@@ -530,7 +530,7 @@ check_s6_switches_reach_the_server() {
   start_app_for_check lab-check-variants 18164 0 APP_FEED_SQL=join APP_FETCH=num APP_PRAGMAS=mmap-off || return 1
   log="$(docker logs lab-check-variants 2>&1)"
   docker rm -f lab-check-variants >/dev/null 2>&1
-  grep -qx 'app variants: feed_sql=join fetch=num pragmas=mmap-off locking=normal' <<<"$log" || { echo "the boot lines do not name the variants: ${log//$'\n'/ | }"; return 1; }
+  grep -qx 'app variants: feed_sql=join fetch=num pragmas=mmap-off locking=normal group_commit=off checkpointer=off' <<<"$log" || { echo "the boot lines do not name the variants: ${log//$'\n'/ | }"; return 1; }
   start_app_for_check lab-check-variants 18164 0 || return 1
   log="$(docker logs lab-check-variants 2>&1)"
   docker rm -f lab-check-variants >/dev/null 2>&1
@@ -559,7 +559,7 @@ check_app_locking_reaches_the_server() {
     log="$(docker logs lab-check-locking 2>&1)"
     # Unset (or the default name) the server says nothing about variants.
     if [ "$value" = exclusive ]; then
-      grep -qx 'app variants: feed_sql=reference fetch=assoc pragmas=default locking=exclusive' <<<"$log" \
+      grep -qx 'app variants: feed_sql=reference fetch=assoc pragmas=default locking=exclusive group_commit=off checkpointer=off' <<<"$log" \
         || { docker rm -f lab-check-locking >/dev/null 2>&1; echo "the boot lines do not name the variant: ${log//$'\n'/ | }"; return 1; }
     else
       ! grep -q 'app variants' <<<"$log" || { docker rm -f lab-check-locking >/dev/null 2>&1; echo "the default names a variant: ${log//$'\n'/ | }"; return 1; }
@@ -596,6 +596,45 @@ check_app_locking_removes_the_lock_calls() {
         || { echo "exclusive: fcntl is not gone: $(jq -c '.syscalls[:4]' "$json")"; return 1; }
     fi
   done
+}
+
+# The DIY server's loop driven one turn at a time, and its group commit, over TCP with the clients in the test's process: a request is served
+# through a hand-driven LOOP_ONCE, two writes of one turn are one commit and are answered after it, a write holds the requests behind it
+# (responses in the order of the requests, two pipelined writes with no stall), Connection: close after a write.
+check_diy_group_commit() {
+  local out ok rc=0
+  out="$(bash "$LAB/run.sh" 8.5 php -d extension=sockets -d extension=event /lab/check/diy-group-commit-test.php 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "diy-group-commit-test.php exited $rc: ${out//$'\n'/ | }"; return 1; }
+  ok="$(grep -c '^ok  ' <<<"$out")"
+  [ "$ok" = 9 ] || { echo "expected 9 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
+  ! grep -q 'FAIL' <<<"$out" || { echo "a case failed: ${out//$'\n'/ | }"; return 1; }
+}
+
+# The S9 switches through the app: the values and their refusals, the writes of a batch each in a savepoint (one that fails rolls back
+# alone and answers 500), a DiyServer in the test's process with the real app (two writes in one turn, a like then a read pipelined, two
+# likes pipelined), and lab/app/server.php as a process (a 201 survives SIGKILL, the checkpointer copies the WAL back and ends with the server,
+# the telemetry line has the batches).
+check_app_group_commit_cases() {
+  local out ok rc=0
+  out="$(bash "$LAB/run.sh" 8.5 php -d extension=sockets -d extension=event /lab/check/app-group-commit-test.php 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "app-group-commit-test.php exited $rc: ${out//$'\n'/ | }"; return 1; }
+  ok="$(grep -c '^ok  ' <<<"$out")"
+  [ "$ok" = 29 ] || { echo "expected 29 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
+  ! grep -q 'FAIL' <<<"$out" || { echo "a case failed: ${out//$'\n'/ | }"; return 1; }
+}
+
+# The challenge's 42 checks against the server with group commit, with the checkpointer, and with both, and no container left behind.
+check_challenge_test_passes_with_group_commit_and_checkpointer() {
+  local out env left rc
+  for env in APP_GROUP_COMMIT=1 APP_CHECKPOINTER=1000 "APP_GROUP_COMMIT=1 APP_CHECKPOINTER=1000"; do
+    rc=0
+    # shellcheck disable=SC2046 # one --env per word on purpose
+    out="$(bash "$LAB/challenge-test.sh" --image 8.5 $(printf -- '--env %s ' $env) 2>&1)" || rc=$?
+    [ "$rc" = 0 ] || { echo "$env: lab/challenge-test.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
+    grep -qx 'passed=42 failed=0' <<<"$out" || { echo "$env: the summary is not 'passed=42 failed=0': ${out//$'\n'/ | }"; return 1; }
+  done
+  left="$(docker ps -a --format '{{.Names}}' | grep '^lab-challenge-' || true)"
+  [ -z "$left" ] || { echo "containers left behind: ${left//$'\n'/ }"; return 1; }
 }
 
 # The feed bench times every case of the S6 variants and none is skipped (each case checked its answer against the reference's), and the
@@ -1735,6 +1774,9 @@ CHECKS=(
   check_challenge_test_passes_with_exclusive_locking
   check_app_locking_reaches_the_server
   check_app_locking_removes_the_lock_calls
+  check_diy_group_commit
+  check_app_group_commit_cases
+  check_challenge_test_passes_with_group_commit_and_checkpointer
   check_soft_limit_closes_the_third_connection
   check_soft_limit_keeps_idle_connections
   check_soft_limit_serves_churn_at_256_fds

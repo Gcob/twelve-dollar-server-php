@@ -13,6 +13,12 @@
 // connection ends once it is written, so a process serves more users than it has descriptors when they rarely send a request.
 // An idle connection is never closed by either limit.
 //
+// Group commit (the constructor's $commit, optional): a request whose handler answers with a Closure is a write waiting for its commit. The
+// loop is then driven one turn at a time (turn(): one EventBase::loop(LOOP_ONCE), then the flush): the flush hands the writes of the turn
+// to $commit, which runs them in one transaction and gives back one response per write, and then each connection that waited gets its
+// response, parses what waited behind it (which may queue another write) and has its events set again. The flush repeats until nothing is
+// queued. Without $commit the loop is dispatch(), as it always was.
+//
 // A server starts with the extensions loaded in this order: `--ext sockets --ext event` (sockets before event, which depends on
 // it; sockets also sets TCP_NODELAY and reads it back).
 
@@ -29,6 +35,8 @@ final class DiyPeer
     public ?Event $write = null;
     public bool $reading = true;
     public bool $writing = false;
+    /** The connection was freed: a write of it that is still queued is committed, and its response goes nowhere. */
+    public bool $closed = false;
 
     /** @param resource $stream */
     public function __construct(public readonly DiyConnection $conn, public readonly mixed $stream)
@@ -48,6 +56,9 @@ final class DiyServer
     /** @var array{object, string}|Closure the loop's callbacks: method names when nothing wraps them, so that a profile names the frame */
     private readonly array|Closure $onReadable;
     private readonly array|Closure $onWritable;
+    /** @var list<array{DiyPeer, Closure}> the writes of this turn that wait for the flush, in the order their requests came */
+    private array $queue = [];
+    private readonly Closure $flusher;
 
     /**
      * @param resource $listener
@@ -57,8 +68,11 @@ final class DiyServer
      *                                 caller); null: nothing is added to the loop
      * @param int|null $softConnLimit when given, a response built while more client connections than this are open says
      *                                `Connection: close` and ends its connection; null: connections end only when the client says so
+     * @param (Closure(list<Closure>): list<array{int, string}>)|null $commit when given, group commit: it receives the writes of one turn (each a
+     *                                Closure that runs its statement and returns its response) and returns their responses, in order,
+     *                                once they are committed; null: handlers answer at once and the loop is dispatch()
      */
-    public function __construct($listener, private readonly ?object $telemetry = null, private readonly ?object $profile = null, private readonly ?int $softConnLimit = null)
+    public function __construct($listener, private readonly ?object $telemetry = null, private readonly ?object $profile = null, private readonly ?int $softConnLimit = null, private readonly ?Closure $commit = null)
     {
         $this->count = new DiyConnectionCount($softConnLimit);
         $telemetry?->watchConnections($this->count);
@@ -68,11 +82,18 @@ final class DiyServer
         $onReadable = [$this, 'onReadable'];
         $onWritable = [$this, 'onWritable'];
         $onAccept = [$this, 'onAccept'];
-        if ($telemetry !== null) {
-            $onReadable = $telemetry->timed($this->onReadable(...));
-            $onWritable = $telemetry->timed($this->onWritable(...));
-            $onAccept = $telemetry->timed($this->onAccept(...));
+        $flusher = $this->flush(...);
+        if ($commit !== null) {
+            $onReadable = [$this, 'onReadableGrouped'];
+            $onWritable = [$this, 'onWritableGrouped'];
         }
+        if ($telemetry !== null) {
+            $onReadable = $telemetry->timed($commit === null ? $this->onReadable(...) : $this->onReadableGrouped(...));
+            $onWritable = $telemetry->timed($commit === null ? $this->onWritable(...) : $this->onWritableGrouped(...));
+            $onAccept = $telemetry->timed($this->onAccept(...));
+            $flusher = $telemetry->timed($flusher);
+        }
+        $this->flusher = $flusher;
         $this->onReadable = $onReadable;
         $this->onWritable = $onWritable;
         $this->listen = new Event($this->base, $listener, Event::READ | Event::PERSIST, $onAccept, $listener);
@@ -88,7 +109,48 @@ final class DiyServer
     {
         $this->telemetry?->start($this->base);
         $this->profile?->start($this->base);
-        $this->base->dispatch();
+        if ($this->commit === null) {
+            $this->base->dispatch();
+            return;
+        }
+        while ($this->turn()) {
+        }
+    }
+
+    /**
+     * One turn of the loop, then the flush of the writes it queued. Blocks until an event is ready. False when the loop has nothing left to
+     * wait for.
+     *
+     * Why a method of this class: the callbacks of the loop are private methods, and ext-event calls them in the scope of whoever runs the
+     * loop. Driven from outside the class, EventBase::loop() calls none of them, the listening socket stays readable and the call returns
+     * at once, millions of times a second, with the port silent.
+     */
+    public function turn(): bool
+    {
+        $more = $this->base->loop(EventBase::LOOP_ONCE);
+        if ($this->queue !== []) {
+            ($this->flusher)();
+        }
+        return $more;
+    }
+
+    /** Commits the queued writes in one batch and answers their connections, until no connection has a write queued. */
+    private function flush(): void
+    {
+        while ($this->queue !== []) {
+            $batch = $this->queue;
+            $this->queue = [];
+            $writes = [];
+            foreach ($batch as [, $write]) {
+                $writes[] = $write;
+            }
+            $responses = ($this->commit)($writes);
+            foreach ($batch as $i => [$peer]) {
+                if (!$peer->closed) {
+                    $this->settleGrouped($peer, $peer->conn->resume($responses[$i]));
+                }
+            }
+        }
     }
 
     /** @param resource $listener */
@@ -140,6 +202,25 @@ final class DiyServer
         $this->settle($peer, $peer->conn->onWritable());
     }
 
+    private function onReadableGrouped($fd, int $what, DiyPeer $peer): void
+    {
+        $this->settleGrouped($peer, $peer->conn->onReadable());
+    }
+
+    private function onWritableGrouped($fd, int $what, DiyPeer $peer): void
+    {
+        $this->settleGrouped($peer, $peer->conn->onWritable());
+    }
+
+    /** settle(), after queueing the write the connection deferred, if any. */
+    private function settleGrouped(DiyPeer $peer, bool $alive): void
+    {
+        if ($alive && ($write = $peer->conn->takePending()) !== null) {
+            $this->queue[] = [$peer, $write];
+        }
+        $this->settle($peer, $alive);
+    }
+
     /** Frees a finished connection, or turns its events on and off to what it now waits for. */
     private function settle(DiyPeer $peer, bool $alive): void
     {
@@ -148,6 +229,7 @@ final class DiyServer
             $peer->read?->free();
             $peer->write?->free();
             $peer->read = $peer->write = null;
+            $peer->closed = true;
             $peer->conn->close();
             $this->count->closed();
             if ($this->acceptPaused) {
