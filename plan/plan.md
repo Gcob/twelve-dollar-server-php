@@ -1,25 +1,67 @@
 # $12 server challenge in PHP
 
-**Status:** 🏁 Phase 4 delivered and merged · no question open · phase 5 waits for your go · approved on 2026-11-21 · snapshot
-2026-11-21-0920 · **Round:** 3
-**Since your last read:** Q11 is answered (A, D49): CPU per request and the profile judge phase 5's steps. Phase 4
-is delivered and merged. The skeleton holds **at least 23,386 req/s, about
-221,000 users at 9.45**, with 60,000 idle connections, at **27.15 µs of CPU per request** (median of 3 five-minute
-holds, p99 28 ms, arm64, not a score). The rate is a floor set by the harness (D47), and one process caps the real
-bench near 71,000 users whatever the CPU, so S1's fd wall comes first in phase 5. The blind review found your
-container names in two result files on the public branch: the history is cleaned (Q12), you force-pushed `main`,
-and the branch is merged. Progress in [run.md](run.md).
-**Project:** this repo, `plan/` · **Submission:**
-`submissions/php-<runtime>-Gcob/` · **Jira:** none
+**Status:** 🔵 Phase 5a running (the step lab, first run) · approved on 2026-11-21 · snapshot 2026-11-21-0920 ·
+**Round:** 4
+**Since your last read:** phase 5 started at 20:48 on your go. Its plan is
+[details/phase-5.md](details/phase-5.md): 12 scopes, predictions written before any measurement. S1's fd wall
+first, with the io_uring spike beside it: its gate passes (the bench runs submissions with systemd, not Docker, D52).
+Then SQLite's feed query, the write and durability. I split the step lab in two runs (Q13). Progress in
+[run.md](run.md).
+**Project:** this repo, `plan/` · **Submission:** `submissions/php-<runtime>-Gcob/` · **Jira:** none
 
 ## 👉 Your turn
 
 > **Answer freely:** a letter or `ok`, your own choice (`other: …`), `?` if it's unclear, or
 > `badly framed: …` if an option is missing or the question doesn't hold.
 
-Nothing for you right now. Phase 5 (the step lab) waits for your go; its plan starts from D47 to D49 and
-[notes.md](notes.md) (20:39: the x86 calibration on your AWS account). Answered questions:
-[questions/](questions/), the latest in [2026-11-22-2042.ronde-3.md](questions/2026-11-22-2042.ronde-3.md).
+Two questions, neither blocking now: the run goes on with the hypothesis written under each.
+
+### ❓ Q13/14 [run, scope] : the step lab in two runs, 5a now and 5b next?
+
+**Not blocking:** coded as A. The whole step lab (S1 to S9, the spike, the PHP version, x86) would be about 20
+scopes, the longest run so far by far, with the quiet VM gating every measuring scope (D15).
+
+- **A.** 5a now (12 scopes): S1 (S1-d, S1-b), the io_uring spike, a syscall count, S6 (the feed query), S8 (the
+  write), S9 (group commit, the checkpointer), the chosen variants together with their held rate, x86 if you say go.
+  5b next: S7 (JSON), S2 (the parser), the event loop, S4, S3, S5, the PHP version, the FFI SQLite driver.
+  **Aims at:** the two walls and 75 % of the profile first, a stop for you after them.
+  **For:** the planning session's default; 5b's steps are 21 % of the CPU together; the spike's FFI numbers tell
+  5b whether an FFI SQLite driver is worth building.
+  **Against:** one more stop and one more held-rate run (5b's end).
+- **B.** One run for everything.
+  **Aims at:** no stop in between.
+  **Against:** about 20 scopes, a day or more, and the order of the lower steps can't use what 5a learns.
+
+**Confidence:** A 85 % · B 15 %
+
+**Recommendation:** A.
+
+**Flips if:** you'd rather see every step done before you look at the results: B.
+
+**Answer:**
+
+### ❓ Q14/14 [run, aws] : go for the x86 calibration on your AWS account (scope 12)?
+
+**Not blocking until scope 12**, the last one (D55). One `c5.2xlarge` (8 vCPUs, a Xeon like the bench's family,
+about 0.40 USD an hour, `m5.2xlarge` if there's no capacity) running the lab as the Mac does: the server on one
+vCPU, k6 on others. About 2 hours, so about 1 USD, plus a few cents of disk. Nothing is created before your go.
+
+**What you'd do:** attach the temporary policy
+`../twelve-dollar-server-factory/aws/phase-5-x86-calibration-policy.json` to your personal CLI user (least
+privilege: that region, those two instance types, resources tagged `project=twelve-dollar-server`), tell me the CLI
+profile name to use (it stays in the factory), and remove the policy when I say the instance is gone.
+
+- **A.** Go, when scope 12 comes.
+- **B.** Not in 5a: the calibration moves to phase 7, next to the full-size run.
+
+**Recommendation:** A: the x86 factor says which wall binds on the bench's hardware, and 5b's order depends on it.
+
+**Flips if:** you want one AWS session only for the whole project: B.
+
+**Answer:**
+
+Answered questions: [questions/](questions/), the latest in
+[2026-11-22-2042.ronde-3.md](questions/2026-11-22-2042.ronde-3.md).
 
 ## 🤝 Essentials
 
@@ -44,13 +86,34 @@ step's choice backed by a measurement.
 | 2 | Lab setup       | Seed, container, PHP 8.3 to 8.6 (D8), micro and macro harnesses | A no-op Swoole server gives a µs/req number             |
 | 3 | Runtime bake-off | Swoole, Workerman, DIY (D6), same handler                  | One table: µs/req, max connections, RSS per connection  |
 | 4 | Realistic baseline | Skeleton of the 5 endpoints, realistic mode, baseline, profile (D27) | The baseline and its profile, Q10 answered |
-| 5 | Step lab        | Each step S1 to S9, its variants measured, in the profile's order | Each step has a chosen variant and its numbers          |
+| 5 | Step lab        | Each step S1 to S9, its variants measured, in the profile's order (5a, 5b: D50) | Each step has a chosen variant and its numbers          |
 | 6 | Submission      | The chosen variants together                                | `test/run.sh` passes 42/42                              |
 | 7 | Score           | `bench/load.js` ramps, x86 calibration                      | More than 71,000 held for 5 minutes                     |
 | 8 | Submit          | The PR to the challenge repo                                | CI green                                                |
 
-**Decisions:** 49 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
+**Decisions:** 55 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
 is a prediction we re-measure, not an answer.
+
+### Phase 5a scopes (running)
+
+Detail, seams, cases and the predictions in [details/phase-5.md](details/phase-5.md). One commit each, on branch
+`phase-5-claude` (D14). Scopes 6, 10, 11 and 12 measure, so they need a quiet Docker VM (D15). Each variant is a
+switch: unset, the server is phase 4's skeleton.
+
+| #  | Commit                                                                  | Done when (short)                                                        |
+|----|-------------------------------------------------------------------------|--------------------------------------------------------------------------|
+| 1  | `feat(lab): the step lab's A/B runner and a syscall count`              | interleaved runs with a median per variant and a noise verdict; syscalls per request |
+| 2  | `feat(app): Connection: close past a soft connection limit`             | S1-d: closes past the limit, 42/42, more connections over time than fds  |
+| 3  | `feat(app): several processes on SO_REUSEPORT`                          | S1-b: 42/42 with 2 workers, both answer                                  |
+| 4  | `feat(lab): FFI micro benches for an io_uring loop`                     | ns per FFI op, JIT on and off; the spike's stop rule read                |
+| 5  | `feat(lab): a no-op server on an io_uring ring through FFI`             | 80,000 connections in one process, 0 mismatches, a µs/req; or a stop and why |
+| 6  | `docs(lab): S1 and the io_uring spike, measured`                        | the cost of a reconnect, S1-b's cost, the fd-wall run, the chosen S1     |
+| 7  | `feat(app): feed query, fetch and pragma variants`                      | each variant 42/42, ns per feed                                          |
+| 8  | `feat(app): response write and syscall variants`                        | each variant 42/42, its syscall count                                    |
+| 9  | `feat(app): group commit per loop turn and a background checkpointer`   | one commit per turn, responses after it, a write survives `kill -9`      |
+| 10 | `docs(lab): S6, S8 and S9, measured`                                    | each variant's µs/req against the skeleton's, a chosen variant per step  |
+| 11 | `docs(lab): the chosen variants together`                               | the new µs/req, profile and held rate                                    |
+| 12 | `docs(lab): the x86 calibration on EC2`                                 | the x86 factor, only with your go (Q14)                                  |
 
 ### Phase 4 scopes (delivered)
 
@@ -96,8 +159,8 @@ Detail, seams and predictions in [details/phase-2.md](details/phase-2.md). One c
 
 ### Out of scope
 
-- **io_uring and reading SQLite's B-trees directly:** not reachable from PHP without writing C. FFI to `libsqlite3`
-  stays a variant of S6.
+- **Reading SQLite's B-trees directly:** not reachable from PHP without writing C. FFI to `libsqlite3` stays a
+  variant of S6 (5b). io_uring came back in through PHP's FFI: phase 5a's spike, up to a no-op server (D52).
 
 ## 🤖 For Claude
 
@@ -112,5 +175,6 @@ You don't need to read this part: it's the index of the execution details, in `d
 - [Phase 2](details/phase-2.md): the lab scopes, their seams, and the prediction for the first number.
 - [Phase 3](details/phase-3.md): the bake-off scopes, their seams and cases, and the predictions.
 - [Phase 4](details/phase-4.md): the realistic baseline's scopes, their seams and cases, and the predictions.
-- [Phase 2's run](runs/phase-2/run.md) and [phase 3's run](runs/phase-3/run.md): progress, reviews and retro, with
+- [Phase 5](details/phase-5.md): the step lab's first run (5a): scopes, seams, cases and the predictions.
+- [Phase 2's run](runs/phase-2/run.md), [phase 3's](runs/phase-3/run.md) and [phase 4's](runs/phase-4/run.md): progress, reviews and retro, with
   their `state/`.

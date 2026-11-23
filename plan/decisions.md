@@ -196,6 +196,33 @@
   `s = 0.02` it is k6's floor, not the server's (D47), and one process caps the real bench near 71,000 users whatever
   the CPU. No second load generator and no change to the pass rule (Jacob, 2026-11-22 20:42,
   [Q11](questions/2026-11-22-2042.ronde-3.md)).
+- **D50:** the step lab is split in two runs. **5a** (this run): S1 (S1-d and S1-b), the io_uring spike, a syscall
+  count per request, S6, S8 and S9, the chosen variants together with their held rate (D49), and the x86 calibration
+  if Jacob says go. **5b:** S7, S2, the event loop, S4, S3, S5, the PHP version and the FFI driver to `libsqlite3`
+  (the spike's FFI numbers come first). 5a holds the walls and 75 % of the profile; 12 scopes is already the longest
+  run so far ([Q13](plan.md), `run`, project manager, phase 5, 2026-11-22).
+- **D51:** the step lab compares variants with `lab/steplab.sh`: fresh 60 s realistic runs, interleaved (A B A B A B),
+  60,000 idle connections, no per-second probes, telemetry off, one offered rate per step (12,000 req/s for S1, so that
+  a reconnect on every request fits in the CPU; 24,000 for the CPU steps, the baseline's); a variant's number is the
+  median µs/req of its runs, and a difference counts only beyond the spread of the reference's own runs (the
+  baseline's unprofiled pair differed by 5 %). 3 runs per variant, 5 when a difference is within twice the spread
+  (project manager, phase 5, 2026-11-22).
+- **D52:** the io_uring spike passes its gate: the bench builds and starts a submission on the box itself, with
+  systemd as user `deploy` (`LimitNOFILE=65535`, `CAP_NET_BIND_SERVICE`), not in Docker (`LEADERBOARD.md`, "How each
+  entry is scored"), and more than 30 io_uring entries are scored there. In the lab, only an io_uring server runs with
+  Docker's seccomp filter off (`--security-opt seccomp=unconfined`), which is closer to the bench than a custom
+  profile (project manager, phase 5, 2026-11-22).
+- **D53:** S1-d's shape: `APP_SOFT_CONN_LIMIT=<n>`; a response built while more than `n` client connections are open
+  carries `Connection: close`, and the server closes that connection once the response is written. An idle connection
+  is never closed (S1-c scored 0). When `accept` fails for lack of fds, the listening event pauses until a connection
+  closes, instead of spinning (project manager, phase 5, 2026-11-22).
+- **D54:** syscalls are counted with `strace -c -f` attached from a sidecar container during a fixed low-rate run
+  (2,000 req/s), divided by the requests of the same window. Only the counts are kept: strace slows the server, so its
+  times say nothing about the server's (project manager, phase 5, 2026-11-22).
+- **D55:** the x86 calibration runs the lab as the Mac does on one `c5.2xlarge` (`m5.2xlarge` if none), the server on
+  one vCPU whose hyperthread sibling stays idle, k6 on the others: µs/req of the same two configurations on the Xeon and
+  on the Mac at one rate. Nothing is created before Jacob's go; the temporary IAM policy waits in the factory
+  ([notes.md](notes.md) 20:39; project manager, phase 5, 2026-11-22).
 
 ## History
 
