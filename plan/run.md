@@ -2,14 +2,12 @@
 
 **Pace:** 🟢 full · 5-hour 10 % · weekly 29 % at 17:35 · 5-hour resets 20:20 · away
 
-**Status:** 🔵 Running
-**Progress:** step 5/7, history cleaned and pushed, `blind-reviewer` pass 2 next · started 2026-11-22 10:50
-**Since your last read:** scope 5 done: the baseline holds 23,386 req/s (about 221,000 users at 9.45) at 27.15 µs
-of CPU per request, p99 28 ms, 60,000 idle held (median of 3 holds; arm64, not a score). The rate is a harness floor at
-`s = 0.02`, the server 63 % busy (D47). Profile: SQLite 52 %, write 20 %, JSON 10 %. 6 of 12 predictions held.
-Q10: the stalls are outside the PHP code. Two harness fixes (`0e7f604`, `52e9792`). Results in
-`lab/results/2026-11-22-realistic-baseline/README.md` on the branch.
-**👉 Your turn:** Q11 in plan.md, not blocking. The history cleanup is done (below).
+**Status:** 🏁 Delivered, your review
+**Progress:** delivered at 19:05 · started 2026-11-22 10:50 · 8 h 15
+**Since your last read:** phase 4 is delivered on `phase-4-claude` (pushed, clean). Both final reviews are OK.
+The baseline: at least 23,386 req/s (221,002 users, CPU-equivalent), 27.15 µs of CPU per request, p99 28 ms. The
+history is cleaned of the container names; only the force push of `main` is left for you. See "Delivery" below.
+**👉 Your turn:** W3, force-push the cleaned `main` (command in "Delivery"), then review and merge. Q11, not blocking.
 
 ## Steps
 
@@ -20,8 +18,8 @@ Q10: the stalls are outside the PHP code. Two harness fixes (`0e7f604`, `52e9792
 | 2   | Questions         | done    | 17:40 | 17:40 | none open: scope 5's two settled as D47 |
 | 3   | Lab suite         | done    | 17:50 | 17:55 | 59/59 ok on `7d6281a`, no flake (other containers back at 17:54 during it) |
 | 4   | `pr-reviewer`     | done    | 17:55 | 18:04 | OK at pass 1: no 🔴 or 🟠, 9 🟡 (7 being fixed), 1 plan question (Q11) |
-| 5   | `blind-reviewer`  | running | 18:09 |     | NOT_OK at pass 1 (1 🔴, 2 🟠), fixed 18:47; history cleaned 18:50; pass 2 next |
-| 6   | Delivery          | to do   |       |     |        |
+| 5   | `blind-reviewer`  | done    | 18:09 | 19:02 | NOT_OK at pass 1 (1 🔴, 2 🟠), fixed 18:47; history cleaned; OK at pass 2 |
+| 6   | Delivery          | done    | 19:02 | 19:05 | branch pushed; `main` force push left to Jacob (W3) |
 
 ## Scopes
 
@@ -124,3 +122,164 @@ no leak at all." One-time exception to "never push --force".
 - **Not rewritten:** the author email in commit metadata is your own git config (personal address), as asked.
 - **GitHub** may keep old commits reachable by their SHA for a while; only GitHub Support can purge them: your call.
 
+### `blind-reviewer`, pass 2 · 19:00 to 19:02 · OK
+
+**Report:** [BLIND-2026-11-22-1905.md](reviews/BLIND-2026-11-22-1905.md). 🔴 1, 🟠 2 and 🟠 3 closed, nothing new. It
+noted that GitHub's `main` still holds the old history until your force push (W3).
+
+## Retro
+
+Sorted from the developers' and reviewers' retros (`state/developer.md`, `state/blind-reviewer.md`) and mine.
+
+- **🔴 The leak came from raw results nobody read.** Scope 2 calibrated on the busy VM, and the harness wrote the
+  other containers' names into the JSON. The rule "no private details" was checked on code and prose, never on
+  449,000 lines of JSON. **Now:** the harnesses write a count only, and `check_results_hold_no_container_names`
+  scans every committed JSON. **Still open:** the `.txt` run outputs aren't scanned. **For phase 5's plan:** a lint
+  over every committed file of `lab/results/` before a push, and a history-cleanup recipe that ends with
+  `git ls-remote` and `git for-each-ref` (pass 2 found `origin/main` that way).
+- **A long run was never smoke-tested before the measuring scope.** k6 keeps about 190 bytes a request, and a long
+  run passes jq's argument limit: two 21-minute staircases were lost (about 45 minutes). **For phase 5's plan:** a
+  15 to 20 minute smoke at the real shape in the scope that builds the harness.
+- **The plan didn't say how far `s` may fall, or that the held rate then belongs to the rule, not the server.** D47
+  settled it after the fact; Q11 asks what phase 5 judges on.
+- **The per-second probes were never switchable or priced.** `--no-series` now exists; its first hold is phase 5's
+  first measurement, on a quiet VM.
+- **`lab/check.sh` and a manual `lab/run.sh` disturb each other** (a 97 % step at low rate), and waiters mistake an
+  old log for a new one: a lock and a done marker would help (scopes 4 and 6). Not done.
+- **What worked:** predictions before measuring (6 of 12 held, and the misses taught the most: the server is 2 to 3
+  times cheaper than predicted); the results check (scope 6) kept every README equal to its script through two
+  rounds of review fixes; the reviews caught four over-readings in the baseline README.
+
+## Delivery
+
+**Since the snapshot:** decisions D26 to D47 came from this phase.
+
+- D26 to D30 (Jacob's answers): 8.6 micro only, realistic first, Q10 inside the realistic runs, rule 5 (no shared
+  read, group commit allowed), the two S9 variants.
+- D31 to D37 (the plan): the 97 % rule, the skeleton opens `SQLITE_PATH`, Excimer, telemetry, DIY on 8.5 arm64,
+  sizes and holds, the results check (scope 6).
+- D38 to D44 (the plan review): k6's own source addresses, cap and scale from calibration, 9.45 users per req/s, live
+  aggregation, one seed-copy function, Excimer's calibration, the stream guard.
+- D45 to D47 (during the run): the generator-bound line at 80 %, `s` lowered when the knee is above the cap and a 6 s
+  lag gate, the held rate as a harness floor (µs per request carries the step lab).
+
+Open `run` question: **Q11** (what the step lab judges on): the plan had "the highest load held"; the branch delivers
+it as a floor ("at least 23,386 req/s at `s = 0.02`").
+
+**3 places to look:**
+
+1. `lab/results/2026-11-22-realistic-baseline/README.md:393`, "Reading the results", down to "The step lab's order"
+   (`:476`): the baseline, its limits (probes on, a harness floor) and the order phase 5 starts from (the fd wall
+   first).
+2. `lab/macro/aggregate-lib.php:254`: the 97 % rule that judges every step, and with it every held rate of this phase.
+3. `lab/profile/fold-lib.php:116`: the fold now classifies by the leaf frame; the step lab's ranking rests on it.
+
+**Expected answers:** none: no `FIXME(pending)` in the branch.
+
+**What was done:**
+
+- The challenge app on the DIY loop (42/42 of the challenge's tests), and a realistic mode: the bench's own journey
+  with scaled think time, 60,000 idle connections, live per-second histograms, cold starts, telemetry.
+- Excimer profiles folded into the steps S1 to S9 per endpoint, calibrated (JIT on and off).
+- The baseline: **at least 23,386 req/s held (221,002 users at 9.45, CPU-equivalent), 27.15 µs of CPU per request,
+  p99 28 ms**, median of 3 five-minute holds on a quiet VM; SQLite 52 % of the CPU, the write 20 %, JSON 10 %; Q10
+  answered; 6 of 12 predictions held. One process caps the real bench near 71,000 users whatever its CPU: S1's fd
+  wall comes first in phase 5.
+
+**Final reviews:** `pr-reviewer` OK ([report](reviews/PR-2026-11-22-1755.md)) · `blind-reviewer` OK at pass 2
+([pass 1](reviews/BLIND-2026-11-22-1809.md), [pass 2](reviews/BLIND-2026-11-22-1905.md)).
+
+**History cleanup:** done (section above). One step left for you: the force push of `main` (W3). Until then,
+`origin/main` holds the old history, and the plan commits since 18:40 wait locally (a normal push would be refused). The lease makes it fail if anyone
+pushed to `main` since:
+
+```bash
+git -C /Users/jacobproulx/www-perso/twelve-dollar-server-challenge push --force-with-lease=main:ebd2855a434432065f7ac9df7a74c68fab085019 origin main
+```
+
+**PR description** (ready to paste):
+
+```markdown
+**Résumé**
+
+J'ajoute le squelette de l'app du défi (les 5 endpoints sur la boucle DIY), un mode de charge qui rejoue le parcours du banc avec 60 000 connexions inactives, un profil par étape, et le premier baseline mesuré sur le Mac (arm64, pas un score).
+
+**Décisions**
+
+- **Le baseline ne compte que sur le DIY, PHP 8.5, arm64 :** c'est le serveur le moins cher du bake-off, et le Mac n'est pas la machine du banc, donc les utilisateurs mappés ne sont pas un score.
+- **Think time réduit (`s = 0,02`) et règle des 97 % :** quelques milliers de VUs doivent faire le débit de dizaines de milliers. La latence pèse alors 1/s fois plus dans la boucle d'un VU, et les seuils du banc laisseraient passer des charges bien au-delà de la saturation : un palier passe seulement s'il atteint aussi 97 % du débit offert.
+- **Le débit tenu est un plancher du harnais :** à `s = 0,02`, le serveur tient au moins 23 386 req/s avec son CPU à 63 %, et la règle échoue sur le surcoût de k6. Le labo d'étapes se mesure en µs de CPU par requête (27,15), pas en débit.
+- **9,45 utilisateurs par req/s en régime stable :** le 10,8 du classement inclut les montées et les descentes du banc.
+- **Chaque requête fait ses lectures :** aucune lecture partagée entre requêtes (règle du défi). Le regroupement des écritures reste permis, pour plus tard.
+- **Les sondes à la seconde restent actives par défaut :** le p99 et les stalls du baseline sont mesurés avec elles. `--no-series` les coupe, pour la prochaine mesure.
+
+**Changements**
+
+- `lab/app/` : `GET /health`, `GET /feed`, `GET /posts/:id`, `POST /posts`, `POST /posts/:id/like`, JWT HS256 écrit à la main, SQL de référence, `json_encode`. `lab/challenge-test.sh` passe la suite du défi telle quelle (42 sur 42).
+- `lab/servers/diy-server.php` : la boucle DIY, sortie de `bake-diy.php` et partagée avec l'app. Les callbacks sont des méthodes nommées pour que le profil les nomme. `bake-diy.php` en dépend et sa conformité passe, mais ses anciens chiffres ne se reproduisent qu'à leur commit.
+- `lab/realistic.sh` et `lab/macro/k6/realistic.js` : une copie de `bench/load.js` avec seulement deux changements (les `sleep` mis à l'échelle, les options lues de l'environnement). Une vérification compare le fichier au banc.
+- `lab/macro/aggregate*.php` : le flux CSV de k6 dans un FIFO, des histogrammes par seconde et par endpoint, rien de brut sur disque, une garde sur le lag de l'agrégateur (6 s par défaut) et sur la mémoire de k6.
+- `--idle` (60 000 connexions tenues, vérifiées au début et à la fin), `--cold` (copie évincée du cache de pages), séries à la seconde (CPU, `Pss_Anon`, `memory.current`, WAL, fautes de pages), télémétrie `APP_TELEMETRY=1`, `--no-series`.
+- Excimer 1.2.6 dans l'image (une couche à part, sha256 épinglé ; il ne compile pas sur PHP 8.6) et `lab/profile/fold.php`, qui replie les piles en S1 à S9 par endpoint d'après la fonction feuille. Une feuille inconnue tombe dans « unclassified ».
+- `lab/macro.sh --fresh-db --cold --per-second` : le même squelette et les mêmes séries pour le `posts.js` du bake-off.
+- Les harnais n'écrivent plus que le nombre des autres conteneurs, jamais leurs noms, et `lab/check.sh` vérifie que chaque README de résultats contient le bloc exact de son `summarize.sh`.
+
+**Preuves**
+
+- `bash lab/challenge-test.sh --image 8.5` : `passed=42 failed=0`, deux fois de suite.
+- `bash lab/check.sh` : 61 sur 61 `ok` sur `989f932`.
+- Le baseline (médiane de 3 holds de 5 minutes, 60 000 connexions inactives, VM calme, `other_containers: 0`) : au moins 23 386 req/s à `s = 0,02` (221 002 utilisateurs à 9,45, en équivalent CPU : un seul processus tient environ 65 500 connexions, donc le vrai banc plafonne près de 71 000), 27,15 µs de CPU par requête, p99 de 28 ms.
+- Le profil : SQLite 52 %, l'écriture 20 %, le JSON 10 %, la lecture et l'analyse 8 %. 6 prédictions sur 12 tenues.
+- Q10 : sur les 53 secondes au-dessus de 100 ms des trois holds, aucune n'a un callback aussi long que le stall.
+- Pour valider soi-même : `bash lab/results/2026-11-22-realistic-baseline/summarize.sh | diff - <(sed -n '/^<!-- BEGIN summarize -->$/,/^<!-- END summarize -->$/p' lab/results/2026-11-22-realistic-baseline/README.md | sed '1d;$d')` n'imprime rien.
+
+**Ce qu'on a appris**
+
+- Le serveur coûte 2 à 3 fois moins cher par requête que prévu : 27 µs au lieu de 50 à 90.
+- Avec un seul processus, le mur des descripteurs de fichiers arrive avant le CPU : c'est la première étape du labo.
+- Les résultats bruts doivent passer la même vérification de confidentialité que le code : c'est là que la fuite s'est cachée.
+
+**Risque du merge**
+
+- **Porte :** à double sens : du code de labo, rien d'écrit hors du dépôt.
+- **Rayon d'impact :** faible. Le bake-off partage `diy-connection.php` et la boucle DIY avec le squelette : sa conformité et ses vérifications passent, mais ses chiffres ne se reproduisent qu'à leur commit d'origine.
+
+**Notes de déploiement**
+
+Reconstruire les images pour avoir Excimer : `bash lab/build.sh 8.5` (et `8.3`, `8.4` au besoin). L'image `php-lab-tools:1` se construit au premier `challenge-test.sh`. Aucune variable d'environnement ni migration.
+```
+
+**The commits:**
+
+```bash
+git -C /Users/jacobproulx/www-perso/twelve-dollar-server-challenge log --oneline main..phase-4-claude
+```
+
+**Review** (in PhpStorm: right-click the branch > *Compare with Current*, or on the command line):
+
+```bash
+git -C /Users/jacobproulx/www-perso/twelve-dollar-server-challenge diff main...phase-4-claude -- . ':!lab/results/*/*.json'
+```
+
+**Minor items left aside:**
+
+- `pr-reviewer` 🟡 8: the `cold_json` jq block copied in two harnesses; 🟡 9: the 3 % + 0.02 ms tolerance of the
+  aggregator against k6.
+- `blind-reviewer` 🟡 4: a dead aggregator would block the FIFO's last write; 🟡 5: two staircase steps can round to
+  the same VUs; 🟡 8: D numbers in the predictions (a verbatim copy); 🟡 11: `trim()` keeps a non-breaking space.
+
+**Merge and close** (after W3; `main` has plan commits, so a merge commit, like phase 3):
+
+```bash
+git -C /Users/jacobproulx/www-perso/twelve-dollar-server-challenge merge --no-ff phase-4-claude && git -C /Users/jacobproulx/www-perso/twelve-dollar-server-challenge worktree remove /Users/jacobproulx/.claude/worktrees/twelve-dollar-server-php/phase-4-claude && git -C /Users/jacobproulx/www-perso/twelve-dollar-server-challenge branch -d phase-4-claude
+```
+
+Useful variants:
+
+```bash
+git cherry-pick <sha>          # take one commit
+git worktree remove --force /Users/jacobproulx/.claude/worktrees/twelve-dollar-server-php/phase-4-claude   # throw it all away
+git branch -D phase-4-claude
+```
+
+Or the PR loop: ask for the branch's PR (skill `pr-loop`) instead of the merge.

@@ -1,13 +1,13 @@
 # $12 server challenge in PHP
 
-**Status:** 🔵 Phase 4 running (realistic baseline) · 1 question open (not blocking) · approved on 2026-11-21 · snapshot
+**Status:** 🏁 Phase 4 delivered, your review (force push of `main` first) · 1 question open (not blocking) · approved on 2026-11-21 · snapshot
 2026-11-21-0920 · **Round:** 3
-**Since your last read:** the baseline is measured (scope 5): the skeleton holds **23,386 req/s, about 221,000
-users at 9.45**, with 60,000 idle connections, at **27.15 µs of CPU per request** (median of 3 five-minute holds, p99
-28 ms, arm64 on the Mac, not a score). That rate is a floor set by the harness, not the server (its CPU is 63 % busy
-there, D47). SQLite is 52 % of the CPU, the response write 20 %, JSON 10 %. 6 of 12 predictions held: the server is
-2 to 3 times cheaper than predicted. The measuring is over: your containers can come back. Progress in
-[run.md](run.md).
+**Since your last read:** phase 4 is delivered (🏁 in 👉). The skeleton holds **at least 23,386 req/s, about
+221,000 users at 9.45**, with 60,000 idle connections, at **27.15 µs of CPU per request** (median of 3 five-minute
+holds, p99 28 ms, arm64, not a score). The rate is a floor set by the harness (D47), and one process caps the real
+bench near 71,000 users whatever the CPU, so S1's fd wall comes first in phase 5. The blind review found your
+container names in two result files on the public branch: the history is cleaned (Q12), and only the force push of
+`main` is left for you. Progress in [run.md](run.md).
 **Project:** this repo, `plan/` · **Submission:**
 `submissions/php-<runtime>-Gcob/` · **Jira:** none
 
@@ -56,6 +56,27 @@ phase-4-claude`); I push it again, cleaned, after your answer.
 deleted the remote branch; the project manager rewrites the branch locally (no commit holds the names, `07808e7`
 included), checks every commit with `git log -S`, and pushes the clean branch again (no force needed: the remote
 branch is gone).
+
+### 🏁 Phase 4 delivered at 19:05 (run)
+
+**What's established:**
+
+- 20 commits on `phase-4-claude`, pushed clean: the app on the DIY loop (42/42 of the challenge's tests), the
+  realistic mode (60,000 idle, per-second series, cold, telemetry, `--no-series`), Excimer folded into S1 to S9, the
+  results check, and the baseline in `lab/results/2026-11-22-realistic-baseline/`. `lab/check.sh` 61/61.
+- **The baseline:** at least 23,386 req/s at `s = 0.02` (221,002 users at 9.45, CPU-equivalent: one process caps the
+  real bench near 71,000), 27.15 µs of CPU per request, p99 28 ms with the probes on. SQLite 52 % of the CPU, the
+  write 20 %, JSON 10 %. 6 of 12 predictions held.
+- Both final reviews OK (`blind-reviewer` at pass 2). The history is cleaned of the container names.
+
+**What I need from you:**
+
+- [ ] 🔴 **Force-push the cleaned `main`** (W3): my push was refused by the permission check. Command in
+  [run.md](run.md), "Delivery". Until then, `origin/main` holds the old history, and the plan commits since 18:40
+  can't be pushed.
+- [ ] **Review and merge `phase-4-claude`:** where to look, the PR description and the commands are in
+  [run.md](run.md), "Delivery".
+- [ ] **Q11** below, before phase 5's plan.
 
 ### Q11/12 [run, step-lab-metric] : the held rate is the harness's floor: is CPU per request enough to judge phase 5?
 

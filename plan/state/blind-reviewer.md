@@ -1,7 +1,8 @@
 # Blind reviewer: phase 4
 
-**State:** first review done on `phase-4-claude` at `ea30389` (base `0f7b594`): NOT_OK, 1 🔴, 2 🟠, 8 🟡. Report:
-`plan/reviews/BLIND-2026-11-22-1809.md`.
+**State:** pass 2 done on `phase-4-claude` at `989f932` (pass 1 reviewed `ea30389`, base `0f7b594`, after the history
+rewrite): OK, the 🔴 and both 🟠 fixed. Reports: `plan/reviews/BLIND-2026-11-22-1809.md` (pass 1),
+`plan/reviews/BLIND-2026-11-22-1905.md` (pass 2).
 
 ## Verified
 
@@ -13,6 +14,11 @@
 - The median longest callback over the four holds' plateaus is 11.26 to 11.38 ms, every second over 5 ms; k6's mean
   latency is 2.21 to 2.67 ms. **Proof:** `jq` on `hold-*.json`.
 - "17 runs at 24,000, 4 failed" adds up from the README's tables.
+- Pass 2: no container name in the history of `phase-4-claude`, the local `main` or `origin/phase-3-claude`. **Proof:**
+  `git log <ref> -S<name>` for five names. `origin/main` (`ebd2855`, the same on `git ls-remote`) still has two of them in
+  `7f796cb` and `b88005d` (phase 3 plan files); the rewritten local `main` (`a0a9b93`) is not pushed.
+- Pass 2: every leaf frame of the committed `profile.collapsed` has a rule after `c2178cc`, so the baseline's fold
+  table does not move. **Proof:** the list of leaf frames, compared with `lab/profile/steps.rules`.
 
 ## Assumed
 
@@ -30,7 +36,7 @@ Nothing.
 
 ## Next steps
 
-1. On a relaunch: reread the branch, check each item below, never bring back an item marked "left".
+1. Nothing for this branch. The open point is GitHub's `main` history (a force-push and a GitHub purge), for Jacob.
 
 ## Questions for the project manager
 
@@ -40,17 +46,17 @@ Nothing.
 
 | # | Sev. | `file:line` | Status |
 |---|---|---|---|
-| 1 | 🔴 | `lab/results/2026-11-22-realistic-calibration/*.json:8`, `lab/realistic.sh:506`, `lab/macro.sh:292` | open |
-| 2 | 🟠 | `lab/profile/fold-lib.php:79` (and `lab/README.md:823`) | open |
-| 3 | 🟠 | `lab/realistic.sh:414`, `:418`, baseline `README.md:411` | open |
-| 4 | 🟡 | `lab/realistic.sh:482`, `lab/macro.sh:335` | open |
-| 5 | 🟡 | `lab/realistic.sh:171` | open |
-| 6 | 🟡 | `lab/check.sh:1032` | open |
-| 7 | 🟡 | baseline `README.md:403`, `:399` | open |
-| 8 | 🟡 | baseline `README.md:30`, `:11`, `:28` | open |
-| 9 | 🟡 | `lab/servers/diy-connection.php:156` | open |
-| 10 | 🟡 | `lab/check/app-test.php:86`, `:189` | open |
-| 11 | 🟡 | `lab/app/app.php:237` | open |
+| 1 | 🔴 | `lab/results/2026-11-22-realistic-calibration/*.json:8`, `lab/realistic.sh:506`, `lab/macro.sh:292` | fixed in `0706612` |
+| 2 | 🟠 | `lab/profile/fold-lib.php:79` (and `lab/README.md:823`) | fixed in `c2178cc` |
+| 3 | 🟠 | `lab/realistic.sh:414`, `:418`, baseline `README.md:411` | fixed in `5deb526`, `af8fe6a` |
+| 4 | 🟡 | `lab/realistic.sh:482`, `lab/macro.sh:335` | left |
+| 5 | 🟡 | `lab/realistic.sh:171` | left |
+| 6 | 🟡 | `lab/check.sh:1032` | fixed in `e7c2d16` |
+| 7 | 🟡 | baseline `README.md:403`, `:399` | fixed in `e7c2d16` |
+| 8 | 🟡 | baseline `README.md:30`, `:11`, `:28` | left |
+| 9 | 🟡 | `lab/servers/diy-connection.php:156` | fixed in `e7c2d16` |
+| 10 | 🟡 | `lab/check/app-test.php:86`, `:189` | fixed in `e7c2d16` |
+| 11 | 🟡 | `lab/app/app.php:237` | left |
 
 ## Retro
 
@@ -69,3 +75,6 @@ Nothing.
    to be switchable (item 3).
 7. **A blind spot:** nobody looks at what the raw results contain beyond their numbers. The privacy rule is checked on
    code and prose, not on 449,000 lines of JSON.
+8. **Pass 2, a blind spot:** the history rewrite was checked on the branch, not on every remote ref. `git log origin/main
+   -S<name>` found what was left on GitHub's `main`. A history cleanup could end with that loop over
+   `git for-each-ref` and `git ls-remote`, as a recipe of the `justfile`.
