@@ -205,13 +205,15 @@
   (A B A B ...), 60,000 idle connections, no per-second probes, telemetry off, one offered rate per step (12,000 req/s
   for S1, so that a reconnect on every request fits in the CPU; 24,000 for the CPU steps, the baseline's). An A/A
   calibration comes first (the skeleton against itself, 5 pairs at each rate): it gives the noise and the floor, the
-  smallest difference the method sees. A variant's number is the median µs/req of its runs; the verdict reads the
+  largest absolute paired difference of its 5 pairs. A variant gets 3 pairs (5 for S9's). A variant's number is the median µs/req of its runs; the verdict reads the
   paired differences (each run against the reference's run of the same round): "beyond the noise" when every pair has
   the same sign and the median difference passes the floor. A variant predicted under the floor is judged on its micro
   bench or its syscall count, the macro only checking that it costs nothing. Why: with the baseline's noise (σ about
   0.5 µs a run), "the median difference against the reference's spread" called identical variants different 17 % of
-  the time at 3 runs and caught a real 1 µs only 61 % of the time (project manager, phase 5, 2026-11-22, revised after
-  the plan review, [PLAN-2026-11-22-2110](reviews/PLAN-2026-11-22-2110.md) item 4).
+  the time at 3 runs and caught a real 1 µs only 61 % of the time; with the largest A/A difference as the floor and
+  every pair agreeing in sign, about 3 % (project manager, phase 5, 2026-11-22, revised after the plan review and its
+  delta, [PLAN-2026-11-22-2110](reviews/PLAN-2026-11-22-2110.md) item 4,
+  [PLAN-2026-11-22-2145-delta](reviews/PLAN-2026-11-22-2145-delta.md) item 1).
 - **D52:** the io_uring spike passes its gate: the bench builds and starts a submission on the box itself, with
   systemd as user `deploy` (`LimitNOFILE=65535`, `CAP_NET_BIND_SERVICE`), not in Docker (`LEADERBOARD.md`, "How each
   entry is scored"), and more than 30 io_uring entries are scored there. In the lab, only an io_uring server runs with
@@ -250,9 +252,12 @@
   (plan review, settled by the project manager, phase 5, 2026-11-22,
   [PLAN-2026-11-22-2110](reviews/PLAN-2026-11-22-2110.md) item 5).
 - **D59:** with group commit, a connection whose write waits for the flush stops parsing until that write's response
-  is in its write buffer, so pipelined responses stay in request order. k6 never pipelines, so it costs the bench
+  is in its write buffer, so pipelined responses stay in request order. The flush resumes the connections it paused
+  (their responses, then the bytes waiting in their read buffer, their events re-armed) and commits again until nothing
+  is queued, so two pipelined writes on one connection don't stall. k6 never pipelines, so it costs the bench
   nothing (plan review, settled by the project manager, phase 5, 2026-11-22,
-  [PLAN-2026-11-22-2110](reviews/PLAN-2026-11-22-2110.md) item 6).
+  [PLAN-2026-11-22-2110](reviews/PLAN-2026-11-22-2110.md) item 6, and
+  [PLAN-2026-11-22-2145-delta](reviews/PLAN-2026-11-22-2145-delta.md) item 2).
 
 ## History
 

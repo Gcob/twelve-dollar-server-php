@@ -1,8 +1,9 @@
 # Phase 5: step lab (5a: the fd wall, the io_uring spike, SQLite, the write, durability)
 
 **Done when:** S1 has a chosen way past the fd wall, with its cost per request measured and a run that serves more
-users than one process has fds; the io_uring spike has its answer (a no-op server on an FFI ring holding more than
-65,535 connections, or the step where it stopped and why); S6, S8 and S9 each have a chosen variant with its µs of
+users than one process has fds; the io_uring spike has its answer (a no-op server on an FFI ring holding 60,000
+connections with no fd of its own each, more than 65,535 on two rings if the stretch is reached, or the step where it
+stopped and why, D56); S6, S8 and S9 each have a chosen variant with its µs of
 CPU per request (median of its runs) against the skeleton's, and its profile (D49); the chosen variants together have
 a new µs/req, profile and held rate. The predictions below were written before any measurement (D5). Then the run
 stops (D12): phase 5b takes the rest of the steps (D50).
@@ -10,6 +11,9 @@ stops (D12): phase 5b takes the rest of the steps (D50).
 **Plan review:** [PLAN-2026-11-22-2110.md](../reviews/PLAN-2026-11-22-2110.md), NOT_OK (2 🔴, 4 🟠, 11 🟡). Its six
 questions were settled by the project manager with the reviewer's own picks (D51 and D53 revised, D56 to D59), and
 its minor points are folded in below. Predictions 5, 8 and 10 were revised at 21:40, still before any measurement.
+Delta: [PLAN-2026-11-22-2145-delta.md](../reviews/PLAN-2026-11-22-2145-delta.md), NOT_OK (2 🟠: the floor's
+definition, nothing resumes a paused connection), settled with the reviewer's picks (D51, D59 revised); its 3 🟡
+folded in.
 
 **Where (D14):** code on branch `phase-5-claude`, in its worktree. `plan/` stays on `main`. The factory's working files
 (`run.md`, `state/`, `reviews/`) are private (D48).
@@ -68,7 +72,7 @@ From Jacob (D47 to D49) and the project manager (D50 to D55), in [decisions.md](
 | 6   | `docs(lab): S1 and the io_uring spike, measured`                            | `lab/results/<date>-s1-fd-wall/README.md` holds the predictions (copied unchanged), the syscall counts, S1-a against S1-d (every request reconnecting) against S1-b at 12,000 req/s, the cost of one reconnect, the fd-wall run with and without S1-d, the FFI micro and the ring's no-op against DIY, each prediction marked, the chosen S1 variant; every counted run `other_containers: 0`; `summarize.sh` regenerates its tables |
 | 7   | `feat(app): feed query, fetch and pragma variants`                          | each variant (`APP_FEED_SQL`, `APP_FETCH`, the pragmas) passes `challenge-test.sh` 42/42 (the golden feed byte for byte); `lab/micro/benches/feed.php` prints ns per feed for each on a fresh seed copy, with its `EXPLAIN QUERY PLAN` saved; `lab/check.sh` all `ok` |
 | 8   | `feat(app): response write and syscall variants`                            | each variant (`APP_IO` and the others the count of scope 1 points to) passes 42/42 (`challenge-test.sh --env`), the DIY parser and partial-write checks, and `syscalls.sh` prints its count per request next to the reference's; `lab/check.sh` all `ok` |
-| 9   | `feat(app): group commit per loop turn and a background checkpointer`       | with `APP_GROUP_COMMIT=1` and with `APP_CHECKPOINTER=<ms>`, 42/42; a check sends two writes in one loop turn and sees one commit and both responses after it; a pipelined like then feed on one connection come back in order; a write whose response was sent is still there after `kill -9` and a reopen; a 2-minute realistic smoke at 24,000 req/s with the checkpointer at 1,000 ms keeps the WAL's `mxFrame` under 2 times the most frames written between two checkpoints, with the server's autocheckpoint off; `lab/check.sh` all `ok` |
+| 9   | `feat(app): group commit per loop turn and a background checkpointer`       | with `APP_GROUP_COMMIT=1` and with `APP_CHECKPOINTER=<ms>`, 42/42; a check sends two writes in one loop turn and sees one commit and both responses after it; a pipelined like then feed on one connection come back in order, and two pipelined likes both get answered; a write whose response was sent is still there after `kill -9` and a reopen; a 2-minute realistic smoke at 24,000 req/s with the checkpointer at 1,000 ms keeps the WAL's `mxFrame` under 2 times the most frames written between two checkpoints, with the server's autocheckpoint off; `lab/check.sh` all `ok` |
 | 10  | `docs(lab): S6, S8 and S9, measured`                                        | `lab/results/<date>-cpu-steps/README.md`: predictions copied unchanged, each variant against the reference at 24,000 req/s (D51), its µs/req median and spread, p99 (S9: per-second p99 and stalled seconds), the profile of each chosen variant, each prediction marked, the chosen variant per step; `summarize.sh` regenerates its tables |
 | 11  | `docs(lab): the chosen variants together`                                   | `lab/results/<date>-step-lab-together/README.md`: the chosen variants as one configuration, its µs/req (median of 3 holds of 5 minutes), profile and held rate at `s = 0.02`, against the baseline, step by step; `summarize.sh` regenerates its tables |
 | 12  | `docs(lab): the x86 calibration on EC2`                                     | only with Jacob's go (D55): a CPU layout for an 8-vCPU host in `lab/lib.sh`, the baseline's skeleton and the chosen configuration on a `c5.2xlarge`, server on one vCPU, 3 runs each at a fixed rate, µs/req and the x86 factor against the Mac; the instance terminated and the policy removed. Without his go by then: skipped, moved to phase 7 |
@@ -223,8 +227,9 @@ build during a measurement. New for phase 5:
 - **Direct descriptors (D56):** `conns.sh` with the ring server, nofile 65,535, holds 60,000 idle connections on one
   ring, each answered, while the server's own fds (`/proc/<pid>/fd`) stay under 100: the connections take no fd of the
   process. **Stretch, same time box:** a second ring with its own table, 80,000 connections over the two; the loop
-  blocks on one ring and enters the other when its `IORING_SQ_TASKRUN` flag shows pending work (the reference's
-  `c-iouring-PROGABBOMALA` does this). Reached or not, the hand-back says which.
+  blocks on one ring with a timed wait and enters the other when its `IORING_SQ_TASKRUN` flag shows pending work (both
+  rings set up with `IORING_SETUP_TASKRUN_FLAG`; the reference's `c-iouring-PROGABBOMALA`, `src/net.h`, does this;
+  without the flag and the timeout, ring B can stall). Reached or not, the hand-back says which.
 - **Time box:** the developer stops at the first of: the Done-when met, three failed tries at the same step, or about
   3 hours of work. A stop commits what runs (the smoke and the step reached) with the reason in the server's header
   comment and the hand-back; scope 6 records it as the spike's result.
@@ -236,9 +241,9 @@ build during a measurement. New for phase 5:
 - **The syscall count:** `syscalls.sh` on the skeleton (keep-alive) and with `APP_SOFT_CONN_LIMIT=0`, at 2,000
   req/s: per request, by name. Only the load-independent counts (reads, writes, EAGAIN, accepts, closes) carry over to
   other rates; `epoll_wait` per request falls with the load.
-- **The A/A calibration (D51):** 5 pairs of the skeleton against itself at 24,000 req/s, then 5 at 12,000 (S1's
-  rate): the noise per run, the paired differences, and the floor (the smallest median difference that 5 identical
-  pairs never pass, rounded up), for each rate.
+- **The A/A calibration (D51):** 5 pairs of the skeleton against itself at 24,000 req/s (telemetry off, like the CPU
+  steps' runs), then 5 at 12,000 with telemetry on (like the S1 runs it judges): the noise per run, the paired
+  differences, and the floor for each rate: the largest absolute paired difference of its 5 A/A pairs.
 - **S1 at 12,000 req/s** (`s = 0.02`, 60,000 idle, D51; 12,000 rather than the baseline's 24,000 so that every
   request reconnecting still fits in the CPU): the skeleton (S1-a), `APP_SOFT_CONN_LIMIT=60000` (S1-d: the 60,000
   idle fill the limit, so every k6 request reconnects, D53), `APP_WORKERS=2` (S1-b), 5 runs each interleaved,
@@ -298,13 +303,17 @@ build during a measurement. New for phase 5:
   call per turn is measured with the variant.
 - **Order (D59):** a connection with a write waiting for the flush stops parsing until that write's response is in
   `wbuf` (its later bytes stay in `rbuf`, reading pauses), so responses stay in request order. Reads on other
-  connections are not delayed. `DiyConnection` is in this scope's seams.
+  connections are not delayed. **The flush resumes the connections it paused:** after the commit it appends their
+  responses, parses what waits in their `rbuf` (which may queue new writes), re-arms their events, and loops (another
+  `BEGIN … COMMIT`) until nothing is queued; only then does the loop go back to `LOOP_ONCE`. `DiyConnection` and
+  `DiyServer` are in this scope's seams.
 - **Background checkpointer (`APP_CHECKPOINTER=<ms>`):** the server sets `wal_autocheckpoint = 0`; a second process
   (forked at boot, its own connection) runs `PRAGMA wal_checkpoint(PASSIVE)` every `<ms>`. It lives in the server's
   cgroup. It dies with the server.
 - **Cases:** 42/42 each and both together; two writes in one turn (two connections, sent before the turn runs):
   one commit, both responses after it, both rows there; a pipelined `POST /posts/:id/like` then `GET /feed` in one
-  write on one connection: the like's response first; a write that fails inside the batch (a like on a missing post
+  write on one connection: the like's response first; two pipelined likes on one connection: both answered, in
+  order, with no stall; a write that fails inside the batch (a like on a missing post
   never gets there, `post_exists` answers 404 first, so the check uses a test-only hook that makes one statement
   throw) rolls back alone, gets its 500, and the other commits; `kill -9` after a 201 is received, reopen: the row is there; with the checkpointer, a
   2-minute realistic smoke at 24,000 req/s with the checkpointer at 1,000 ms keeps `mxFrame` (the sampler) under 2
@@ -313,8 +322,9 @@ build during a measurement. New for phase 5:
 ## Scope 10: S6, S8 and S9, measured
 
 - **Before any run:** the predictions copied unchanged into `lab/results/<date>-cpu-steps/README.md`; quiet VM.
-- **Method (D51):** `steplab.sh` at 24,000 req/s (`s = 0.02`, 60,000 idle, the baseline's rate), 3 runs per variant
-  interleaved with the reference; 5 when a difference is within 2 times the reference's spread. The micro numbers of
+- **Method (D51):** `steplab.sh` at 24,000 req/s (`s = 0.02`, 60,000 idle, the baseline's rate), 3 pairs per variant
+  (5 for S9's), interleaved with the reference, judged with scope 6's floor for 24,000: "beyond" when every pair has
+  the same sign and the median paired difference is at least the floor. The micro numbers of
   scope 7 beside the macro ones.
 - **S6:** the feed SQL variants, then the best with `APP_FETCH=num`, then the pragma presets on the best so far.
 - **S8:** `APP_IO` and the other variants of scope 8, each alone against the reference.
@@ -363,7 +373,8 @@ Pro, quiet VM, PHP 8.5, the skeleton on the DIY loop, 1 CPU, unless a line says 
 9.7 %, S2 8.0 %, the loop 6.5 %, the kernel 30.3 % of the CPU. DIY's `/noop` at 7,000 req/s: 21.88 µs.
 
 **How they're judged:** a µs/req is the median of a variant's runs; a range holds if the measured value is inside it;
-a difference "within the noise" is within the reference's own spread (D51).
+a difference is "beyond the noise" when every pair has the same sign and the median paired difference is at least the
+A/A floor of its rate (D51).
 
 1. **Syscalls per keep-alive request: 2 to 4 in total**, one read with data and one write per request, `epoll_wait`
    shared by several requests (under 0.5 per request at 2,000 req/s), no `epoll_ctl` per request; writes add 1 to 3
