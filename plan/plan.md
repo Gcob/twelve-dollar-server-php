@@ -15,8 +15,38 @@ setting would have closed the idle connections; settled as D51, D53, D56 to D59.
 > **Answer freely:** a letter or `ok`, your own choice (`other: …`), `?` if it's unclear, or
 > `badly framed: …` if an option is missing or the question doesn't hold.
 
-Nothing for you right now: your AWS go is in, scope 12 runs on one `c5.2xlarge`. Two plan questions come at the
-end of the phase.
+Not blocking: the phase has landed for today (the Mac's VM is busy). Two questions for its end.
+
+### ❓ Q16/17 [run, S6] : choose `mmap-off` for S6 if two more pairs confirm it?
+
+The 2.57 µs floor at 24,000 req/s comes from the one A/A run that failed the 97 % rule; the other four pairs give
+0.27. All three pairs that turn mmap off came in lower: -1.31 (mmap-off), -2.22 (cache-256m), -1.87 (cache-256m with
+exclusive), about 6 % of a request. The two confirming pairs were cut short by your containers (D65).
+
+- **A.** On the next quiet VM, two more `mmap-off` pairs (about 10 minutes); chosen if all three pairs are lower and
+  their median beats the 0.27 floor. **For:** one pragma, simpler than today's; about 17,000 users by 🤝's formula.
+  **Against:** 10 minutes of a quiet VM.
+- **B.** Keep the skeleton's pragmas; S6 goes to phase 5b as it is. **For:** nothing to run.
+
+**Recommendation:** A. **Flips if:** a quiet VM is days away: B, and 5b takes it.
+
+**Answer:**
+
+### ❓ Q17/17 [run, S1] : build S1-b (2 processes) in phase 5b, now that a reconnect costs 3.6 times more on x86?
+
+Scope 3 wasn't built because S1-d added 13.6 % at 150,000 users on the Mac, under D60's 15 %. On the Xeon (scope 12,
+one pair) a reconnect costs 23.69 µs, not 6.62: S1-d adds 15.9 % at 100,000 users, 25.4 % at 150,000, 30.1 % at
+200,000. The bench is x86.
+
+- **A.** Phase 5b first measures a second reconnect pair on x86, then builds S1-b if it still crosses 15 %.
+  **For:** the line is read on the machine the bench resembles; one pair alone isn't a verdict (D51).
+  **Against:** an AWS run in 5b (about 1 USD, your go again).
+- **B.** Build S1-b in 5b on this pair alone. **For:** no extra AWS run. **Against:** a scope built on one pair.
+- **C.** Keep S1-d only. **Against:** up to a quarter of a request at 150,000 users.
+
+**Recommendation:** A. **Flips if:** you'd rather not open AWS again: B.
+
+**Answer:**
 
 Q13 to Q15 are answered (A, A, A) and moved to
 [2026-11-22-2145.ronde-4.md](questions/2026-11-22-2145.ronde-4.md); your fail-fast principle is D60.
