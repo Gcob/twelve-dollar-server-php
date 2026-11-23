@@ -39,7 +39,7 @@ Skill defaults (`autonomous-run/pipeline.yml`), no run override file. Changes fr
 | 6     | aabebc28f7dcaaba7 | done 17:46; fd-wall note `7d6281a` |
 | pr-reviewer | a96493ee11e4c85c3 | OK 18:04 |
 | scope 5 (review fixes) | a0693a2b219c3cb46 | done 18:08: `ab3dd04`, `ea30389` |
-| blind-reviewer | af115c2e95734bb63 | NOT_OK 18:17 |
+| blind-reviewer | af115c2e95734bb63 | NOT_OK 18:17, OK at pass 2 19:02 |
 | blind fixes | a6d7d3fcd59d94550 | done 18:47: `0706612`..`af8fe6a` |
 
 ## Verified
