@@ -577,6 +577,23 @@ the same process. `lab/micro/feed-plans.php` prints the `EXPLAIN QUERY PLAN` of 
 (`feed-plans.txt`, which `lab/check.sh` regenerates and compares). That run is a developer's look at the variants, not a result: the
 macro pairs are `lab/results/`'s.
 
+### The S8 variant (locking)
+
+`APP_LOCKING=normal|exclusive` on `lab/app/server.php`, read once at boot by `app_variants` (unset or empty is `normal`: the same pragmas, the
+same syscalls and bytes as before; any other value is refused). `exclusive` runs `PRAGMA locking_mode = EXCLUSIVE` before the connection's
+first WAL access (before `journal_mode = WAL`), so SQLite keeps its locks and never makes the WAL's shared-memory file. When it is set the
+boot prints `app variants: ... locking=exclusive`.
+
+Why: a strace with arguments of the skeleton (a scratch run, not kept) splits its 2.4 `fcntl` a request: all of them are `F_SETLK` on the
+database's `-shm` file (a read lock and its release around every read, five more calls around every write), none on a socket (the streams
+make no `F_GETFL` or `F_SETFL` after the accept). `recvfrom` and `sendto` are exactly 1 a request with no `EAGAIN`, so reading and writing
+through `ext-sockets` instead of the streams cannot remove a syscall and is not built.
+
+The cost: while the server runs no other process can open the database (a second connection, an `sqlite3` shell, a checkpointer in its own
+process gets "database is locked"), and `lab/macro/sampler.php`'s `mxFrame` reading has no `-shm` file to read. The locks go when the process
+ends, killed or not: a new server opens the database again (`lab/check/app-variants-test.php` kills a child with SIGKILL and boots again).
+`lab/syscalls.sh --image 8.5 --env APP_LOCKING=exclusive` counts the effect.
+
 ## The realistic mode
 
 ```bash

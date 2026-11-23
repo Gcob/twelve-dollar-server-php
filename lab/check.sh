@@ -504,7 +504,7 @@ check_app_variants_cases() {
   out="$(bash "$LAB/run.sh" 8.5 php /lab/check/app-variants-test.php 2>&1)" || rc=$?
   [ "$rc" = 0 ] || { echo "app-variants-test.php exited $rc: ${out//$'\n'/ | }"; return 1; }
   ok="$(grep -c '^ok  ' <<<"$out")"
-  [ "$ok" = 55 ] || { echo "expected 55 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
+  [ "$ok" = 65 ] || { echo "expected 65 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
   ! grep -q 'FAIL' <<<"$out" || { echo "a case failed: ${out//$'\n'/ | }"; return 1; }
 }
 
@@ -530,7 +530,7 @@ check_s6_switches_reach_the_server() {
   start_app_for_check lab-check-variants 18164 0 APP_FEED_SQL=join APP_FETCH=num APP_PRAGMAS=mmap-off || return 1
   log="$(docker logs lab-check-variants 2>&1)"
   docker rm -f lab-check-variants >/dev/null 2>&1
-  grep -qx 'app variants: feed_sql=join fetch=num pragmas=mmap-off' <<<"$log" || { echo "the boot lines do not name the variants: ${log//$'\n'/ | }"; return 1; }
+  grep -qx 'app variants: feed_sql=join fetch=num pragmas=mmap-off locking=normal' <<<"$log" || { echo "the boot lines do not name the variants: ${log//$'\n'/ | }"; return 1; }
   start_app_for_check lab-check-variants 18164 0 || return 1
   log="$(docker logs lab-check-variants 2>&1)"
   docker rm -f lab-check-variants >/dev/null 2>&1
@@ -538,6 +538,64 @@ check_s6_switches_reach_the_server() {
   log="$(start_app_for_check lab-check-variants 18164 0 APP_FETCH=both)" && { docker rm -f lab-check-variants >/dev/null 2>&1; echo "a bad APP_FETCH was accepted"; return 1; }
   docker rm -f lab-check-variants >/dev/null 2>&1
   grep -q 'APP_FETCH must be one of assoc, num, assoc-loop, num-loop, got "both"' <<<"$log" || { echo "the refusal does not say why: $log"; return 1; }
+}
+
+# The 42 checks against the server with APP_LOCKING=exclusive, and no container left behind.
+check_challenge_test_passes_with_exclusive_locking() {
+  local out left rc=0
+  out="$(bash "$LAB/challenge-test.sh" --image 8.5 --env APP_LOCKING=exclusive 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "lab/challenge-test.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
+  grep -qx 'passed=42 failed=0' <<<"$out" || { echo "the summary is not 'passed=42 failed=0': ${out//$'\n'/ | }"; return 1; }
+  left="$(docker ps -a --format '{{.Names}}' | grep '^lab-challenge-' || true)"
+  [ -z "$left" ] || { echo "containers left behind: ${left//$'\n'/ }"; return 1; }
+}
+
+# APP_LOCKING reaches the server: it names the variant at boot, refuses a value that is not a name, and while it runs another process
+# cannot open its database (the lock the switch keeps), where with the switch unset another process reads it.
+check_app_locking_reaches_the_server() {
+  local log other value
+  for value in exclusive normal; do
+    start_app_for_check lab-check-locking 18165 0 APP_LOCKING=$value || return 1
+    log="$(docker logs lab-check-locking 2>&1)"
+    # Unset (or the default name) the server says nothing about variants.
+    if [ "$value" = exclusive ]; then
+      grep -qx 'app variants: feed_sql=reference fetch=assoc pragmas=default locking=exclusive' <<<"$log" \
+        || { docker rm -f lab-check-locking >/dev/null 2>&1; echo "the boot lines do not name the variant: ${log//$'\n'/ | }"; return 1; }
+    else
+      ! grep -q 'app variants' <<<"$log" || { docker rm -f lab-check-locking >/dev/null 2>&1; echo "the default names a variant: ${log//$'\n'/ | }"; return 1; }
+    fi
+    docker exec lab-check-locking sh -c 'curl -s -o /dev/null http://127.0.0.1:18165/feed' >/dev/null 2>&1 || true
+    other="$(docker exec lab-check-locking php -r '
+      try { $db = new PDO("sqlite:" . $argv[1]); $db->exec("PRAGMA busy_timeout = 0"); $db->query("SELECT count(*) FROM likes")->fetchColumn(); echo "read"; }
+      catch (PDOException $e) { echo $e->getMessage(); }' "$LAB_APP_DB" 2>&1)"
+    docker rm -f lab-check-locking >/dev/null 2>&1
+    case "$value:$other" in
+      exclusive:*"database is locked"*) ;;
+      normal:read) ;;
+      *) echo "APP_LOCKING=$value: another process got '$other'"; return 1 ;;
+    esac
+  done
+  log="$(start_app_for_check lab-check-locking 18165 0 APP_LOCKING=shared)" && { docker rm -f lab-check-locking >/dev/null 2>&1; echo "a bad APP_LOCKING was accepted"; return 1; }
+  docker rm -f lab-check-locking >/dev/null 2>&1
+  grep -q 'APP_LOCKING must be one of normal, exclusive, got "shared"' <<<"$log" || { echo "the refusal does not say why: $log"; return 1; }
+}
+
+# The point of APP_LOCKING: the lock calls of every transaction (fcntl) are gone from the count. Unset, a request makes about 2.4 of
+# them; with exclusive locking, none beyond the few the process makes once (the opcache's).
+check_app_locking_removes_the_lock_calls() {
+  local value json out rc
+  for value in normal exclusive; do
+    json="$(mktemp -d)/syscalls.json"
+    rc=0
+    out="$(bash "$LAB/syscalls.sh" --image 8.5 --rate 300 --think-scale 0.2 --seconds 5 --env APP_LOCKING=$value --out "$json" 2>&1)" || rc=$?
+    [ "$rc" = 0 ] || { echo "APP_LOCKING=$value: lab/syscalls.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
+    if [ "$value" = normal ]; then
+      jq -e '[.syscalls[] | select(.name == "fcntl") | .calls_per_request][0] > 1.5' "$json" >/dev/null || { echo "unset: fcntl is not above 1.5 a request: $(jq -c '.syscalls[:3]' "$json")"; return 1; }
+    else
+      jq -e '([.syscalls[] | select(.name == "fcntl") | .calls_per_request][0] // 0) < 0.05 and .total.calls_per_request < 4.2' "$json" >/dev/null \
+        || { echo "exclusive: fcntl is not gone: $(jq -c '.syscalls[:4]' "$json")"; return 1; }
+    fi
+  done
 }
 
 # The feed bench times every case of the S6 variants and none is skipped (each case checked its answer against the reference's), and the
@@ -1674,6 +1732,9 @@ CHECKS=(
   check_challenge_test_passes_with_soft_limit_zero
   check_challenge_test_passes_each_s6_variant
   check_s6_switches_reach_the_server
+  check_challenge_test_passes_with_exclusive_locking
+  check_app_locking_reaches_the_server
+  check_app_locking_removes_the_lock_calls
   check_soft_limit_closes_the_third_connection
   check_soft_limit_keeps_idle_connections
   check_soft_limit_serves_churn_at_256_fds

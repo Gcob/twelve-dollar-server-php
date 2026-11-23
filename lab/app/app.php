@@ -25,8 +25,14 @@ const APP_POST_SELECT = 'SELECT p.id, p.body, p.created_at, u.username AS author
 //   APP_FETCH     assoc | num: the rows as arrays keyed by column name, or by position (the JSON is then built from positions)
 //                 assoc-loop | num-loop: the same, with fetch() in a loop instead of fetchAll()
 //   APP_PRAGMAS   a preset of the page cache and the memory map sizes (the other pragmas never change)
+// The variant of S8:
+//   APP_LOCKING   normal | exclusive: with exclusive the connection keeps its locks and, set before the first WAL access, never makes the
+//                 WAL's shared-memory file: the lock calls (fcntl) of every read and write transaction go. Only this process can open the
+//                 database while the server runs (a second process, a checkpointer or an `sqlite3` shell, gets "database is locked").
+//                 The locks go when the process ends, killed or not.
 const APP_FEED_SQL_VARIANTS = ['reference', 'join', 'two-step'];
 const APP_FETCH_VARIANTS = ['assoc', 'num', 'assoc-loop', 'num-loop'];
+const APP_LOCKING_VARIANTS = ['normal', 'exclusive'];
 // 64 MiB of cache and a 256 MiB map (the seed is 250 MB) are today's. Why each preset:
 //   mmap-off    reads go through pread and the 64 MiB cache: says what the map is worth
 //   cache-256m  the whole seed fits in the page cache, the map is off: the cache against the map
@@ -50,10 +56,10 @@ $app_path = '';
 $app_requests = null;
 
 /**
- * The S6 switches from the environment (pass getenv()): unset or empty is the reference's. A value that is not one of the names is refused.
+ * The S6 and S8 switches from the environment (pass getenv()): unset or empty is the reference's. A value that is not one of the names is refused.
  *
  * @param array<string, mixed> $env
- * @return array{feed_sql: string, fetch: string, pragmas: string}
+ * @return array{feed_sql: string, fetch: string, pragmas: string, locking: string}
  */
 function app_variants(array $env): array
 {
@@ -71,6 +77,7 @@ function app_variants(array $env): array
         'feed_sql' => $pick('APP_FEED_SQL', 'reference', APP_FEED_SQL_VARIANTS),
         'fetch' => $pick('APP_FETCH', 'assoc', APP_FETCH_VARIANTS),
         'pragmas' => $pick('APP_PRAGMAS', 'default', ['default', ...array_keys(APP_PRAGMA_PRESETS)]),
+        'locking' => $pick('APP_LOCKING', 'normal', APP_LOCKING_VARIANTS),
     ];
 }
 
@@ -119,6 +126,11 @@ function app_boot(string $path, string $secret, ?array $variants = null): void
     $variants ??= app_variants(getenv());
     $pragmas = APP_PRAGMA_PRESETS[$variants['pragmas']] ?? APP_PRAGMA_DEFAULT;
     $db = new PDO('sqlite:' . $path, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
+    if ($variants['locking'] === 'exclusive') {
+        // Why first: set before the connection's first WAL access, SQLite keeps the WAL's index in heap memory and never makes the
+        // shared-memory file (every lock call of a read or a write goes with it).
+        $db->exec('PRAGMA locking_mode = EXCLUSIVE');
+    }
     $db->exec('PRAGMA journal_mode = WAL');
     $db->exec('PRAGMA synchronous = NORMAL');
     $db->exec('PRAGMA busy_timeout = 5000');

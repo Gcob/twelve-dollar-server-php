@@ -6,7 +6,8 @@
 // 2 s, one sample every APP_PROFILE_PERIOD seconds of CPU time (default 0.001; lab/servers/diy-profile.php), and
 // APP_SOFT_CONN_LIMIT=<n> (off by default; 0 is a limit): a response built while more than <n> client connections are open says
 // `Connection: close` and its connection ends once it is written (lab/servers/diy-server.php), and the S6 variants of lab/app/app.php
-// (off by default): APP_FEED_SQL=reference|join|two-step, APP_FETCH=assoc|num|assoc-loop|num-loop, APP_PRAGMAS=default|mmap-off|cache-256m|cache-8m.
+// (off by default): APP_FEED_SQL=reference|join|two-step, APP_FETCH=assoc|num|assoc-loop|num-loop, APP_PRAGMAS=default|mmap-off|cache-256m|cache-8m,
+// and APP_LOCKING=normal|exclusive (off by default; exclusive: no other process can open the database while the server runs).
 //
 // It starts with the extensions loaded in this order: `--ext sockets --ext event`. It listens only once the database is open.
 // lab/challenge-test.sh starts it on a fresh copy of the seed.
@@ -59,7 +60,7 @@ if ($softLimit !== null) {
     echo "soft connection limit: $softLimit\n";
 }
 if ($variants !== app_variants([])) {
-    echo 'app variants: feed_sql=' . $variants['feed_sql'] . ' fetch=' . $variants['fetch'] . ' pragmas=' . $variants['pragmas'] . "\n";
+    echo 'app variants: feed_sql=' . $variants['feed_sql'] . ' fetch=' . $variants['fetch'] . ' pragmas=' . $variants['pragmas'] . ' locking=' . $variants['locking'] . "\n";
 }
 echo 'loop: ' . $server->loopMethod() . "\n";
 echo diy_socket_line($listener, $backlog) . "\n";

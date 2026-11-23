@@ -1,13 +1,28 @@
 <?php
-// The switches of the S6 variants (APP_FEED_SQL, APP_FETCH, APP_PRAGMAS), through the app's public entry point (handler_handle) on a
-// small database made here: every combination of SQL and fetch must answer the same bytes as the unset one (the feed, each post, a
-// missing post, the feed again after likes), including a feed of fewer than 20 posts and an empty one; a literal answer pins the
-// reference; a bad value is refused at boot; a pragma preset really changes the connection.
+// The switches of the S6 variants (APP_FEED_SQL, APP_FETCH, APP_PRAGMAS) and of APP_LOCKING, through the app's public entry point
+// (handler_handle) on a small database made here: every combination of SQL and fetch must answer the same bytes as the unset one (the
+// feed, each post, a missing post, the feed again after likes), including a feed of fewer than 20 posts and an empty one; a literal
+// answer pins the reference; a bad value is refused at boot; a pragma preset really changes the connection; APP_LOCKING=exclusive keeps
+// the database to the one process (another process cannot open it while it runs) and a new process opens it again once that one is
+// gone, killed or not.
 // Run: bash lab/run.sh 8.5 php /lab/check/app-variants-test.php
 
 require __DIR__ . '/../app/app.php';
 
 const SECRET = 'a-secret-for-this-test';
+
+// A child process of this test: boots the app on the database with APP_LOCKING=<mode>, likes post 5 as user 8, tells its status, and
+// then waits to be killed ('hold') or exits ('exit'). Its Authorization header comes from the parent.
+if (($argv[1] ?? '') === 'child') {
+    [, , $childPath, $childLocking, $childAuth, $childEnd] = $argv;
+    app_boot($childPath, SECRET, app_variants(['APP_LOCKING' => $childLocking]));
+    echo handler_handle('POST', '/posts/5/like', '', $childAuth)[0] . "\n";
+    fflush(STDOUT);
+    if ($childEnd === 'hold') {
+        sleep(120);
+    }
+    exit(0);
+}
 
 $dir = sys_get_temp_dir() . '/app-variants-' . getmypid();
 mkdir($dir);
@@ -81,6 +96,28 @@ function answers(string $source, array $env, int $posts): array
     return $out;
 }
 
+/** What another connection to $path gets when it reads the likes without waiting: 'read' or the error SQLite gives. */
+function another_connection_reads(string $path): string
+{
+    try {
+        $db = new PDO('sqlite:' . $path, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+        $db->exec('PRAGMA busy_timeout = 0');
+        $db->query('SELECT count(*) FROM likes')->fetchColumn();
+        return 'read';
+    } catch (PDOException $e) {
+        return $e->getMessage();
+    }
+}
+
+/** Starts the child above on $path; returns [process, its status line]. $end is 'hold' (the child waits) or 'exit'. */
+function start_child(string $path, string $locking, string $end): array
+{
+    $process = proc_open([PHP_BINARY, __FILE__, 'child', $path, $locking, 'Bearer ' . token(8, 'barbara'), $end], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+    stream_set_timeout($pipes[1], 30);
+    $line = trim((string) fgets($pipes[1]));
+    return [$process, $line, $pipes];
+}
+
 $failed = false;
 function check_case(string $name, callable $fn): void
 {
@@ -127,6 +164,8 @@ foreach ([30, 3, 0] as $posts) {
         check_case("$posts posts, APP_PRAGMAS=$preset: the same answers as unset", fn () => same_answers(
             answers($source, ['APP_PRAGMAS' => $preset], $posts), $want));
     }
+    check_case("$posts posts, APP_LOCKING=exclusive: the same answers as unset", fn () => same_answers(
+        answers($source, ['APP_LOCKING' => 'exclusive'], $posts), $want));
 }
 
 // The reference itself, against a literal answer written by hand (its keys in the spec's order, ids, counts, escapes).
@@ -159,8 +198,9 @@ check_case('2 posts: the feed and a post are the literal bytes, with every varia
 });
 
 check_case('unset, empty and the default names are the same switches', function () {
-    $default = ['feed_sql' => 'reference', 'fetch' => 'assoc', 'pragmas' => 'default'];
-    foreach ([[], ['APP_FEED_SQL' => '', 'APP_FETCH' => '', 'APP_PRAGMAS' => ''], ['APP_FEED_SQL' => 'reference', 'APP_FETCH' => 'assoc', 'APP_PRAGMAS' => 'default']] as $env) {
+    $default = ['feed_sql' => 'reference', 'fetch' => 'assoc', 'pragmas' => 'default', 'locking' => 'normal'];
+    foreach ([[], ['APP_FEED_SQL' => '', 'APP_FETCH' => '', 'APP_PRAGMAS' => '', 'APP_LOCKING' => ''],
+              ['APP_FEED_SQL' => 'reference', 'APP_FETCH' => 'assoc', 'APP_PRAGMAS' => 'default', 'APP_LOCKING' => 'normal']] as $env) {
         if (app_variants($env) !== $default) {
             return 'got ' . json_encode(app_variants($env)) . ' for ' . json_encode($env);
         }
@@ -168,7 +208,7 @@ check_case('unset, empty and the default names are the same switches', function 
     return null;
 });
 
-foreach (['APP_FEED_SQL' => ['joins', 'two-step'], 'APP_FETCH' => ['both', 'num-loop'], 'APP_PRAGMAS' => ['huge', 'mmap-off']] as $name => [$value, $allowed]) {
+foreach (['APP_FEED_SQL' => ['joins', 'two-step'], 'APP_FETCH' => ['both', 'num-loop'], 'APP_PRAGMAS' => ['huge', 'mmap-off'], 'APP_LOCKING' => ['shared', 'exclusive']] as $name => [$value, $allowed]) {
     check_case("$name=$value is refused, and the message names the variable, the value and one allowed value ($allowed)", function () use ($name, $value, $allowed) {
         try {
             app_variants([$name => $value]);
@@ -198,5 +238,51 @@ check_case('APP_FEED_SQL=join: the likes index is searched, never scanned', func
     $plan = implode(' | ', array_column($app_db['db']->query('EXPLAIN QUERY PLAN ' . app_feed_sql('join'))->fetchAll(PDO::FETCH_ASSOC), 'detail'));
     return str_contains($plan, 'likes_post_id_idx') && !preg_match('/SCAN (l|likes)\b/', $plan) ? null : "the plan is: $plan";
 });
+
+// APP_LOCKING: what the connection says, and what another process sees. The database starts in rollback-journal mode here (make_db):
+// the app turns on the WAL, and exclusive locking must be in place before that first WAL access.
+foreach (['normal' => 'unset', 'exclusive' => 'exclusive'] as $locking => $label) {
+    check_case("APP_LOCKING $label: locking_mode reads $locking, journal_mode wal, " . ($locking === 'normal' ? 'a' : 'no') . " shared-memory file", function () use ($dir, $locking) {
+        global $app_db;
+        copy("$dir/source-30.db", "$dir/locking.db");
+        app_boot("$dir/locking.db", SECRET, app_variants($locking === 'normal' ? [] : ['APP_LOCKING' => $locking]));
+        $got = [$app_db['db']->query('PRAGMA locking_mode')->fetchColumn(), $app_db['db']->query('PRAGMA journal_mode')->fetchColumn()];
+        $shm = file_exists("$dir/locking.db-shm");
+        $app_db = null;
+        if ($shm !== ($locking === 'normal')) {
+            return 'the WAL shared-memory file ' . ($shm ? 'exists' : 'does not exist');
+        }
+        return $got === [$locking, 'wal'] ? null : 'got ' . json_encode($got);
+    });
+}
+
+$lockingPath = "$dir/locking-child.db";
+foreach (['normal' => 'unset', 'exclusive' => 'exclusive'] as $locking => $label) {
+    foreach (['hold' => 'killed with SIGKILL', 'exit' => 'exits'] as $end => $how) {
+        check_case("APP_LOCKING $label: a process that liked a post and then $how leaves a database a new boot opens, with the like in it", function () use ($dir, $lockingPath, $locking, $end) {
+            global $app_db;
+            array_map('unlink', glob($lockingPath . '*'));
+            copy("$dir/source-30.db", $lockingPath);
+            [$process, $status, $pipes] = start_child($lockingPath, $locking === 'normal' ? '' : $locking, $end);
+            if ($status !== '201') {
+                proc_terminate($process, 9);
+                return "the child's like answered '$status': " . trim((string) stream_get_contents($pipes[2]));
+            }
+            $while = $end === 'hold' ? another_connection_reads($lockingPath) : null;
+            if ($end === 'hold') {
+                proc_terminate($process, 9);
+            }
+            proc_close($process);
+            $expected = $locking === 'normal' ? 'read' : 'database is locked';
+            if ($while !== null && !str_contains($while, $expected)) {
+                return "another process, while the child ran: '$while', expected '$expected'";
+            }
+            app_boot($lockingPath, SECRET, app_variants([]));
+            $likes = (int) $app_db['db']->query('SELECT count(*) FROM likes WHERE user_id = 8 AND post_id = 5')->fetchColumn();
+            $app_db = null;
+            return $likes === 1 ? null : "$likes likes of user 8 on post 5 after the child";
+        });
+    }
+}
 
 exit($failed ? 1 : 0);
