@@ -213,7 +213,7 @@
   the time at 3 runs and caught a real 1 µs only 61 % of the time; with the largest A/A difference as the floor and
   every pair agreeing in sign, about 3 % (project manager, phase 5, 2026-11-22, revised after the plan review and its
   delta, [PLAN-2026-11-22-2110](reviews/PLAN-2026-11-22-2110.md) item 4,
-  [PLAN-2026-11-22-2145-delta](reviews/PLAN-2026-11-22-2145-delta.md) item 1).
+  [PLAN-2026-11-22-2116-delta](reviews/PLAN-2026-11-22-2116-delta.md) item 1).
 - **D52:** the io_uring spike passes its gate: the bench builds and starts a submission on the box itself, with
   systemd as user `deploy` (`LimitNOFILE=65535`, `CAP_NET_BIND_SERVICE`), not in Docker (`LEADERBOARD.md`, "How each
   entry is scored"), and more than 30 io_uring entries are scored there. In the lab, only an io_uring server runs with
@@ -257,7 +257,7 @@
   is queued, so two pipelined writes on one connection don't stall. k6 never pipelines, so it costs the bench
   nothing (plan review, settled by the project manager, phase 5, 2026-11-22,
   [PLAN-2026-11-22-2110](reviews/PLAN-2026-11-22-2110.md) item 6, and
-  [PLAN-2026-11-22-2145-delta](reviews/PLAN-2026-11-22-2145-delta.md) item 2).
+  [PLAN-2026-11-22-2116-delta](reviews/PLAN-2026-11-22-2116-delta.md) item 2).
 
 ## History
 

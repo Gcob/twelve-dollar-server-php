@@ -10,10 +10,11 @@ stops (D12): phase 5b takes the rest of the steps (D50).
 
 **Plan review:** [PLAN-2026-11-22-2110.md](../reviews/PLAN-2026-11-22-2110.md), NOT_OK (2 🔴, 4 🟠, 11 🟡). Its six
 questions were settled by the project manager with the reviewer's own picks (D51 and D53 revised, D56 to D59), and
-its minor points are folded in below. Predictions 5, 8 and 10 were revised at 21:40, still before any measurement.
-Delta: [PLAN-2026-11-22-2145-delta.md](../reviews/PLAN-2026-11-22-2145-delta.md), NOT_OK (2 🟠: the floor's
+its minor points are folded in below. Predictions 5, 8 and 10 were revised at 21:12, still before any measurement.
+Delta: [PLAN-2026-11-22-2116-delta.md](../reviews/PLAN-2026-11-22-2116-delta.md), NOT_OK (2 🟠: the floor's
 definition, nothing resumes a paused connection), settled with the reviewer's picks (D51, D59 revised); its 3 🟡
-folded in.
+folded in. Delta 2: [PLAN-2026-11-22-2120-delta.md](../reviews/PLAN-2026-11-22-2120-delta.md), OK (1 🟡, folded into
+scope 10).
 
 **Where (D14):** code on branch `phase-5-claude`, in its worktree. `plan/` stays on `main`. The factory's working files
 (`run.md`, `state/`, `reviews/`) are private (D48).
@@ -330,7 +331,8 @@ build during a measurement. New for phase 5:
 - **S8:** `APP_IO` and the other variants of scope 8, each alone against the reference.
 - **S9:** group commit, the checkpointer, both. These change latency more than CPU (D49): their runs keep the
   aggregator's per-second series (stalled seconds, per-second p99) and the server's longest callback (telemetry on for
-  both sides of these pairs).
+  both sides of these pairs): their noise may be wider than the 24,000 floor, measured with telemetry off, so
+  the README says so next to S9's verdict, and D49 judges S9 on its p99 first.
 - **The profile:** one profiled 60 s run of each step's chosen variant (Excimer, `--profile`), folded.
 - **The choice:** per step, the chosen variant and why; a variant within the noise is not chosen unless it is simpler.
 
@@ -362,7 +364,7 @@ build during a measurement. New for phase 5:
 
 ## Predictions (D5)
 
-Written by the project manager on 2026-11-22 at 21:05, before any phase 5 measurement, and revised at 21:40 after
+Written by the project manager on 2026-11-22 at 20:55, before any phase 5 measurement, and revised at 21:12 after
 the plan review, still before any measurement: prediction 5 counts the fd wall's users at `s = 0.04` (about 68,500,
 not 69,000), prediction 8 holds 60,000 connections on one ring (a ring's table can't pass 65,535) with 80,000 on two as
 a stretch, prediction 10 drops the prebuilt header prefix (the skeleton already has it). Arm64, Docker Desktop on an M3
