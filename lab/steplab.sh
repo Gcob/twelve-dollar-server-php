@@ -14,10 +14,10 @@
 # reference. The default warm-up is a tenth of the rate for 60 s (the baseline's).
 #
 # Before each run the TIME_WAIT sockets on k6's source addresses are counted (lab/macro/probe.sh time-wait), and the run waits for the
-# busiest address to hold at most --time-wait-max of them (default 1,000). Why: a closed connection keeps its port for 60 s, the VM's
+# busiest address to hold at most --time-wait-max of them (default 2,500). Why: a closed connection keeps its port for 60 s, the VM's
 # ephemeral ports are 55000 to 65535 (about 10,500 per address), and k6 opens about one connection per VU, a quarter of them per address
-# (1,200 at 24,000 req/s). Under the limit a run has 9,500 free ports per address, eight times what it needs; above it the sockets of the
-# run before are still there. A count that does not drop within --time-wait-wait seconds (default 150) is a harness failure: something
+# (1,200 at 24,000 req/s). Under the limit a run has 8,000 free ports per address, six times what it needs, and the sockets a run leaves
+# (1,134 per address at that rate) do not make the next one wait; above it the sockets of earlier runs are still there. A count that does not drop within --time-wait-wait seconds (default 150) is a harness failure: something
 # else is churning connections. The counts, before and after each run, are in the run's JSON (`steplab.time_wait`).
 #
 # The output folder (default lab/results/steplab-...) holds each run's JSON (<variant>-<round>.json, the realistic run's JSON with a
@@ -48,7 +48,7 @@ command_line="lab/steplab.sh $*"
 command_line="${command_line//$REPO/.}"
 
 image="" rate="" think_scale="" seconds="" pairs="" idle="" warmup="" floor="" label="" out=""
-tw_max=1000 tw_wait=150 local_ips="127.0.1.1-127.0.1.4"
+tw_max=2500 tw_wait=150 local_ips="127.0.1.1-127.0.1.4"
 pass_through=()
 # The variants, in the order given: names, their env (one K=V per line) and their server file (empty: the skeleton's).
 v_names=() v_env=() v_server=()

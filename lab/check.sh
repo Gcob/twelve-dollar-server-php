@@ -1044,8 +1044,8 @@ steplab_verdicts() {
 
 # The step lab's verdict on recorded run files (fixtures, no container): identical variants are within the noise; a variant 1 ms slower in
 # every round is beyond it (and its twin of the reference is not); mixed signs are within, even with a median over the floor; the same
-# sign under the floor is within; no floor means not judged; a round where either run is invalid has no pair; fewer than 2 pairs have no
-# verdict. The tables list the runs round by round in the variants' order, and print the rule.
+# sign under the floor is within; no floor means not judged; a round where either run is invalid has no pair; exactly one pair is a screen
+# (beats the floor only when lower by at least the floor, never beyond the noise); no pair has no verdict. The tables list the runs round by round in the variants' order, and print the rule.
 check_steplab_verdicts() {
   local got out
   got="$(steplab_verdicts identical 5)" || { echo "$got"; return 1; }
@@ -1063,7 +1063,15 @@ check_steplab_verdicts() {
   got="$(steplab_verdicts ref-invalid 5)" || { echo "$got"; return 1; }
   [ "$got" = "var|beyond the noise|11|1,3" ] || { echo "an invalid round of the reference: $got"; return 1; }
   got="$(steplab_verdicts one-pair 5)" || { echo "$got"; return 1; }
-  [ "$got" = "var|no verdict|10|1" ] || { echo "a single pair: $got"; return 1; }
+  [ "$got" = "var|screen: not better in one pair|10|1" ] || { echo "a single pair, slower: $got"; return 1; }
+  got="$(steplab_verdicts screen-beats 5)" || { echo "$got"; return 1; }
+  [ "$got" = "var|screen: beats the floor|-10|1" ] || { echo "a single pair, 10 us lower: $got"; return 1; }
+  got="$(steplab_verdicts screen-not-better 5)" || { echo "$got"; return 1; }
+  [ "$got" = $'slower|screen: not better in one pair|10|1\nunder|screen: not better in one pair|-2|1' ] || { echo "a single pair, slower or lower by less than the floor: $got"; return 1; }
+  got="$(steplab_verdicts screen-beats)" || { echo "$got"; return 1; }
+  [ "$got" = "var|no floor: not judged|-10|1" ] || { echo "a single pair without a floor: $got"; return 1; }
+  got="$(steplab_verdicts no-pair 5)" || { echo "$got"; return 1; }
+  [ "$got" = "var|no verdict|null|" ] || { echo "no pair: $got"; return 1; }
   out="$(bash "$LAB/steplab-summary.sh" "$LAB/check/fixtures/steplab/beyond" --floor 5 2>&1)" || { echo "summary.sh failed: ${out//$'\n'/ | }"; return 1; }
   [ "$(grep -E '^ +[123] +(ref|slow|same) +' <<<"$out" | awk '{ printf "%s%s ", $1, $2 }')" = "1ref 1slow 1same 2ref 2slow 2same 3ref 3slow 3same " ] \
     || { echo "the rows are not one per run in round order: ${out//$'\n'/ | }"; return 1; }
@@ -1114,7 +1122,7 @@ check_steplab_live() {
   grep -q '^Rule: a variant is beyond the noise when' <<<"$out" || { echo "the rule is not printed: ${out//$'\n'/ | }"; return 1; }
   for f in ref-1 ref-2 twin-1 twin-2; do
     jq -e '.steplab.time_wait.before.max >= 0 and .steplab.time_wait.after.max >= 0 and .steplab.time_wait.before.all >= .steplab.time_wait.before.in_range
-           and (.steplab.time_wait.before.per_address | length) == 4 and .steplab.time_wait.before.limit_per_address == 1000
+           and (.steplab.time_wait.before.per_address | length) == 4 and .steplab.time_wait.before.limit_per_address == 2500
            and .per_second_probes == false and .valid == true and .idle.held_at_end == 200 and (.server.env | index("APP_TELEMETRY=0") != null)
            and .load.warmup == "20,3" and .results.steps[0].cpu_usec_per_request > 0' "$dir/$f.json" >/dev/null \
       || { echo "$f.json does not hold the run as the runner sets it up: $(jq -c '{valid, steplab: .steplab.time_wait, env: .server.env, idle: .idle.held_at_end}' "$dir/$f.json" 2>&1)"; return 1; }

@@ -62,7 +62,7 @@ printf '%-14s %6s %9s %17s %8s  %-22s %9s  %s\n' variant valid "median us" "min 
 jq -r "$fmt"'.variants[] | [.variant, "\(.valid_runs)/\(.runs)", (.median_us | r1), "\(.min_us | r1) to \(.max_us | r1)", (.median_p99_ms | r2),
     (if .reference then "reference" elif (.pairs | length) == 0 then "none" else (.pairs | map(.difference_us | sgn) | join(" ")) end),
     (if .reference then "-" else (.median_difference_us | sgn) end),
-    (if .reason != null and .verdict != "reference" and .verdict != "beyond the noise" and .verdict != "within the noise" then "\(.verdict): \(.reason)" else .verdict end)] | join("\t")' "$summary" |
+    (if .reason != null and .verdict != "reference" and .verdict != "beyond the noise" and .verdict != "within the noise" and (.verdict | startswith("screen:") | not) then "\(.verdict): \(.reason)" else .verdict end)] | join("\t")' "$summary" |
   while IFS=$'\t' read -r variant valid med range p99 diffs mdiff verdict; do
     printf '%-14s %6s %9s %17s %8s  %-22s %9s  %s\n' "$variant" "$valid" "$med" "$range" "$p99" "$diffs" "$mdiff" "$verdict"
   done

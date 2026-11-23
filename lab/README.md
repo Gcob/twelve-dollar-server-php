@@ -897,16 +897,18 @@ reference.** Runs are **interleaved by round**: round 1 runs every variant once 
 request over the plateau (what the aggregator reads from the cgroup). A run counts when its JSON is valid. A variant's **paired
 differences** are its number minus the reference's of the same round; a round where either run is invalid has no pair. A variant is
 `beyond the noise` when it has at least 2 pairs, **every pair has the same sign** (a zero has none) **and** the median paired difference
-is at least `--floor <us>` in absolute value; otherwise `within the noise`. Fewer than 2 pairs: `no verdict`, with the count. Without
+is at least `--floor <us>` in absolute value; otherwise `within the noise`. **One pair is a screen, not a verdict:** with a floor, a
+variant that is lower than the reference by at least the floor is `screen: beats the floor`, any other is `screen: not better in one
+pair` (the first look that decides which variants deserve more pairs). No pair: `no verdict`. Without
 `--floor`: `no floor: not judged` (the floor comes from an A/A calibration: two identical variants, the largest median paired difference
 they show). The rule is printed under the tables.
 
 **TIME_WAIT sockets.** Before each run the runner counts the TIME_WAIT sockets on k6's source addresses (`probe.sh time-wait`: the VM's
 `/proc/net/tcp`, a socket counts for an address that is at either end, because the side that closes first keeps the port busy) and waits
-until the busiest address holds at most `--time-wait-max` (default 1,000). A closed connection keeps its port for 60 s, the VM's
+until the busiest address holds at most `--time-wait-max` (default 2,500). A closed connection keeps its port for 60 s, the VM's
 ephemeral ports are 55000 to 65535 (about 10,500 per address) and k6 opens about one connection per VU, a quarter of them on each
-address (1,200 at 24,000 req/s), so under 1,000 a run has 9,500 free ports per address, and above it the sockets of the run before are
-still there. A count that does not drop within `--time-wait-wait` seconds (default 150) is a harness failure. The counts before and after
+address (1,200 at 24,000 req/s), so under 2,500 a run has 8,000 free ports per address, six times what it needs, and the 1,134 per address that a run at that rate
+leaves do not make the next one wait; above it the sockets of earlier runs are still there. A count that does not drop within `--time-wait-wait` seconds (default 150) is a harness failure. The counts before and after
 each run (per address, the busiest, the total on k6's addresses, the total on the VM) are in the run's JSON, under `steplab.time_wait`,
 and the busiest address before each run is in the table (`tw/addr`).
 
@@ -919,7 +921,7 @@ with 60,000 idle connections is about 4 minutes a run, plus the drain of the TIM
 
 `check_steplab_verdicts` runs the verdict on recorded run files (`lab/check/fixtures/steplab/<case>/`: identical variants, a variant
 1 ms slower in every round, mixed signs, the same sign under the floor, an invalid round of the variant or of the reference, a single
-pair), and `check_steplab_live` runs two variants for two rounds at a low rate and reads the tables' shape.
+pair that is slower, lower by less than the floor or lower by more than it, and no pair), and `check_steplab_live` runs two variants for two rounds at a low rate and reads the tables' shape.
 
 ### `lab/syscalls.sh`: syscalls per request
 
