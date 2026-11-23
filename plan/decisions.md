@@ -300,6 +300,13 @@
   cache-256m gets no extra pairs alone (D60: one pair under the floor stops). The idle client's unexplained wall
   (7,020 sockets on a free-looking address) is left alone: the retry absorbs it, and no number depends on it
   (project manager, phase 5, 2026-11-23 07:48, scope 10's hand-back).
+- **D65:** two more `APP_PRAGMAS=mmap-off` pairs at 24,000 req/s, past D60's one-pair stop. The pr-reviewer found
+  that the 2.57 µs floor is set by the one A/A pair whose run failed the 97 % rule (the other four are within 0.3
+  µs), and that the three pairs which turn mmap off all land 1.3 to 2.2 µs under their references (mmap-off -1.31,
+  cache-256m -2.22, cache-256m with exclusive -1.87): about 6 % of a request, not a tiny margin. The pairs are run
+  while the VM is quiet and reported against both floors (2.57, and the four passing pairs'); the S6 choice itself
+  goes to Jacob with those numbers. The same developer runs the held rate's control (the skeleton without S1-d at
+  22,250 and 23,000 req/s), the review's 🟠 (project manager, phase 5, 2026-11-23 09:14, pr-reviewer pass 1).
 
 ## History
 

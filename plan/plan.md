@@ -19,10 +19,6 @@ setting would have closed the idle connections; settled as D51, D53, D56 to D59.
   `aws/phase-5-x86-calibration-policy.json`: `ca-central-1`, one `c5.2xlarge`, everything tagged, deleted at the end)
   to your personal CLI user, and tell me the CLI profile's name. Scopes 1 to 11 are done and pushed; their reviews
   run while I wait.
-- ⚪ **Not blocking, scope 11:** the variants together held 22,000 req/s against the baseline's 24,000, with the
-  same cost per request (27.58 µs against 27.15, inside the noise). I read the lower rate as the harness (D47), not
-  S1-d: its limit never fired. A 12-minute control of the skeleton alone would settle it. Answer `control` to run it;
-  otherwise it goes to phase 5b's notes.
 
 Q13 to Q15 are answered (A, A, A) and moved to
 [2026-11-22-2145.ronde-4.md](questions/2026-11-22-2145.ronde-4.md); your fail-fast principle is D60.
@@ -58,7 +54,7 @@ step's choice backed by a measurement.
 | 7 | Score           | `bench/load.js` ramps, x86 calibration                      | More than 71,000 held for 5 minutes                     |
 | 8 | Submit          | The PR to the challenge repo                                | CI green                                                |
 
-**Decisions:** 64 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
+**Decisions:** 65 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
 is a prediction we re-measure, not an answer.
 
 ### Phase 5a scopes (running)
