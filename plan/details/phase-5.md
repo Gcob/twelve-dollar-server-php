@@ -28,7 +28,7 @@ and the PHP version are phase 5b.
 
 ## Decisions of this phase
 
-From Jacob (D47 to D49, D60) and the project manager (D50 to D59), in [decisions.md](../decisions.md):
+From Jacob (D47 to D49, D60, D61) and the project manager (D50 to D59), in [decisions.md](../decisions.md):
 
 - **D49, how a variant is judged:** µs of CPU per request (median of its runs) and its profile; the per-second p99
   beside it when a variant moves latency without moving CPU (S9). The held rate only at the end, on the chosen
@@ -61,6 +61,8 @@ From Jacob (D47 to D49, D60) and the project manager (D50 to D59), in [decisions
 - **D60, fail fast (Jacob):** each variant is screened with one pair and stops there unless it beats the floor; a
   spike step that fails its gate ends the spike; S1-b (scope 3) is built only if S1-d adds more than 15 % at 150,000
   users; variants under the floor get one macro pair at most.
+- **D61, the Swoole entries in our lab (Jacob):** mattsplat's and tzimpel's entries run unchanged in our realistic
+  mode after scope 6 (scope 13), one pair each: two Mac-to-bench factors for the skeleton's bench estimate.
 - **D55, the x86 calibration:** one `c5.2xlarge` on Jacob's AWS account running the lab as the Mac does, only after
   his go; the policy waits in the factory.
 
@@ -79,6 +81,7 @@ From Jacob (D47 to D49, D60) and the project manager (D50 to D59), in [decisions
 | 9   | `feat(app): group commit per loop turn and a background checkpointer`       | with `APP_GROUP_COMMIT=1` and with `APP_CHECKPOINTER=<ms>`, 42/42; a check sends two writes in one loop turn and sees one commit and both responses after it; a pipelined like then feed on one connection come back in order, and two pipelined likes both get answered; a write whose response was sent is still there after `kill -9` and a reopen; a 2-minute realistic smoke at 24,000 req/s with the checkpointer at 1,000 ms keeps the WAL's `mxFrame` under 2 times the most frames written between two checkpoints, with the server's autocheckpoint off; `lab/check.sh` all `ok` |
 | 10  | `docs(lab): S6, S8 and S9, measured`                                        | `lab/results/<date>-cpu-steps/README.md`: predictions copied unchanged, each variant against the reference at 24,000 req/s (D51), its µs/req median and spread, p99 (S9: per-second p99 and stalled seconds), the profile of each chosen variant, each prediction marked, the chosen variant per step; `summarize.sh` regenerates its tables |
 | 11  | `docs(lab): the chosen variants together`                                   | `lab/results/<date>-step-lab-together/README.md`: the chosen variants as one configuration, its µs/req (median of 3 holds of 5 minutes), profile and held rate at `s = 0.02`, against the baseline, step by step; `summarize.sh` regenerates its tables |
+| 13  | `docs(lab): the two Swoole entries in our realistic mode`                   | runs after scope 6 (D61): `lab/results/<date>-swoole-entries/README.md` holds the predictions (copied unchanged), `php-swoole-mattsplat` and `php-swoole-tzimpel` run unchanged on the skeleton's rate and shape (12,000 req/s, 60,000 idle), one pair each against the skeleton (D60), their µs/req, connections held and memory, the two Mac-to-bench factors and the skeleton's bench estimate; the entries credited in `lab/NOTICE.md`; `summarize.sh` regenerates its tables |
 | 12  | `docs(lab): the x86 calibration on EC2`                                     | only with Jacob's go (D55): a CPU layout for an 8-vCPU host in `lab/lib.sh`, the baseline's skeleton and the chosen configuration on a `c5.2xlarge`, server on one vCPU, 3 runs each at a fixed rate, µs/req and the x86 factor against the Mac; the instance terminated and the policy removed. Without his go by then: skipped, moved to phase 7 |
 
 Vertical slices: scope 1 is the instrument every later scope uses. Scopes 2 to 5 are S1's three variants (S1-d, S1-b,
@@ -354,6 +357,22 @@ build during a measurement. New for phase 5:
   🤝's formula on the Mac (arm64, not a score), next to the µs S1-d adds at 100,000, 150,000 and 200,000 users (scope
   6), so the users aren't read without the reconnects' cost.
 
+## Scope 13: the two Swoole entries in our lab (D61)
+
+- **Runs after scope 6**, while the VM is quiet, before scope 7 (its rate and its skeleton pair are scope 6's).
+- **What:** the two real-PHP entries at 71,000, `reference/twelve-dollar-server-challenge/submissions/php-swoole-mattsplat/`
+  and `php-swoole-tzimpel/` (MIT, credited in `lab/NOTICE.md`), run unchanged (their PHP code, their config) in
+  `realistic.sh` on our lab image: PHP 8.3 from apt with Swoole 6.2.6 (`php-lab:8.3-apt`; they used 6.2.3: the
+  README says so). tzimpel's Swoole patch (the receive buffer freed after each request) comes from his `build.sh`:
+  applied if it's cheap (a patch on our Swoole build in its own image tag), else stock Swoole, said in the README. A
+  thin start wrapper only if their `start.sh` can't run as is in the lab container (env, paths), shown in the README.
+- **Runs (D60):** one pair each against the skeleton (`steplab.sh`, 12,000 req/s, `s = 0.02`, 60,000 idle, probes on
+  for the memory and the fds), plus the scope 6 A/A floor for reading the pairs. If an entry can't hold 60,000 idle in
+  2 GiB, that is a result: one rerun at the most it held, said so.
+- **What it gives:** the leaderboard measured them on the bench's VM at 94 µs (mattsplat) and 101 µs (tzimpel) per
+  request ([prior-art.md](prior-art.md)). Their Mac µs give two Mac-to-bench factors (bench over Mac); if they agree,
+  the skeleton's Mac µs converts to a bench estimate, written as scope 12's prediction before scope 12 runs.
+
 ## Scope 12: the x86 calibration (D55)
 
 - **Only with Jacob's go** (🔴 item in 👉). The IAM policy waits in the factory (`aws/`), least privilege, tagged
@@ -363,7 +382,8 @@ build during a measurement. New for phase 5:
   8-vCPU host (today's `4-11` for k6 doesn't exist there), picked by an env variable. The server pinned to one vCPU whose
   hyperthread sibling stays idle, k6 on the others: the same harness as the Mac. SSH open to Jacob's IP only. The
   instance's CPU model is recorded (`/proc/cpuinfo` model name only).
-- **Runs:** `steplab.sh` with two variants, the baseline's skeleton and scope 11's configuration, 3 runs each at a
+- **Runs:** `steplab.sh` with two variants, the baseline's skeleton and scope 11's configuration (plus scope 13's two
+  Swoole entries if they cost under 30 minutes more, so their factor is checked on x86), 3 runs each at a
   fixed rate the Xeon holds (found with a short staircase), plus the same pair on the Mac at the same rate. The x86
   factor: µs/req on the Xeon over the Mac's.
 - **The end:** the instance terminated, its volume deleted, the key pair and security group removed, the policy
@@ -418,6 +438,16 @@ A/A floor of its rate (D51).
 12. **Together:** the chosen variants cost 21 to 25 µs/req at 24,000 req/s (8 to 22 % under 27.15), the held rate at
     `s = 0.02` stays the harness's floor (about 23,400 req/s, D47), and S6 is still the largest step of the profile.
 13. **x86 (if run):** a request costs 1.8 to 3 times more on the `c5.2xlarge`'s Xeon than on the M3.
+
+Added on 2026-11-22 at 22:08 with scope 13 (D61), before any of its runs:
+
+14. **The Swoole entries at 12,000 req/s with 60,000 idle on the Mac:** mattsplat 35 to 55 µs/req, tzimpel 40 to 60
+    (his own Mac reading was 50 to 60 at fewer connections); both above the skeleton's S1-a.
+15. **The Mac-to-bench factors** (94 and 101 over their Mac µs): 1.7 to 2.7 each, within 25 % of each other.
+16. **Memory:** both hold the 60,000 idle within 2 GiB; mattsplat's `memory.current` is 2 to 4 times tzimpel's (its
+    64 KiB receive buffer stays after each idle connection's first request; tzimpel's patch frees it).
+17. **The skeleton on the bench** (its Mac µs at 12,000 times the mean factor): 45 to 75 µs per request, so scope 12
+    should read 1.7 to 2.7 times the Mac on the Xeon.
 
 ## Out of scope
 

@@ -270,6 +270,13 @@
   0.1 %) are skipped unless nearly free to test. Changes D51's pairs per variant (Jacob, 2026-11-22 21:45, through the
   planning session: "avoid losing time, and avoid optimizing tiny, almost insignificant margins";
   [round 4](questions/2026-11-22-2145.ronde-4.md)).
+- **D61:** phase 5a gets a scope 13, after scope 6: the two real-PHP entries at 71,000 (`php-swoole-mattsplat` and
+  `php-swoole-tzimpel`, MIT, credited) run unchanged in our realistic mode on the Mac at the skeleton's rate and shape,
+  one pair each (D60): their µs per request, the connections they hold and their memory. Against the leaderboard's 94
+  and 101 µs on the bench's VM, they give two Mac-to-bench factors; if they agree, the skeleton's Mac µs converts to a
+  bench estimate, scope 12's prediction. Our image runs Swoole 6.2.6 (theirs 6.2.3); tzimpel's buffer patch is applied
+  if cheap, else stock Swoole, said so. Both entries join scope 12's AWS runs if that costs little (Jacob, 2026-11-22
+  22:10, through the planning session, [notes.md](notes.md) 22:03).
 
 ## History
 
