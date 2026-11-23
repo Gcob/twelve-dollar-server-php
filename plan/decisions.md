@@ -201,21 +201,30 @@
   if Jacob says go. **5b:** S7, S2, the event loop, S4, S3, S5, the PHP version and the FFI driver to `libsqlite3`
   (the spike's FFI numbers come first). 5a holds the walls and 75 % of the profile; 12 scopes is already the longest
   run so far ([Q13](plan.md), `run`, project manager, phase 5, 2026-11-22).
-- **D51:** the step lab compares variants with `lab/steplab.sh`: fresh 60 s realistic runs, interleaved (A B A B A B),
-  60,000 idle connections, no per-second probes, telemetry off, one offered rate per step (12,000 req/s for S1, so that
-  a reconnect on every request fits in the CPU; 24,000 for the CPU steps, the baseline's); a variant's number is the
-  median µs/req of its runs, and a difference counts only beyond the spread of the reference's own runs (the
-  baseline's unprofiled pair differed by 5 %). 3 runs per variant, 5 when a difference is within twice the spread
-  (project manager, phase 5, 2026-11-22).
+- **D51:** the step lab compares variants with `lab/steplab.sh`: fresh 60 s realistic runs, interleaved by round
+  (A B A B ...), 60,000 idle connections, no per-second probes, telemetry off, one offered rate per step (12,000 req/s
+  for S1, so that a reconnect on every request fits in the CPU; 24,000 for the CPU steps, the baseline's). An A/A
+  calibration comes first (the skeleton against itself, 5 pairs at each rate): it gives the noise and the floor, the
+  smallest difference the method sees. A variant's number is the median µs/req of its runs; the verdict reads the
+  paired differences (each run against the reference's run of the same round): "beyond the noise" when every pair has
+  the same sign and the median difference passes the floor. A variant predicted under the floor is judged on its micro
+  bench or its syscall count, the macro only checking that it costs nothing. Why: with the baseline's noise (σ about
+  0.5 µs a run), "the median difference against the reference's spread" called identical variants different 17 % of
+  the time at 3 runs and caught a real 1 µs only 61 % of the time (project manager, phase 5, 2026-11-22, revised after
+  the plan review, [PLAN-2026-11-22-2110](reviews/PLAN-2026-11-22-2110.md) item 4).
 - **D52:** the io_uring spike passes its gate: the bench builds and starts a submission on the box itself, with
   systemd as user `deploy` (`LimitNOFILE=65535`, `CAP_NET_BIND_SERVICE`), not in Docker (`LEADERBOARD.md`, "How each
   entry is scored"), and more than 30 io_uring entries are scored there. In the lab, only an io_uring server runs with
   Docker's seccomp filter off (`--security-opt seccomp=unconfined`), which is closer to the bench than a custom
   profile (project manager, phase 5, 2026-11-22).
-- **D53:** S1-d's shape: `APP_SOFT_CONN_LIMIT=<n>`; a response built while more than `n` client connections are open
-  carries `Connection: close`, and the server closes that connection once the response is written. An idle connection
-  is never closed (S1-c scored 0). When `accept` fails for lack of fds, the listening event pauses until a connection
-  closes, instead of spinning (project manager, phase 5, 2026-11-22).
+- **D53:** S1-d's shape: `APP_SOFT_CONN_LIMIT=<n>`; a response built while more than `n` client connections are
+  open (strictly more: the `n`-th keeps alive) carries `Connection: close`, and the server closes that connection once
+  the response is written. An idle connection is never closed (S1-c scored 0). S1-d's runs set `n` to their idle
+  count, so the idle connections stay and every k6 request reconnects (`n = 0` would close the idle ones after their
+  first `GET /health`, and a closed idle connection makes a realistic run invalid). Separately, when `accept` fails for
+  lack of fds, the listening event pauses until a connection closes instead of spinning: a fix in every server on the
+  DIY loop, not a variant (project manager, phase 5, 2026-11-22, revised after the plan review,
+  [PLAN-2026-11-22-2110](reviews/PLAN-2026-11-22-2110.md) items 2 and 14).
 - **D54:** syscalls are counted with `strace -c -f` attached from a sidecar container during a fixed low-rate run
   (2,000 req/s), divided by the requests of the same window. Only the counts are kept: strace slows the server, so its
   times say nothing about the server's (project manager, phase 5, 2026-11-22).
@@ -223,6 +232,27 @@
   one vCPU whose hyperthread sibling stays idle, k6 on the others: µs/req of the same two configurations on the Xeon and
   on the Mac at one rate. Nothing is created before Jacob's go; the temporary IAM policy waits in the factory
   ([notes.md](notes.md) 20:39; project manager, phase 5, 2026-11-22).
+- **D56:** the io_uring spike proves the fail-fast answer on one ring: 60,000 connections held on one ring while the
+  process's own fds stay under 100 (direct descriptors take no fd), the stress test and the µs/req. A ring's fixed-file
+  table can't be larger than `RLIMIT_NOFILE` (the kernel answers `EMFILE`; the reference's io_uring entries run 8 to 10
+  rings for that reason), so 80,000 connections need two rings: a stretch goal inside the same time box. If FFI's cost
+  eats the gain on one ring, a second ring changes nothing ([Q15](plan.md), `run`; plan review, settled by the
+  project manager, phase 5, 2026-11-22, [PLAN-2026-11-22-2110](reviews/PLAN-2026-11-22-2110.md) item 1).
+- **D57:** a harness that a measuring scope will use is smoked at the real shape in the scope that builds it, before
+  the quiet VM: scope 1 runs one steplab pair at 60,000 idle and 24,000 req/s; scope 2 a 5-minute churn at the fd
+  wall's shape (64,000 idle, soft limit 64,000, 12,000 req/s). Every runner that churns connections counts the
+  TIME_WAITs on k6's source addresses before each run and waits for them to drain (the VM's ports are 55000 to 65535,
+  about 10,500 per k6 address) (plan review, settled by the project manager, phase 5, 2026-11-22,
+  [PLAN-2026-11-22-2110](reviews/PLAN-2026-11-22-2110.md) item 3).
+- **D58:** group commit finds the end of a loop turn by driving the loop itself: with `APP_GROUP_COMMIT=1`,
+  `EventBase::loop(LOOP_ONCE)` in a loop, the flush after each call. A zero-timeout timer added during a callback runs
+  only after the next turn's I/O callbacks in libevent, so it would flush a turn late. Unset, `dispatch()` as today
+  (plan review, settled by the project manager, phase 5, 2026-11-22,
+  [PLAN-2026-11-22-2110](reviews/PLAN-2026-11-22-2110.md) item 5).
+- **D59:** with group commit, a connection whose write waits for the flush stops parsing until that write's response
+  is in its write buffer, so pipelined responses stay in request order. k6 never pipelines, so it costs the bench
+  nothing (plan review, settled by the project manager, phase 5, 2026-11-22,
+  [PLAN-2026-11-22-2110](reviews/PLAN-2026-11-22-2110.md) item 6).
 
 ## History
 

@@ -5,8 +5,9 @@
 **Since your last read:** phase 5 started at 20:48 on your go. Its plan is
 [details/phase-5.md](details/phase-5.md): 12 scopes, predictions written before any measurement. S1's fd wall
 first, with the io_uring spike beside it: its gate passes (the bench runs submissions with systemd, not Docker, D52).
-Then SQLite's feed query, the write and durability. I split the step lab in two runs (Q13). Progress in
-[run.md](run.md).
+Then SQLite's feed query, the write and durability. I split the step lab in two runs (Q13). The plan review
+(NOT_OK, 2 🔴) found that one io_uring ring can't hold more than 65,535 connections (Q15, D56) and that S1-d's first
+setting would have closed the idle connections; settled as D51, D53, D56 to D59. Progress in [run.md](run.md).
 **Project:** this repo, `plan/` · **Submission:** `submissions/php-<runtime>-Gcob/` · **Jira:** none
 
 ## 👉 Your turn
@@ -14,9 +15,9 @@ Then SQLite's feed query, the write and durability. I split the step lab in two 
 > **Answer freely:** a letter or `ok`, your own choice (`other: …`), `?` if it's unclear, or
 > `badly framed: …` if an option is missing or the question doesn't hold.
 
-Two questions, neither blocking now: the run goes on with the hypothesis written under each.
+Three questions, none blocking now: the run goes on with the hypothesis written under each.
 
-### ❓ Q13/14 [run, scope] : the step lab in two runs, 5a now and 5b next?
+### ❓ Q13/15 [run, scope] : the step lab in two runs, 5a now and 5b next?
 
 **Not blocking:** coded as A. The whole step lab (S1 to S9, the spike, the PHP version, x86) would be about 20
 scopes, the longest run so far by far, with the quiet VM gating every measuring scope (D15).
@@ -40,7 +41,7 @@ scopes, the longest run so far by far, with the quiet VM gating every measuring 
 
 **Answer:**
 
-### ❓ Q14/14 [run, aws] : go for the x86 calibration on your AWS account (scope 12)?
+### ❓ Q14/15 [run, aws] : go for the x86 calibration on your AWS account (scope 12)?
 
 **Not blocking until scope 12**, the last one (D55). One `c5.2xlarge` (8 vCPUs, a Xeon like the bench's family,
 about 0.40 USD an hour, `m5.2xlarge` if there's no capacity) running the lab as the Mac does: the server on one
@@ -57,6 +58,33 @@ profile name to use (it stays in the factory), and remove the policy when I say 
 **Recommendation:** A: the x86 factor says which wall binds on the bench's hardware, and 5b's order depends on it.
 
 **Flips if:** you want one AWS session only for the whole project: B.
+
+**Answer:**
+
+### ❓ Q15/15 [run, spike] : the io_uring spike on one ring (60,000 connections), or two rings (80,000) now?
+
+**Not blocking:** coded as A (D56). A ring's table of direct descriptors can't be larger than the process's fd limit
+(65,535): the kernel refuses it, and the io_uring entries of the leaderboard run 8 to 10 rings for that reason. So
+"more than 65,535 connections in one PHP process" needs two rings, and a harder loop (wait on one ring, enter the
+other when it has work).
+
+- **A.** One ring first: 60,000 connections held with the process's own fds under 100 (the proof that the
+  connections take no fd), the stress test, the µs per request. The second ring is a stretch goal in the same 3-hour
+  time box.
+  **Aims at:** the fail-fast answer: does FFI pay for itself?
+  **For:** if FFI's cost eats the gain on one ring, a second ring changes nothing; the multi-ring loop is needed
+  anyway when the app moves onto the ring (its own phase).
+  **Against:** "past 65,535 in PHP" may stay an inference from the kernel and the other entries.
+- **B.** Two rings now, 80,000 connections, a 5-hour time box.
+  **Aims at:** the spectacular part, shown in the spike: nobody did it in PHP.
+  **Against:** the two-ring wait is the hardest part to get right through FFI, before we know FFI pays.
+
+**Confidence:** A 60 % · B 40 %
+
+**Recommendation:** A.
+
+**Flips if:** you want the spike itself to show more than 65,535 connections in one PHP process, whatever the time:
+B.
 
 **Answer:**
 
@@ -91,7 +119,7 @@ step's choice backed by a measurement.
 | 7 | Score           | `bench/load.js` ramps, x86 calibration                      | More than 71,000 held for 5 minutes                     |
 | 8 | Submit          | The PR to the challenge repo                                | CI green                                                |
 
-**Decisions:** 55 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
+**Decisions:** 59 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
 is a prediction we re-measure, not an answer.
 
 ### Phase 5a scopes (running)
@@ -106,7 +134,7 @@ switch: unset, the server is phase 4's skeleton.
 | 2  | `feat(app): Connection: close past a soft connection limit`             | S1-d: closes past the limit, 42/42, more connections over time than fds  |
 | 3  | `feat(app): several processes on SO_REUSEPORT`                          | S1-b: 42/42 with 2 workers, both answer                                  |
 | 4  | `feat(lab): FFI micro benches for an io_uring loop`                     | ns per FFI op, JIT on and off; the spike's stop rule read                |
-| 5  | `feat(lab): a no-op server on an io_uring ring through FFI`             | 80,000 connections in one process, 0 mismatches, a µs/req; or a stop and why |
+| 5  | `feat(lab): a no-op server on an io_uring ring through FFI`             | 60,000 connections on one ring with no fd each (stretch: 80,000 on two), 0 mismatches, a µs/req; or a stop and why |
 | 6  | `docs(lab): S1 and the io_uring spike, measured`                        | the cost of a reconnect, S1-b's cost, the fd-wall run, the chosen S1     |
 | 7  | `feat(app): feed query, fetch and pragma variants`                      | each variant 42/42, ns per feed                                          |
 | 8  | `feat(app): response write and syscall variants`                        | each variant 42/42, its syscall count                                    |
