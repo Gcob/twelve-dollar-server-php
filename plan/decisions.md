@@ -21,7 +21,7 @@
 - **D9:** the UML diagrams stay in Mermaid, in the Markdown ([Q5](questions/2026-11-21-0856.ronde-1.md)).
 - **D10:** Workerman runs in the bake-off with its 5 request caches patched out in `build.sh`; one extra run with the
   caches on shows what they buy ([Q6](questions/2026-11-21-0914.ronde-1.md)).
-- **D11:** the whole plan (plan, decisions, details, questions, notes) lives in this repo under `plan/` and is
+- **D11:** (the factory's working files are private since 2026-11-22, see D48) the whole plan (plan, decisions, details, questions, notes) lives in this repo under `plan/` and is
   committed in public, for transparency. Anything about other people's private exchanges (`communications/`) stays
   out, ignored by git (Jacob, 2026-11-21).
 - **D12:** (the "no worktree, code on `main`" part is replaced by D14 from phase 3) the work runs as an autonomous run (skill `autonomous-run`) with three changes: the
@@ -183,6 +183,13 @@
   above passes too: a conservative reading), with no new holds. Three 60 s cost runs that missed the 97 % rule by 0.1
   to 0.3 points count for their µs per request, which the rule doesn't measure (project manager, phase 4, 2026-11-22,
   scope 5's questions).
+- **D48:** since 2026-11-22, the factory's working files are private: `run.md`, `run.yml`, `state/`, `reviews/`,
+  `runs/` and `snapshots/` live in a private repo next to this one, reached through git-ignored symlinks under `plan/`,
+  along with raw machine diagnostics and the push guard's denylist. The plan, the decisions, the notes, the details,
+  the questions, the code and the lab's results stay public. A push guard (`tools/public-guard.sh`, before every push
+  and in `lab/check.sh`) refuses e-mail addresses, home paths and the denylist's words. Changes D11; the earlier
+  versions of the moved files stay in this repo's history (Jacob, 2026-11-22 18:31 and 18:35,
+  [notes.md](notes.md)).
 
 ## History
 
