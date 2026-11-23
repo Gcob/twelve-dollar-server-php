@@ -1529,7 +1529,7 @@ check_steplab_live() {
   local out dir rc=0 pairs
   dir="$(mktemp -d)"
   out="$(bash "$LAB/steplab.sh" --image 8.5 --rate 100 --think-scale 0.2 --idle 200 --seconds 6 --pairs 2 --warmup 20,3 --floor 5 \
-    --variant ref= --variant twin=APP_UNUSED=1 --out "$dir" 2>&1)" || rc=$?
+    --idle-time-wait-max 0 --variant ref= --variant twin=APP_UNUSED=1 --out "$dir" 2>&1)" || rc=$?
   [ "$rc" = 0 ] || { echo "lab/steplab.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
   [ "$(grep -E '^ +[12] +(ref|twin) +' <<<"$out" | awk '{ printf "%s%s ", $1, $2 }')" = "1ref 1twin 2ref 2twin " ] \
     || { echo "the rows are not one per run in round order: ${out//$'\n'/ | }"; return 1; }

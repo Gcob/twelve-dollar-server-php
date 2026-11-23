@@ -22,10 +22,11 @@
 #  - k6 opens about one connection per VU, a quarter of them per address (1,200 at 24,000 req/s) and dials again when a port is taken, so
 #    the run waits for the busiest of its addresses to hold at most --time-wait-max (default 2,500): under it a run has 8,000 free ports per
 #    address, six times what it needs, and the sockets a run leaves (1,134 per address at that rate) do not make the next one wait.
-#  - The idle client opens its connections once, binds each to a random port of its address and never retries, so every socket already on
-#    that address is a port a connection may collide with (one in four at 2,500 of 10,000: 60,000 connections cannot all start). With --idle
-#    the run waits for the busiest of the idle client's addresses to hold at most --idle-time-wait-max (default 0), about a minute after a
-#    run that held 60,000: the sockets of the run before are what the client would hit (`Cannot assign requested address`).
+#  - The idle client opens its connections once and binds each to a random port of its address. A port whose 4-tuple matches a TIME_WAIT
+#    socket fails at connect (`Cannot assign requested address`); the client binds again (another random port) and, after 25 failures in
+#    a row, moves to another address, so the sockets of the run before no longer make a run wait: --idle-time-wait-max defaults to 100,000
+#    (never). `--idle-time-wait-max 0` waits for the busiest of the idle client's addresses to drain, about a minute after a run that held
+#    60,000. The retries a run needed are in its JSON (`idle.bind_retries`).
 # A count that does not drop within --time-wait-wait seconds (default 150) is a harness failure: something else is churning connections.
 # The counts, before and after each run, are in the run's JSON (`steplab.time_wait`).
 #
@@ -57,7 +58,7 @@ command_line="lab/steplab.sh $*"
 command_line="${command_line//$REPO/.}"
 
 image="" rate="" think_scale="" seconds="" pairs="" idle="" warmup="" floor="" label="" out=""
-tw_max=2500 idle_tw_max=0 tw_wait=150 local_ips="127.0.1.1-127.0.1.4"
+tw_max=2500 idle_tw_max=100000 tw_wait=150 local_ips="127.0.1.1-127.0.1.4"
 # The idle client's source addresses (FIRST_OCTET to LAST_OCTET of lab/conns/client.php): its sockets keep their ports for 60 s too.
 idle_ips="127.0.0.2-127.0.0.254"
 pass_through=()

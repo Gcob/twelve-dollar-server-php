@@ -1052,11 +1052,12 @@ connection keeps its port for 60 s and the VM's ephemeral ports are 55000 to 655
 - **k6's addresses:** k6 opens about one connection per VU, a quarter of them on each address (1,200 at 24,000 req/s), and dials again when a
   port is taken. The run waits until the busiest holds at most `--time-wait-max` (default 2,500): a run then has 8,000 free ports per address,
   six times what it needs, and the 1,134 per address that a run at that rate leaves do not make the next one wait.
-- **The idle client's addresses (with `--idle`):** it opens its connections once, binds each to a random port of its address and never
-  retries, so every socket already there is a port a connection may collide with (one in four at 2,500 of 10,000: 60,000 connections cannot all
-  start, `Cannot assign requested address`). The run waits until the busiest holds at most `--idle-time-wait-max` (default 0), which is about a
-  minute after a run that held 60,000 idle connections. A limit of 2,500 here, as for k6, is not enough: with 200 sockets left
-  on the first address a run of 60,000 connections already failed to bind.
+- **The idle client's addresses (with `--idle`):** it opens its connections once and binds each to a random port of its address. A port
+  whose 4-tuple matches a TIME_WAIT socket fails at connect (`Cannot assign requested address`): the client binds again (another random
+  port) and, after 25 failures of one connection in a row, moves to another address; it gives up after 200. A run therefore does not wait
+  for the sockets of the one before: `--idle-time-wait-max` defaults to 100,000 (never). `--idle-time-wait-max 0` brings the wait back
+  (the busiest address drained, about a minute after a run that held 60,000 idle connections). The retries a run needed are in its JSON,
+  `idle.bind_retries`.
 
 A count that does not drop within `--time-wait-wait` seconds (default 150) is a harness failure. The counts before and after
 each run (per address that holds any, the busiest, k6's and the idle client's busiest, the total on the clients' addresses, the total on the VM) are in the run's JSON, under `steplab.time_wait`,
@@ -1175,9 +1176,11 @@ more containers join it: the probe of `macro.sh` (`lab/macro/probe.sh`, from out
 - **Source addresses rotate over 127.x.** One client address has only as many ephemeral ports as `ip_local_port_range` gives
   (10,536 on the lab's VM at the time of writing, 28,232 with Linux's default of 32768-60999; the client reads the file and
   keeps 500 ports in reserve), so the client binds each connection to `127.0.0.N:0` (`socket.bindto`) and moves to another
-  address before the ports run out. The next address is one that is the local address of no socket at all: a run right after
-  another one skips the addresses whose `TIME_WAIT` sockets (the client closes first, so they sit on its side, for 60 s) are
-  still there, and never fails on `bind`. `127.0.0.1` stays for the probe's fresh request. No `sysctl` is changed: the Docker
+  address before the ports run out. The next address is one that is at neither end of any socket: a run right after
+  another one skips the addresses whose `TIME_WAIT` sockets (for 60 s, on the client's side when it closed first, on the server's
+  when the server did) are still there. A connect that still fails with `Cannot assign requested address` (a port whose 4-tuple matches
+  a `TIME_WAIT` socket) is tried again on another random port, and after 25 failures in a row on another address; the retries are
+  in the `held` and `step` events (`bind_retries`). `127.0.0.1` stays for the probe's fresh request. No `sysctl` is changed: the Docker
   VM is shared. If every address from 127.0.0.2 to 127.0.0.254 is taken, the client waits up to 70 s, then fails.
 - **What is read at each step,** after the client opened its connections and swept them (non-blocking reads: an EOF or a reset
   means the server closed one), and 1 s later: the summed `Pss` and `Pss_Anon` of the server's processes, the cgroup's `memory.current` and

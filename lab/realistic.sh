@@ -583,6 +583,7 @@ if [ -n "$idle" ]; then
      closed_by_server_at_start: $start.closed_by_server, closed_by_server_at_end: $end.closed_by_server,
      server_established_at_start: $est_start, server_established_at_end: $est_end, server_fds_open_with_idle: $fds_start,
      seconds_to_open: $start.seconds, source_addresses: $start.source_addresses, ports_per_address: $start.ports_per_address,
+     bind_retries: ($start.bind_retries // 0),
      client: {nofile: $start.nofile, rss_mib: ($start.rss_kb / 1024 * 100 | round / 100), hwm_mib: ($end.hwm_kb / 1024 * 100 | round / 100),
               memory_current_mib_after_opening: ($mem_start.current | mib), memory_current_mib_at_end: ($mem_end.current | mib),
               memory_peak_mib: ($mem_end.peak | mib), anon_mib: ($mem_end.anon | mib), socket_buffers_mib: ($mem_end.sock | mib), kernel_mib: ($mem_end.kernel | mib),
