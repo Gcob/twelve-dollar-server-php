@@ -150,6 +150,12 @@ return [
   writes should copy that file again. Never open `lab/data/feed.db` itself: it is in WAL mode and leaves `-wal`/`-shm`
   files in `lab/data/`.
 - `micro/benches/sample.php` is the format in use; `failing-check.php` is the fixture `lab/check.sh` uses.
+- `micro/benches/ffi.php` prices, in ns per operation, what an io_uring loop written in PHP through FFI would do per
+  request (FFI calls, struct fields, `FFI::memcpy` and `FFI::string`, `pack()` of an SQE, `unpack()` of a CQE, batches of 32)
+  next to what it would replace (`fwrite` and `fread` on a socket pair). It needs no flag: `ffi.enable`'s CLI default,
+  `preload`, allows `FFI::cdef` in a CLI script, and each run's JSON records the value. Keep the one `FFI` object alive for
+  the whole process (`ffi_bench_ffi()`): a `CData` whose `FFI` object was freed fails with "over data boundary". The batch
+  rows are per batch of 32.
 
 ### How it measures
 

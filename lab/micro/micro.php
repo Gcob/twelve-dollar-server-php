@@ -59,6 +59,8 @@ const INI_REPORTED = [
     'opcache.enable_cli', 'opcache.jit', 'opcache.jit_buffer_size', 'opcache.memory_consumption',
     'opcache.file_cache', 'opcache.validate_timestamps', 'opcache.file_update_protection', 'opcache.optimization_level',
     'opcache.jit_hot_loop', 'opcache.jit_hot_func', 'memory_limit', 'serialize_precision', 'zend.assertions',
+    // preload (the CLI's default) allows FFI in CLI scripts; a bench that uses FFI::cdef depends on it.
+    'ffi.enable',
 ];
 
 // ---------------------------------------------------------------------------------------------------------------

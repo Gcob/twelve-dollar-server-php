@@ -108,6 +108,18 @@ check_micro_sample() {
   [ "$rows" = 8 ] || { echo "expected 8 rows with a median and a spread, got $rows: ${out//$'\n'/ | }"; return 1; }
 }
 
+# The FFI bench runs on 8.5 with its default ffi.enable (preload allows FFI in CLI scripts): every case is timed and none is
+# skipped, so each of its checks (a copy, a struct layout, a pack format, an unpack offset) passed; the JSON says what ffi.enable was.
+check_micro_ffi_bench() {
+  local out json rows
+  json="$(mktemp -d)/micro.json"
+  out="$(bash "$LAB/micro.sh" "$LAB/micro/benches/ffi.php" --images 8.5 --jit on --quick --procs 1 --out "$json" 2>&1)" || { echo "lab/micro.sh failed: ${out//$'\n'/ | }"; return 1; }
+  ! grep -q 'SKIPPED' <<<"$out" || { echo "a case was skipped: $(grep 'SKIPPED' <<<"$out" | head -3 | tr '\n' '|')"; return 1; }
+  rows="$(grep -c -E '^8\.5 +8\.5\.[0-9]+ +on +.* [0-9.]+ +[0-9.]+ \.\. [0-9.]+ +[0-9]+( +UNSTABLE.*)?$' <<<"$out")"
+  [ "$rows" = 29 ] || { echo "expected 29 rows (28 cases and the empty loop), got $rows: ${out//$'\n'/ | }"; return 1; }
+  grep -q '"ffi.enable": "preload"' "$json" || { echo "the JSON does not record ffi.enable: $(grep -c 'ffi.enable' "$json") mentions"; return 1; }
+}
+
 # A case whose check fails is reported and skipped, the other case is still timed, the run does not fail.
 check_micro_skips_failed_case() {
   local out
@@ -1489,6 +1501,7 @@ CHECKS=(
   check_source_flags_match
   check_run_limits
   check_micro_sample
+  check_micro_ffi_bench
   check_micro_skips_failed_case
   check_micro_skips_case_failing_in_later_process
   check_micro_refuses_wrong_state
