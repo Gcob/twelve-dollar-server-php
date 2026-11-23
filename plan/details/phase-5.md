@@ -28,7 +28,7 @@ and the PHP version are phase 5b.
 
 ## Decisions of this phase
 
-From Jacob (D47 to D49) and the project manager (D50 to D55), in [decisions.md](../decisions.md):
+From Jacob (D47 to D49) and the project manager (D50 to D59), in [decisions.md](../decisions.md):
 
 - **D49, how a variant is judged:** µs of CPU per request (median of its runs) and its profile; the per-second p99
   beside it when a variant moves latency without moving CPU (S9). The held rate only at the end, on the chosen
