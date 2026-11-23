@@ -425,6 +425,32 @@ k6 user keeps its own connection, so one process serves about 65,500 users at on
 
 **2026-11-22 18:08:** the ❌ on io_uring is reopened by the next note: PHP's FFI may reach it without writing C.
 
+### 2026-11-22 21:36 · 💡 Idea: two processes on two ports, the first redirects the overflow to the second
+
+**Jacob:** two processes listening on two ports (80 and 81). The first keeps up to 60,000 keep-alive connections, and
+answers anything beyond with a 301 or 303 to the second port. The cost is one extra HTTP exchange when a connection
+opens, and the server could reach about 120,000 connections.
+
+**Challenge:**
+
+- **The core is right: two processes, two fd budgets.** The 65,535 limit is per process (`LimitNOFILE`), not per
+  port: one port can hold any number of connections. So two processes can share port 80 with `SO_REUSEPORT`, and the
+  kernel splits new connections between them. That's S1-b, scope 3 of phase 5a, measured tonight. The leaderboard's
+  top entries do it (230,000 with 5 worker processes, several at 125,000 with 3 or 4).
+- **The redirect costs more than it looks:** k6 doesn't remember a redirect. Each request of the journey goes to
+  `BASE_URL` (port 80) again, so an overflow user pays a second request on every request, not once per connection.
+  The first process also needs a free fd to answer each redirect, and must close the connection after it, or it
+  keeps the fd: that's S1-d's reconnect cost, plus a whole request.
+- **301, 302 and 303 turn a POST into a GET** (Go's client, so k6): `POST /posts` would lose its body. Only 307 or
+  308 keep it.
+- **The rules:** the spec says "Listen on `HOST:PORT`", one address. Port 81 may not be reachable on the bench box
+  (behind Nginx, only port 3000 is used), and a reviewer would likely flag a client-visible redirect as a hack.
+- **What's left to settle is S1-b's CPU cost:** two processes on 1 vCPU switch contexts and compete for SQLite's
+  write lock. Prediction 4 of phase 5 says 5 to 20 % per request; the 27 % read in prior art is a prediction too
+  (D5). Scope 6 puts S1-a, S1-d and S1-b side by side.
+
+**Verdict:** ❌ the redirect; ✅ its core, two fd budgets, is S1-b with `SO_REUSEPORT`, already in phase 5a.
+
 ### 2026-11-22 18:08 · 💡 Idea: try io_uring anyway, something nobody tried in PHP
 
 **Jacob:** "do you think we could still even try it? […] to be at the top, we need to do some, let's say, gray hat
