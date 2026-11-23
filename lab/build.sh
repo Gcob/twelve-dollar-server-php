@@ -22,9 +22,9 @@ lab_require_variant "$variant" || exit 1
 
 start="$(date +%s)"
 if release="$(lab_source_release "$variant")"; then
-  read -r php_version php_sha256 with_swoole with_event <<<"$release"
+  read -r php_version php_sha256 with_swoole with_event with_excimer <<<"$release"
   docker build -t "$LAB_IMAGE:$variant" -f "$LAB/images/Dockerfile.src" \
-    --build-arg PHP_VERSION="$php_version" --build-arg PHP_SHA256="$php_sha256" --build-arg WITH_SWOOLE="$with_swoole" --build-arg WITH_EVENT="$with_event" \
+    --build-arg PHP_VERSION="$php_version" --build-arg PHP_SHA256="$php_sha256" --build-arg WITH_SWOOLE="$with_swoole" --build-arg WITH_EVENT="$with_event" --build-arg WITH_EXCIMER="$with_excimer" \
     "$LAB/images"
 else
   docker build -t "$LAB_IMAGE:$variant" -f "$LAB/images/Dockerfile.$variant" "$LAB/images"

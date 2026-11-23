@@ -1,0 +1,61 @@
+measured run: 30s at 7000 req/s
+
+image 8.5 (PHP 8.5.13), server.php, k6 v1.8.3 (commit/58bbfd8e48, go1.26.4, linux/arm64)
+requested 7000 req/s for 30s (warm-up 0s), target http://127.0.0.1:18080/posts/1
+  requests                     210000
+  achieved req/s               6999.5
+  CPU us / request             25.99
+  latency ms p50 / p95 / p99   0.12 / 0.61 / 3
+  latency ms max               51.39
+  error rate                   0.00%
+  dropped iterations           0
+  VUs running at once (max)    44 (of 700 max)
+  connections open (max of 3)  700 (k6 pre-allocated 700 VUs)
+  peak RSS, cgroup memory.peak 484.92 MiB (counts page cache)
+  peak RSS, VmHWM              131.57 MiB
+  memory under load (max of 3) Pss 123.01 MiB (with the mapped database), Pss_Anon 6.5 MiB, cgroup memory.current 122.13 MiB
+  socket settings (server's boot line) backlog=4096 tcp_nodelay=1
+  server CPU over the window   17.98 % of one CPU (30.35 s window, idle 459.49 us/s, throttled 0 us)
+  k6 CPU over the window       143 % of one CPU (k6 is pinned to 8 CPUs)
+database copy in the page cache when the server opened it (fincore): 0 of 249843712 bytes, 0 %, --cold on
+per-second series: 210000 requests read by the aggregator (lag at most 1.957 s, 0 rows unparsed), 0 k6 connection errors
+
+per second (sec: seconds from the start of the run; per endpoint: requests, then p50/p99/max latency in ms; cpu: the server's CPU in us per second;
+memory in MiB at the end of the second; wal: the file's KiB and the frames in use; faults: minor and major in the second; cb max: the server's longest callback
+in ms; gc: runs/collected; - means no reading):
+sec  VUs  req   /posts/:id                cpu us/s  PssAnon  mem.cur  wal KiB  frames  fds  minflt  majflt  cb max  gc
+0    -    0     -                         4583      6.3      10.5     0        0       12   0       0       0       0/0
+1    -    6059  6059 0.135/24.376/25.121  160383    6.5      38.2     0        0       712  426     350     2.627   0/0
+2    7    7001  7001 0.106/0.737/4.695    137482    6.5      63.5     0        0       712  378     371     3.101   0/0
+3    5    7002  7002 0.118/8.345/15.464   167866    6.5      89.6     0        0       712  378     374     15.288  0/0
+4    0    6984  6984 0.12/2.574/5.944     168586    6.5      114.3    0        0       712  381     372     5.721   0/0
+5    1    6999  6999 0.106/1.696/15.093   170527    6.5      122.3    0        0       712  123     115     0.653   0/0
+6    4    7009  7009 0.145/4.532/15.845   226511    6.5      121.8    0        0       712  0       0       1.968   0/0
+7    9    7001  7001 0.115/1.007/2.181    188579    6.5      122.6    0        0       712  0       0       0.909   0/0
+8    2    7002  7002 0.105/2.389/4.552    160433    6.5      121.9    0        0       712  0       0       0.577   0/0
+9    4    6999  6999 0.106/0.508/1.209    162843    6.5      122.1    0        0       712  0       0       0.383   0/0
+10   0    7001  7001 0.103/2.251/4.084    170986    6.5      122.2    0        0       712  0       0       0.712   0/0
+11   14   6993  6993 0.106/0.35/0.942     181691    6.5      121.9    0        0       712  0       0       0.208   0/0
+12   0    6995  6995 0.133/1.774/3.285    219332    6.5      121.6    0        0       712  0       0       1.4     0/0
+13   0    7013  7013 0.116/0.508/1.164    173006    6.5      121.6    0        0       712  0       0       0.356   0/0
+14   1    7000  7000 0.115/0.598/2.205    176499    6.5      121.9    0        0       712  0       0       1.478   0/0
+15   0    6990  6990 0.123/2.185/3.634    187815    6.5      121.6    0        0       712  0       0       0.319   0/0
+16   6    6999  6999 0.103/0.465/1.117    163423    6.5      121.7    0        0       712  0       0       0.209   0/0
+17   1    7011  7011 0.145/3.519/10.072   199324    6.5      122.1    0        0       712  0       0       5.899   0/0
+18   4    6999  6999 0.11/0.949/2.849     183039    6.5      121.6    0        0       712  0       0       0.584   0/0
+19   0    6985  6985 0.135/2.354/5.447    166061    6.5      122.1    0        0       712  0       0       0.878   0/0
+20   4    7016  7016 0.113/0.479/1.175    171162    6.5      122.6    0        0       712  0       0       0.488   0/0
+21   1    6993  6993 0.125/0.843/6.558    191737    6.5      121.9    0        0       712  0       0       2.246   0/0
+22   3    7001  7001 0.125/0.684/1.121    196595    6.5      122.1    0        0       712  0       0       0.449   0/0
+23   6    7006  7006 0.135/1.855/4.457    171123    6.5      121.3    0        0       712  0       0       0.608   0/0
+24   6    6993  6993 0.11/0.4/1.392       162980    6.5      122.4    0        0       712  0       0       0.348   0/0
+25   3    7007  7007 0.105/0.355/0.604    173981    6.5      122.1    0        0       712  0       0       0.206   0/0
+26   2    7000  7000 0.11/0.377/0.818     174816    6.5      122.1    0        0       712  0       0       0.221   0/0
+27   7    6984  6984 0.113/1.038/2.232    174734    6.5      121.8    0        0       712  0       0       0.477   0/0
+28   3    7015  7015 0.145/18.646/30.83   278644    6.5      121.4    0        0       712  0       0       5.609   0/0
+29   44   6996  6996 0.152/13.438/51.391  192998    6.5      122      0        0       712  1       0       3.508   0/0
+30   3    7002  7002 0.116/0.458/0.886    174477    6.5      121.4    0        0       712  0       0       0.229   0/0
+31   6    945   945 0.127/0.737/0.891     29353     6.5      118.6    0        0       12   3       0       0.381   0/0
+
+VALID
+wrote lab/results/2026-11-22-realistic-baseline/q10-cold-3.json

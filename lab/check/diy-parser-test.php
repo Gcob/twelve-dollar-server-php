@@ -116,6 +116,60 @@ diy_case('Connection: Keep-Alive on HTTP/1.1 stays open', function () {
     return diy_expect(diy_run(["GET /noop HTTP/1.1\r\nconnection: Keep-Alive\r\n\r\n"]), GET_RESPONSE, true);
 });
 
+/** The response of the stub for /auth: it echoes the Authorization value and the body the connection handed over. */
+function auth_response(string $authorization, string $body): string
+{
+    $payload = '{"echo":"auth=' . $authorization . ' body=' . $body . '"}';
+    return "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: " . strlen($payload) . "\r\n\r\n" . $payload;
+}
+
+diy_case('Authorization reaches the handler, whatever the case of its name', function () {
+    foreach (['Authorization', 'authorization', 'AUTHORIZATION'] as $name) {
+        $why = diy_expect(diy_run(["GET /auth HTTP/1.1\r\nHost: x\r\n$name: Bearer abc.def.ghi\r\n\r\n"]), auth_response('Bearer abc.def.ghi', ''), true);
+        if ($why !== null) {
+            return "$name: $why";
+        }
+    }
+    return null;
+});
+
+diy_case('Authorization without the header is an empty string, and is not kept from the request before', function () {
+    $with = "GET /auth HTTP/1.1\r\nAuthorization: Bearer one\r\n\r\n";
+    $without = "GET /auth HTTP/1.1\r\nHost: x\r\n\r\n";
+    return diy_expect(diy_run([$with . $without . $with]), auth_response('Bearer one', '') . auth_response('', '') . auth_response('Bearer one', ''), true);
+});
+
+diy_case('Authorization: the spaces around the value are dropped, the ones inside stay', fn () => diy_expect(
+    diy_run(["GET /auth HTTP/1.1\r\nAuthorization:   Bearer  a b \t\r\n\r\n"]), auth_response('Bearer  a b', ''), true));
+
+diy_case('a POST with Authorization and a body, cut at every byte position', function () {
+    $request = "POST /auth HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer abc.def.ghi\r\nContent-Type: application/json\r\nContent-Length: 14\r\n\r\n{\"body\":\"hey\"}";
+    $response = auth_response('Bearer abc.def.ghi', '{"body":"hey"}');
+    for ($cut = 1; $cut < strlen($request); $cut++) {
+        $why = diy_expect(diy_run([substr($request, 0, $cut), substr($request, $cut)]), $response, true);
+        if ($why !== null) {
+            return 'cut at ' . $cut . ' of ' . strlen($request) . ': ' . $why;
+        }
+    }
+    return 'ok:' . (strlen($request) - 1) . ' cuts';
+});
+
+diy_case('a POST body split across three reads, headers first', function () {
+    $head = "POST /auth HTTP/1.1\r\nAuthorization: Bearer t\r\nContent-Length: 14\r\n\r\n";
+    return diy_expect(diy_run([$head, '{"body"', ':"he', 'y"}']), auth_response('Bearer t', '{"body":"hey"}'), true);
+});
+
+diy_case('every status the app answers has its status line', function () {
+    $lines = [200 => 'OK', 201 => 'Created', 400 => 'Bad Request', 401 => 'Unauthorized', 404 => 'Not Found', 500 => 'Internal Server Error', 503 => 'Service Unavailable'];
+    foreach ($lines as $status => $reason) {
+        $why = diy_expect(diy_run(["GET /status/$status HTTP/1.1\r\n\r\n"]), "HTTP/1.1 $status $reason\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}", true);
+        if ($why !== null) {
+            return "$status: $why";
+        }
+    }
+    return null;
+});
+
 $bad = [
     'no version' => "GET /noop\r\n\r\n",
     'unknown version' => "GET /noop HTTP/2.0\r\n\r\n",

@@ -1,12 +1,14 @@
 <?php
-// One client connection of the DIY server: reads bytes, parses HTTP/1.1 requests out of them, calls handler_handle() (the shared
-// handler, a global function like in every adapter) and writes the responses. It works on any non-blocking stream and knows
+// One client connection of the DIY server: reads bytes, parses HTTP/1.1 requests out of them, calls handler_handle() (a global
+// function, like in every adapter) and writes the responses. The call is handler_handle($method, $target, $body, $authorization):
+// the bake-off's handler takes the first three and ignores the fourth, the challenge app's takes all four. It works on any non-blocking stream and knows
 // nothing about the event loop: the loop calls onReadable() / onWritable() when the stream is ready, and asks wantsRead() /
 // wantsWrite() which events to wait for. That is also what lets the tests drive it on a socket pair.
 //
-// What it parses: the request line (method, target, HTTP/1.1 or HTTP/1.0), the headers (only Content-Length, Connection and
-// Transfer-Encoding are read; every other header line only has to have a name and a colon), a body of Content-Length bytes.
-// What it does not: Authorization (a later phase), chunked bodies (400), absolute-form targets (the handler answers 404), lines
+// What it parses: the request line (method, target, HTTP/1.1 or HTTP/1.0), the headers (only Content-Length, Connection,
+// Transfer-Encoding and Authorization are read; every other header line only has to have a name and a colon), a body of
+// Content-Length bytes. The Authorization value is handed over without its surrounding spaces and tabs, and is '' when the request
+// has none (a request never sees the one before it). What it does not parse: chunked bodies (400), absolute-form targets (the handler answers 404), lines
 // ended by a bare \n (the request never completes, and a client that sends 8 KiB of it gets a 400). A header name with
 // whitespace before the colon, or a line fold, gets a 400. A handler that throws gets a 500 and the connection serves on.
 //
@@ -27,9 +29,12 @@ final class DiyConnection
 
     private const HEAD = [
         200 => "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ",
+        201 => "HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nContent-Length: ",
         400 => "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: ",
+        401 => "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nContent-Length: ",
         404 => "HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\nContent-Length: ",
         500 => "HTTP/1.1 500 Internal Server Error\r\nContent-Type: application/json\r\nContent-Length: ",
+        503 => "HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nContent-Length: ",
     ];
     private const INTERNAL_ERROR = '{"error":"internal server error"}';
     private const BAD_REQUEST = "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: 23\r\n\r\n{\"error\":\"bad request\"}";
@@ -44,6 +49,7 @@ final class DiyConnection
     // its response; nothing is allocated per request that outlives it.
     private string $method = '';
     private string $target = '';
+    private string $authorization = '';
     private int $bodyLength = 0;
     private bool $closeAfter = false;
 
@@ -145,9 +151,9 @@ final class DiyConnection
             $pos = $bodyStart + $this->bodyLength;
             // Why: an exception that escaped here would leave the ext-event callback and stop the loop for every connection.
             try {
-                [$status, $payload] = handler_handle($this->method, $this->target, $body);
+                [$status, $payload] = handler_handle($this->method, $this->target, $body, $this->authorization);
             } catch (Throwable $e) {
-                fwrite(STDERR, 'bake-diy: the handler failed: ' . get_class($e) . ': ' . $e->getMessage() . "\n");
+                fwrite(STDERR, 'diy-connection: the handler failed: ' . get_class($e) . ': ' . $e->getMessage() . "\n");
                 [$status, $payload] = [500, self::INTERNAL_ERROR];
             }
             $this->wbuf .= self::HEAD[$status] . strlen($payload) . "\r\n\r\n" . $payload;
@@ -186,6 +192,7 @@ final class DiyConnection
         }
 
         $this->bodyLength = 0;
+        $this->authorization = '';
         $close = false;
         $keepAlive = false;
         $hasLength = false;
@@ -209,6 +216,8 @@ final class DiyConnection
                     $value = strtolower(substr($header, 11));
                     $close = str_contains($value, 'close');
                     $keepAlive = str_contains($value, 'keep-alive');
+                } elseif ($colon === 13 && strncasecmp($header, 'authorization', 13) === 0) {
+                    $this->authorization = trim(substr($header, 14), " \t");
                 } elseif ($colon === 17 && strncasecmp($header, 'transfer-encoding', 17) === 0) {
                     // Chunked bodies are not supported: k6 never sends one, and the challenge's clients send Content-Length.
                     return false;

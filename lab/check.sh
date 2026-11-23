@@ -52,11 +52,11 @@ check_source_image() {
   grep -qxF "$apt_sqlite" <<<"$info" || { echo "SQLite differs from 8.3-apt ($apt_sqlite): ${info//$'\n'/ | }"; return 1; }
 }
 
-# check_source_extras <variant>: pcntl, sockets and Workerman 5.2.4 (both trees) are in the image; ext-event is there, or
-# `not built` when lab/lib.sh says this variant is built without it. The phase-2 lines are checked by check_source_image.
+# check_source_extras <variant>: pcntl, sockets and Workerman 5.2.4 (both trees) are in the image; ext-event and Excimer 1.2.6 are there, or
+# `not built` when lab/lib.sh says this variant is built without them. The phase-2 lines are checked by check_source_image.
 check_source_extras() {
-  local v="$1" with_event info
-  read -r _ _ _ with_event <<<"$(lab_source_release "$v")"
+  local v="$1" with_event with_excimer info
+  read -r _ _ _ with_event with_excimer <<<"$(lab_source_release "$v")"
   info="$(bash "$LAB/run.sh" "$v" php-info 2>&1)" || { echo "php-info failed: $info"; return 1; }
   grep -qx 'pcntl: present' <<<"$info" || { echo "pcntl is not present: ${info//$'\n'/ | }"; return 1; }
   grep -qx 'sockets: present' <<<"$info" || { echo "sockets is not present: ${info//$'\n'/ | }"; return 1; }
@@ -64,6 +64,11 @@ check_source_extras() {
     grep -qx 'event: 3.2.0' <<<"$info" || { echo "php-info does not report 'event: 3.2.0': ${info//$'\n'/ | }"; return 1; }
   else
     grep -qx 'event: not built' <<<"$info" || { echo "php-info does not report 'event: not built': ${info//$'\n'/ | }"; return 1; }
+  fi
+  if [ "$with_excimer" = 1 ]; then
+    grep -qx 'excimer: 1.2.6' <<<"$info" || { echo "php-info does not report 'excimer: 1.2.6': ${info//$'\n'/ | }"; return 1; }
+  else
+    grep -qx 'excimer: not built' <<<"$info" || { echo "php-info does not report 'excimer: not built': ${info//$'\n'/ | }"; return 1; }
   fi
   grep -qx 'workerman: 5.2.4 (stock, nocache)' <<<"$info" || { echo "php-info does not report the two Workerman trees: ${info//$'\n'/ | }"; return 1; }
 }
@@ -187,12 +192,39 @@ check_conformance_fails_on_wrong_server() {
   [ -z "$left" ] || { echo "containers left behind: ${left//$'\n'/ }"; return 1; }
 }
 
+# The count of other containers, with a fixture container that is not the run's own: a harness's JSON records only
+# `other_containers.count` (never names: they would be other projects' and the results are committed), the fixture is counted,
+# and the run's own containers (4 or 5) are not: the count stays within a margin of what ran before the run.
+other_fixture_name=lab-check-other-fixture
+other_fixture_start() {
+  docker rm -f "$other_fixture_name" >/dev/null 2>&1 || true
+  docker run -d --name "$other_fixture_name" "$LAB_IMAGE:8.5" sleep 600 >/dev/null
+  docker ps -q | wc -l | tr -d ' '
+}
+other_fixture_stop() { docker rm -f "$other_fixture_name" >/dev/null 2>&1 || true; }
+# other_containers_jq <running before the run, the fixture included>: a jq test on a run's JSON.
+other_containers_jq() {
+  echo ".other_containers | keys == [\"count\"] and .count >= 1 and .count <= $1 + 2"
+}
+
+# Other projects' container names must not reach a committed result: a run JSON holds only the count, and the results already
+# committed list no name (an empty `names` from the first phases is fine).
+check_results_hold_no_container_names() {
+  local json named=""
+  while IFS= read -r json; do
+    jq -e '(.other_containers.names // []) | length == 0' "$json" >/dev/null 2>&1 || named="$named $json"
+  done < <(find "$LAB/results" -name '*.json')
+  [ -z "$named" ] || { echo "container names in:$named"; return 1; }
+}
+
 # The bake-off server under k6 on /posts/<id>, with --env, --label and the default file name: the run is valid, the JSON holds
 # what the options said (extension, env, label, the server's socket line), the other containers and the memory under load.
 check_macro_bake_swoole_posts_is_valid() {
-  local out rc=0 json holds="" detail=""
+  local out rc=0 json holds="" detail="" running
+  running="$(other_fixture_start)"
   out="$(bash "$LAB/macro.sh" --image 8.5 --server "$LAB/servers/bake-swoole.php" --rate 500 --duration 5 --warmup 2 \
     --script "$LAB/macro/k6/posts.js" --path /posts/1 --env FOO=bar --label test 2>&1)" || rc=$?
+  other_fixture_stop
   [ "$rc" = 0 ] || { echo "lab/macro.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
   grep -qx 'VALID' <<<"$out" || { echo "the run is not marked VALID: ${out//$'\n'/ | }"; return 1; }
   json="$REPO/$(sed -n 's/^wrote //p' <<<"$out")"
@@ -200,8 +232,7 @@ check_macro_bake_swoole_posts_is_valid() {
   jq -e '.valid == true and .results.requests > 2000 and .results.error_rate == 0
          and .label == "test" and .server.ext == ["swoole"] and .server.env == ["FOO=bar"]
          and .server.socket == {backlog: 4096, tcp_nodelay: 1}
-         and (.other_containers.count == (.other_containers.names | length))
-         and (.other_containers.names | map(startswith("lab-macro-")) | any | not)
+         and ('"$(other_containers_jq "$running")"')
          and .results.memory.under_load.max_pss_anon_mib > 0 and .results.memory.under_load.max_pss_anon_mib < .results.memory.under_load.max_pss_mib and .results.memory.under_load.max_cgroup_current_mib > 0
          and (.results.memory.under_load.samples | keys == ["q1", "q2", "q3"])' "$json" >/dev/null && holds=yes
   detail="$(jq -c '{valid, label, other_containers, server: {ext: .server.ext, env: .server.env, socket: .server.socket}, memory: .results.memory.under_load}' "$json")"
@@ -222,6 +253,7 @@ check_conns_holds_steps() {
          and .results.memory_per_connection.pss_kib_per_connection > 0
          and .results.memory_per_connection.cgroup_current_kib_per_connection > 0
          and .server.socket == {backlog: 4096, tcp_nodelay: 1} and .results.baseline.pss_kb > 0 and .results.baseline.pss_anon_kb > 0
+         and (.other_containers | keys == ["count"])
          and (.steps | all(.probe.pss_anon_kb > 0 and .probe.pss_anon_kb < .probe.pss_kb))
          and (.steps | all(.probe.tcp_established == .held and .probe.fresh_http_code == 200))' "$json" >/dev/null \
     || { echo "the JSON does not hold a run that held 200 and 500 connections: $(jq -c '{results, steps: [.steps[] | {target, held, probe}]}' "$json")"; return 1; }
@@ -322,7 +354,7 @@ check_diy_parser() {
   out="$(bash "$LAB/run.sh" 8.5 php /lab/check/diy-parser-test.php 2>&1)" || rc=$?
   [ "$rc" = 0 ] || { echo "diy-parser-test.php exited $rc: ${out//$'\n'/ | }"; return 1; }
   ok="$(grep -c '^ok  ' <<<"$out")"
-  [ "$ok" = 34 ] || { echo "expected 34 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
+  [ "$ok" = 40 ] || { echo "expected 40 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
   grep -q 'FAIL' <<<"$out" && { echo "a case failed: ${out//$'\n'/ | }"; return 1; }
   return 0
 }
@@ -368,6 +400,624 @@ check_macro_bake_diy_posts_is_valid() {
   return 1
 }
 
+# The challenge app's own cases, through handler_handle on a small database: what the challenge's suite does not reach (the JWT
+# rules, the body rules, one like per user, the feed's size and order, a write committed before the response).
+check_app_cases() {
+  local out ok rc=0
+  out="$(bash "$LAB/run.sh" 8.5 php /lab/check/app-test.php 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "app-test.php exited $rc: ${out//$'\n'/ | }"; return 1; }
+  ok="$(grep -c '^ok  ' <<<"$out")"
+  [ "$ok" = 60 ] || { echo "expected 60 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
+  grep -q 'FAIL' <<<"$out" && { echo "a case failed: ${out//$'\n'/ | }"; return 1; }
+  return 0
+}
+
+# The challenge app passes the challenge's own test suite (42 checks), twice in a row: the second run starts from a fresh copy of the
+# seed (the suite's golden answers fail on a database the first run wrote to), and no container is left behind.
+check_challenge_test_passes_on_app() {
+  local out run left rc
+  for run in 1 2; do
+    rc=0
+    out="$(bash "$LAB/challenge-test.sh" --image 8.5 2>&1)" || rc=$?
+    [ "$rc" = 0 ] || { echo "run $run: lab/challenge-test.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
+    grep -qx 'passed=42 failed=0' <<<"$out" || { echo "run $run: the summary is not 'passed=42 failed=0': ${out//$'\n'/ | }"; return 1; }
+  done
+  left="$(docker ps -a --format '{{.Names}}' | grep '^lab-challenge-' || true)"
+  [ -z "$left" ] || { echo "containers left behind: ${left//$'\n'/ }"; return 1; }
+}
+
+# A server that answers one golden wrong: the harness exits non-zero, names the check that fails (and only that one), and removes
+# its containers.
+check_challenge_test_fails_on_wrong_golden() {
+  local out left rc=0
+  out="$(bash "$LAB/challenge-test.sh" --image 8.5 --server "$LAB/check/fixtures/wrong-golden-app.php" 2>&1)" || rc=$?
+  [ "$rc" != 0 ] || { echo "expected a non-zero exit for a wrong server: ${out//$'\n'/ | }"; return 1; }
+  grep -q '^  FAIL GET /posts/250000 == golden' <<<"$out" || { echo "the failing check is not named: ${out//$'\n'/ | }"; return 1; }
+  grep -qx 'passed=41 failed=1' <<<"$out" || { echo "expected 'passed=41 failed=1': ${out//$'\n'/ | }"; return 1; }
+  left="$(docker ps -a --format '{{.Names}}' | grep '^lab-challenge-' || true)"
+  [ -z "$left" ] || { echo "containers left behind: ${left//$'\n'/ }"; return 1; }
+}
+
+# The aggregator's library on rows copied from a real k6 run: the histogram error, the percentiles of a known set, the rows it keeps,
+# a plateau found from k6's `vus` rows, a step's numbers and verdict (the 97 % rule included).
+check_aggregate_cases() {
+  local out ok rc=0
+  out="$(bash "$LAB/run.sh" 8.5 php /lab/check/aggregate-test.php 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "aggregate-test.php exited $rc: ${out//$'\n'/ | }"; return 1; }
+  grep -q '^FAIL' <<<"$out" && { echo "a case failed: ${out//$'\n'/ | }"; return 1; }
+  ok="$(grep -c '^ok  ' <<<"$out")"
+  [ "$ok" -ge 55 ] || { echo "expected at least 55 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
+  return 0
+}
+
+# realistic_script_diff <original load.js> <copy>: prints what differs between the copy and the original beyond the two changes the copy
+# is allowed (every sleep scaled by THINK_SCALE; the options read from the env, with the THINK_SCALE constant that goes with them),
+# nothing when the copy is the original with those two changes. The header of the copy (up to its marker line) is not compared.
+realistic_script_diff() {
+  local original="$1" copy="$2" want got unscaled
+  want="$(awk '/^export const options = \{/ { skip = 1 } !skip { print } skip && /^\};$/ { skip = 0 }' "$original")"
+  got="$(awk 'copied { print } /^\/\/ --- the original, from here ---$/ { copied = 1 }' "$copy" |
+    grep -v -x -e 'export const options = JSON.parse(__ENV.REALISTIC_OPTIONS);' -e 'const THINK_SCALE = Number(__ENV.THINK_SCALE || 1);' |
+    sed 's/ \* THINK_SCALE)/)/')"
+  [ "$want" = "$got" ] || diff <(echo "$want") <(echo "$got") | head -n 6
+  # A sleep left unscaled is the original's own line, which the comparison above cannot see.
+  unscaled="$(grep 'sleep(' "$copy" | grep -v '^//' | grep -v -c ' \* THINK_SCALE)' || true)"
+  [ "$unscaled" = 0 ] || echo "$unscaled sleep call(s) are not scaled by THINK_SCALE"
+  [ "$(grep -c '^export const options = JSON.parse(__ENV.REALISTIC_OPTIONS);$' "$copy")" = 1 ] || echo "the options line is missing"
+  [ "$(grep -c '^const THINK_SCALE = ' "$copy")" = 1 ] || echo "the THINK_SCALE constant is missing"
+  return 0
+}
+
+# The k6 script is the bench's own load.js with the two changes and nothing else, and the diff is able to fail: a copy with a
+# probability changed, or one sleep left unscaled, is reported.
+check_realistic_script_is_the_benchs() {
+  local original="$REPO/reference/twelve-dollar-server-challenge/bench/load.js" copy="$LAB/macro/k6/realistic.js" report dir
+  [ -f "$original" ] || { echo "reference/twelve-dollar-server-challenge/bench/load.js is missing"; return 1; }
+  report="$(realistic_script_diff "$original" "$copy")"
+  [ -z "$report" ] || { echo "the copy differs from the original: ${report//$'\n'/ | }"; return 1; }
+  dir="$(mktemp -d)"
+  sed 's/const LIKE_PROB = 0.15/const LIKE_PROB = 0.25/' "$copy" >"$dir/probability.js"
+  [ -n "$(realistic_script_diff "$original" "$dir/probability.js")" ] || { echo "a changed probability is not reported"; return 1; }
+  sed 's/sleep(between(5, 15) \* THINK_SCALE)/sleep(between(5, 15))/' "$copy" >"$dir/unscaled.js"
+  [ -n "$(realistic_script_diff "$original" "$dir/unscaled.js")" ] || { echo "an unscaled sleep is not reported"; return 1; }
+  grep -q 'twelve-dollar-server-challenge/bench/load.js' "$copy" && grep -q "$(git -C "$REPO/reference/twelve-dollar-server-challenge" rev-parse HEAD)" "$copy" \
+    || { echo "the header does not name the original's path and the challenge's commit"; return 1; }
+}
+
+# The realistic mode on the skeleton at low load: a staircase of 3 steps passes, with the numbers of each step (VUs, offered and
+# achieved, users from the achieved rate, CPU per request, percentiles per endpoint) and the run's JSON, and the aggregator's
+# request counts and percentiles are the ones of k6's own summary (within the histogram's error). No container is left behind.
+check_realistic_staircase_passes() {
+  local out rc=0 json detail left running
+  json="$(mktemp -d)/realistic.json"
+  running="$(other_fixture_start)"
+  out="$(bash "$LAB/realistic.sh" --image 8.5 --think-scale 0.1 --staircase 50,50,150,8 --label test --out "$json" 2>&1)" || rc=$?
+  other_fixture_stop
+  [ "$rc" = 0 ] || { echo "lab/realistic.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
+  grep -qx 'VALID' <<<"$out" || { echo "the run is not marked VALID: ${out//$'\n'/ | }"; return 1; }
+  [ "$(grep -c -E '^ +[123] +[0-9]+ +[0-9.]+ +[0-9.]+ +[0-9]+ +[0-9.]+ +[0-9.]+ +[0-9.]+ +[0-9.]+% +pass$' <<<"$out")" = 3 ] \
+    || { echo "expected 3 rows that pass: ${out//$'\n'/ | }"; return 1; }
+  jq -e '.valid == true and .mode == "staircase" and .label == "test" and .load.think_scale == 0.1 and .load.users_per_rps == 9.45
+         and (.load.vus == [48, 95, 142]) and .load.vu_cap > 0
+         and (.results.steps | length == 3) and (.results.steps | map(.pass) | all)
+         and (.results.steps | map(.achieved_rps >= 0.97 * .offered_rps) | all)
+         and (.results.steps | map(.users - 9.45 * .achieved_rps | fabs < 0.001) | all)
+         and (.results.steps | map(.cpu_usec_per_request > 0) | all)
+         and (.results.steps | map(.latency_ms.endpoints | keys | (index("GET /feed") != null and index("GET /posts/:id") != null
+              and (. - ["GET /feed", "GET /posts/:id", "POST /posts", "POST /posts/:id/like"] == []))) | all)
+         and .k6.peak_memory_mib > 0 and .k6.local_ips == "127.0.1.1-127.0.1.4" and (.k6.client_ips_seen | keys | length) > 1
+         and ('"$(other_containers_jq "$running")"')
+         and .aggregator.unparsed == 0 and .aggregator.max_lag_s < .aggregator.lag_gate_s
+         and (.results.per_second | length) > 20' "$json" >/dev/null \
+    || { detail="$(jq -c '{valid, load, k6, aggregator, steps: [.results.steps[] | {step, vus, pass, reasons, achieved_rps, offered_rps, cpu_usec_per_request, endpoints: (.latency_ms.endpoints | keys)}]}' "$json")"; echo "the JSON does not hold the run's numbers: $detail"; return 1; }
+  # The aggregator against k6's own summary: the same request counts per endpoint, the p95 of the two big endpoints within 3 %.
+  jq -e '.results.run_total as $t | .results.k6_summary.metrics as $m
+         | ($t | to_entries | map(select(.key == "GET /feed" or .key == "GET /posts/:id"))) as $big
+         | ($t | map(.count) | add) == $m.http_reqs.count
+         and ($big | length == 2)
+         and ($big | map(.value.count > 500) | all)
+         and ($big | map(. as $e | $m["http_req_duration{name:\($e.key)}"]["p(95)"] as $k6 | ($e.value.p95 - $k6 | fabs) <= 0.03 * $k6 + 0.02) | all)' "$json" >/dev/null \
+    || { detail="$(jq -c '{run_total: .results.run_total, k6: (.results.k6_summary.metrics | {reqs: .http_reqs.count, feed: .["http_req_duration{name:GET /feed}"], post: .["http_req_duration{name:GET /posts/:id}"]})}' "$json")"; echo "the aggregator and k6's summary disagree: $detail"; return 1; }
+  left="$(docker ps -a --format '{{.Names}}' | grep '^lab-realistic-' || true)"
+  [ -z "$left" ] || { echo "containers left behind: ${left//$'\n'/ }"; return 1; }
+  docker volume ls --format '{{.Name}}' | grep -x lab-realistic-run >/dev/null && { echo "the volume lab-realistic-run is left behind"; return 1; }
+  return 0
+}
+
+# --no-series: a small staircase passes with no sampler and a poll that reads only k6 and the aggregator. The per-step results are
+# there, the per-second rows hold the aggregator's latency and no reading of the server, the JSON says the probes were off and holds
+# no memory peak of the server (nothing read it), and the table says the per-second part is off. At 100 req/s (about 1,200 requests a
+# step), like the failing-step check, but the busy Docker VM still fails a step on the 97 % rule now and then (one in a full suite
+# run): this check is about the probes, so a step may fail on that rule alone, with nothing else wrong. No container is left behind.
+check_realistic_no_series() {
+  local out rc=0 json left
+  json="$(mktemp -d)/realistic.json"
+  out="$(bash "$LAB/realistic.sh" --image 8.5 --think-scale 0.2 --staircase 100,100,200,12 --no-series --out "$json" 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "lab/realistic.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
+  grep -qx 'VALID' <<<"$out" || { echo "the run is not marked VALID: ${out//$'\n'/ | }"; return 1; }
+  grep -q '^per second: off (--no-series' <<<"$out" || { echo "the table does not say the per-second part is off: ${out//$'\n'/ | }"; return 1; }
+  jq -e '.valid == true and .per_second_probes == false and (.results.steps | length >= 1)
+         and (.results.steps | map(.pass or (.reasons | all(startswith("achieved below 97 %")))) | all)
+         and (.results.steps | map(.cpu_usec_per_request > 0 and .latency_ms.overall.p99 > 0) | all)
+         and .results.series == null and (.results.per_second | length) > 10
+         and (.results.per_second | map(has("server") or has("telemetry")) | any | not)
+         and .server_memory.pss_anon_peak_mib == null and .server_memory.memory_current_peak_mib == null
+         and .k6.peak_memory_mib > 0 and .aggregator.unparsed == 0' "$json" >/dev/null \
+    || { echo "the JSON does not hold a run without the per-second probes: $(jq -c '{valid, per_second_probes, steps: [.results.steps[] | {step, pass, reasons}], series: (.results.series | type), per_second: (.results.per_second | length), server_memory}' "$json")"; return 1; }
+  left="$(docker ps -a --format '{{.Names}}' | grep '^lab-realistic-' || true)"
+  [ -z "$left" ] || { echo "containers left behind: ${left//$'\n'/ }"; return 1; }
+}
+
+# A step above the capacity of the server fails on the 97 % rule, and the staircase stops there: against a server that spends 4 ms per
+# request (about 190 to 250 req/s at most), 100 req/s passes and 300 req/s does not. The first step has room on purpose, and it is in the
+# count, not in the latency: at 40 to 60 req/s a plateau of 8 to 12 s holds 300 to 500 requests, whose count alone varies by 2 or 3 %
+# (the VUs' think times are random), so the 97 % rule failed it by chance (93 % and 96.7 %, with a p95 of 13 to 17 ms, far from the
+# 29 to 58 ms of mean latency the rule leaves). 100 req/s over 12 s of data is about 1,200 requests.
+check_realistic_stops_at_a_failing_step() {
+  local out rc=0 json detail
+  json="$(mktemp -d)/realistic.json"
+  out="$(bash "$LAB/realistic.sh" --image 8.5 --server "$LAB/check/fixtures/slow-app.php" --think-scale 0.2 --staircase 100,200,300,15 --out "$json" 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "a failing step is a result, expected exit 0, got $rc: ${out//$'\n'/ | }"; return 1; }
+  grep -q '^STOPPED at step 2: achieved below 97 % of offered' <<<"$out" || { echo "the run did not stop at step 2 on the 97 % rule: ${out//$'\n'/ | }"; return 1; }
+  jq -e '.valid == true and .results.stopped_at_step == 2 and (.results.steps | length == 2)
+         and .results.steps[0].pass == true and .results.steps[1].pass == false
+         and .results.steps[1].reasons[0] == "achieved below 97 % of offered"
+         and (.results.steps[1].achieved_rps < 0.97 * .results.steps[1].offered_rps)' "$json" >/dev/null \
+    || { detail="$(jq -c '[.results.steps[] | {step, vus, pass, reasons, achieved_rps, offered_rps}]' "$json")"; echo "the JSON does not say the run stopped on the 97 % rule at step 2: $detail"; return 1; }
+}
+
+# More VUs than the cap is refused with exit 2 before any container starts.
+check_realistic_refuses_vus_above_the_cap() {
+  local out rc=0
+  out="$(bash "$LAB/realistic.sh" --image 8.5 --think-scale 1 --hold 1000,5 --vu-cap 100 2>&1)" || rc=$?
+  [ "$rc" = 2 ] || { echo "expected exit 2 above the VU cap, got $rc: ${out//$'\n'/ | }"; return 1; }
+  grep -q 'above the VU cap of 100' <<<"$out" || { echo "the message does not say why: ${out//$'\n'/ | }"; return 1; }
+  [ -z "$(docker ps -a --format '{{.Names}}' | grep '^lab-realistic-' || true)" ] || { echo "a container was started"; return 1; }
+}
+
+# A run whose aggregator falls behind (a gate no real run can meet) or whose k6 passes its memory budget (a budget k6 cannot live in)
+# is printed, marked INVALID with its reason, and exits 3.
+check_realistic_marks_invalid_run() {
+  local out rc json
+  json="$(mktemp -d)/realistic.json"
+  rc=0
+  out="$(bash "$LAB/realistic.sh" --image 8.5 --think-scale 0.1 --hold 50,6 --lag-gate 0.1 --out "$json" 2>&1)" || rc=$?
+  [ "$rc" = 3 ] || { echo "expected exit 3 for a lag above the gate, got $rc: ${out//$'\n'/ | }"; return 1; }
+  grep -q '^INVALID: the aggregator fell behind k6: lag' <<<"$out" || { echo "the lag is not the reason: ${out//$'\n'/ | }"; return 1; }
+  jq -e '.valid == false' "$json" >/dev/null || { echo "the JSON does not say invalid"; return 1; }
+  rc=0
+  out="$(bash "$LAB/realistic.sh" --image 8.5 --think-scale 0.1 --hold 50,6 --k6-memory 50 --out "$json" 2>&1)" || rc=$?
+  [ "$rc" = 3 ] || { echo "expected exit 3 for a k6 above its memory budget, got $rc: ${out//$'\n'/ | }"; return 1; }
+  grep -q '^INVALID: k6 .*memory budget' <<<"$out" || { echo "the memory budget is not the reason: ${out//$'\n'/ | }"; return 1; }
+  jq -e '.valid == false' "$json" >/dev/null || { echo "the JSON does not say invalid"; return 1; }
+}
+
+# The server dies in the middle of a run: the harness exits 1 with that reason and leaves no container and no volume behind.
+check_realistic_cleans_up_after_failure() {
+  local log pid rc=0 left
+  log="$(mktemp -d)/realistic.log"
+  bash "$LAB/realistic.sh" --image 8.5 --think-scale 0.1 --hold 100,60 --out "$(dirname "$log")/realistic.json" >"$log" 2>&1 &
+  pid=$!
+  # The aggregator starts just before k6: the run is about to be under load.
+  for _ in $(seq 1 240); do
+    docker ps --format '{{.Names}}' | grep -x lab-realistic-agg >/dev/null && break
+    sleep 0.5
+  done
+  sleep 6
+  docker kill lab-realistic-server >/dev/null 2>&1 || true
+  wait "$pid" || rc=$?
+  [ "$rc" = 1 ] || { echo "expected exit 1 when the server dies, got $rc: $(tr '\n' ' ' <"$log")"; return 1; }
+  grep -q 'the server container died during the run' "$log" || { echo "the reason is not reported: $(tr '\n' ' ' <"$log")"; return 1; }
+  left="$(docker ps -a --format '{{.Names}}' | grep '^lab-realistic-' || true)"
+  [ -z "$left" ] || { echo "containers left behind: ${left//$'\n'/ }"; return 1; }
+  docker volume ls --format '{{.Name}}' | grep -x lab-realistic-run >/dev/null && { echo "the volume lab-realistic-run is left behind"; return 1; }
+  return 0
+}
+
+# The calibration at a short length: it prints k6's memory per VU, the VU cap and the scale, and the JSON holds them.
+check_realistic_calibrates() {
+  local out rc=0 json
+  json="$(mktemp -d)/realistic.json"
+  out="$(bash "$LAB/realistic.sh" --image 8.5 --think-scale 0.1 --calibrate --calibrate-seconds 10 --out "$json" 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "lab/realistic.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
+  grep -q '^k6 memory per VU: ' <<<"$out" && grep -q '^VU cap: ' <<<"$out" && grep -q '^scale for 20,000 req/s under the cap: ' <<<"$out" \
+    || { echo "the calibration does not print the memory per VU, the cap and the scale: ${out//$'\n'/ | }"; return 1; }
+  jq -e '.mode == "calibrate" and .valid == true and .calibration.mib_per_vu > 0 and .calibration.vu_cap > 0 and .calibration.vu_cap <= 5400
+         and .calibration.scale_for_20000_rps > 0 and .calibration.scale_for_20000_rps <= 1
+         and .calibration.aggregator_max_lag_s[0] > 0 and (.calibration.achieved_over_offered | all(. > 0.9))
+         and (.runs | length == 2)' "$json" >/dev/null || { echo "the JSON does not hold the calibration: $(jq -c .calibration "$json")"; return 1; }
+}
+
+# The per-second series' pieces on real data: mxFrame read from the -shm file of a real WAL (written, checkpointed, written again), the page
+# faults read from a /proc stat line, the telemetry lines read back from a log, and the merge of latency, readings and telemetry into one
+# row per second (a missed reading leaves a null, never a delta over two seconds).
+check_series_cases() {
+  local out ok rc=0
+  out="$(bash "$LAB/run.sh" 8.5 php /lab/check/series-test.php 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "series-test.php exited $rc: ${out//$'\n'/ | }"; return 1; }
+  grep -q '^FAIL' <<<"$out" && { echo "a case failed: ${out//$'\n'/ | }"; return 1; }
+  ok="$(grep -c '^ok  ' <<<"$out")"
+  [ "$ok" -ge 23 ] || { echo "expected at least 23 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
+  return 0
+}
+
+# The telemetry line: the longest callback, the GC and fault deltas, the app's fields, and which second each line is for.
+check_telemetry_cases() {
+  local out ok rc=0
+  out="$(bash "$LAB/run.sh" 8.5 php /lab/check/telemetry-test.php 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "telemetry-test.php exited $rc: ${out//$'\n'/ | }"; return 1; }
+  grep -q '^FAIL' <<<"$out" && { echo "a case failed: ${out//$'\n'/ | }"; return 1; }
+  ok="$(grep -c '^ok  ' <<<"$out")"
+  [ "$ok" -ge 14 ] || { echo "expected at least 14 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
+  return 0
+}
+
+# start_app_for_check <container> <port> <cold 0|1> [K=V]...: the app on a fresh copy of the seed through lab_start_app, waited on until it
+# listens. Prints the failure and returns 1 when it never does.
+# Why disable SC2034: LAB_COLD, LAB_EXT and LAB_ENV are read by lab_start_app and lab_build_php_flags (lib.sh), which shellcheck does not follow.
+# shellcheck disable=SC2034
+start_app_for_check() {
+  local name="$1" port="$2"
+  LAB_COLD="$3"
+  shift 3
+  LAB_EXT=(sockets event)
+  LAB_ENV=("$@")
+  lab_build_php_flags
+  docker rm -f "$name" >/dev/null 2>&1
+  lab_start_app "$name" 8.5 "$port" /lab/app/server.php || { echo "lab_start_app failed"; return 1; }
+  for _ in $(seq 1 120); do
+    docker logs "$name" 2>&1 | grep -q '^listening on' && return 0
+    [ "$(docker inspect -f '{{.State.Running}}' "$name")" = true ] || { echo "the app exited: $(docker logs "$name" 2>&1 | tr '\n' ' ')"; return 1; }
+    sleep 0.5
+  done
+  echo "the app did not listen within 60 s"
+  return 1
+}
+
+# The page cache and the copy of the seed: after a plain copy the whole file is resident, with LAB_COLD=1 almost none of it is (read by
+# lab/macro/fincore.php just before the app opens the copy), and the cold app reads the database from disk (major faults) the warm one does
+# not. The two readings are of the same file, a few seconds apart.
+check_cold_start_evicts_the_copy() {
+  local warm cold res size rc=0 majors
+  start_app_for_check lab-check-warm 18160 0 || return 1
+  warm="$(lab_fincore_line lab-check-warm)"
+  docker rm -f lab-check-warm >/dev/null 2>&1
+  start_app_for_check lab-check-cold 18160 1 APP_TELEMETRY=1 || { docker rm -f lab-check-cold >/dev/null 2>&1; return 1; }
+  cold="$(lab_fincore_line lab-check-cold)"
+  # Reads that need the pages: the feed and a few posts.
+  docker exec lab-check-cold sh -c 'for i in 1 2 3 4 5 6 7 8; do curl -s -o /dev/null http://127.0.0.1:18160/posts/$((i * 50000)); done; curl -s -o /dev/null http://127.0.0.1:18160/feed'
+  sleep 2.5
+  majors="$(docker logs lab-check-cold 2>&1 | sed -n 's/^telemetry .*"majflt":\([0-9]*\)}$/\1/p' | awk '{ s += $1 } END { print s + 0 }')"
+  docker rm -f lab-check-cold >/dev/null 2>&1
+  size="$(sed -n 's/.*size_bytes=\([0-9]*\).*/\1/p' <<<"$warm")"
+  res="$(sed -n 's/.*resident_bytes=\([0-9]*\).*/\1/p' <<<"$warm")"
+  [ -n "$size" ] && [ "$size" -gt 100000000 ] && [ "$res" -ge $(( size * 95 / 100 )) ] || { echo "the warm copy is not (almost) all resident: $warm"; return 1; }
+  res="$(sed -n 's/.*resident_bytes=\([0-9]*\).*/\1/p' <<<"$cold")"
+  [ -n "$res" ] && [ "$res" -le $(( size / 20 )) ] || { echo "the cold copy is more than 5 % resident: $cold"; return 1; }
+  [ "$majors" -gt 0 ] || { echo "the cold app made no major page fault reading the database ($majors)"; return 1; }
+  return 0
+}
+
+# The app's telemetry: off by default (no line), and with APP_TELEMETRY=1 one line a second with the requests per endpoint that the app was
+# asked for (known requests sent here), the loop's longest callback, GC and faults, and a different second on every line.
+check_app_telemetry() {
+  local log lines seconds distinct total
+  start_app_for_check lab-check-tel 18161 0 || return 1
+  docker exec lab-check-tel sh -c 'curl -s -o /dev/null http://127.0.0.1:18161/feed'
+  sleep 2.2
+  log="$(docker logs lab-check-tel 2>&1)"
+  docker rm -f lab-check-tel >/dev/null 2>&1
+  ! grep -q '^telemetry ' <<<"$log" || { echo "a telemetry line was printed with APP_TELEMETRY unset"; return 1; }
+  start_app_for_check lab-check-tel 18161 0 APP_TELEMETRY=1 || return 1
+  docker exec lab-check-tel sh -c 'for i in 1 2 3; do curl -s -o /dev/null http://127.0.0.1:18161/feed; done; curl -s -o /dev/null http://127.0.0.1:18161/posts/7; sleep 3.5; curl -s -o /dev/null http://127.0.0.1:18161/health'
+  sleep 1.2
+  log="$(docker logs lab-check-tel 2>&1 | grep '^telemetry ')"
+  docker rm -f lab-check-tel >/dev/null 2>&1
+  lines="$(wc -l <<<"$log" | tr -d ' ')"
+  seconds="$(sed -n 's/^telemetry {"second":\([0-9]*\),.*/\1/p' <<<"$log")"
+  distinct="$(sort -u <<<"$seconds" | wc -l | tr -d ' ')"
+  [ "$lines" -ge 4 ] && [ "$lines" = "$distinct" ] || { echo "expected 4 or more lines with a different second each, got $lines lines, $distinct seconds: ${seconds//$'\n'/ }"; return 1; }
+  [ "$(awk 'NR > 1 && $1 != prev + 1 { bad = 1 } { prev = $1 } END { print bad + 0 }' <<<"$seconds")" = 0 ] || { echo "the seconds are not consecutive: ${seconds//$'\n'/ }"; return 1; }
+  total="$(sed -n 's/^telemetry {"second":[0-9]*,"requests":{\(.*\)},"wal_bytes".*/\1/p' <<<"$log" | tr ',' '\n' | awk -F: 'NF > 1 { s += $NF } END { print s + 0 }')"
+  [ "$total" = 5 ] || { echo "5 requests were sent (3 feed, 1 post, 1 health), the lines count $total: $(tr '\n' ' ' <<<"$log")"; return 1; }
+  grep -q '^telemetry {"second":[0-9]*,"requests":{"GET /feed":3,"GET /posts/:id":1},"wal_bytes":[0-9]*,"longest_callback_ms":[0-9.]*,"gc_runs":[0-9]*,"gc_collected":[0-9]*,"minflt":[0-9]*,"majflt":[0-9]*}$' <<<"$log" \
+    || { echo "no line holds the first four requests under their endpoints: $(tr '\n' ' ' <<<"$log")"; return 1; }
+}
+
+# idle_client_run <port> <path> <body regex> <seconds before the end file>: runs the idle client's hold mode against the idle-timeout fixture
+# (it closes every connection that sat idle for 2 s) with 50 connections; prints the client's events, one JSON object per line.
+# shellcheck disable=SC2034
+idle_client_run() {
+  local port="$1" client="lab-check-idle-client" events
+  docker rm -f lab-check-idle-server "$client" >/dev/null 2>&1
+  LAB_EXT=(sockets event)
+  LAB_ENV=()
+  lab_build_php_flags
+  lab_start_server lab-check-idle-server 8.5 "$port" /lab/check/fixtures/idle-timeout-app.php || return 1
+  for _ in $(seq 1 60); do docker logs lab-check-idle-server 2>&1 | grep -q '^listening on' && break; sleep 0.5; done
+  docker run -d --name "$client" --network host --ulimit nofile=20000:20000 -v "$LAB:/lab:ro" "$LAB_IMAGE:8.5" sleep 300 >/dev/null
+  # The end file appears after $4 seconds, from outside.
+  ( sleep "$4"; docker exec "$client" touch /tmp/idle-end ) &
+  events="$(docker exec "$client" php -d display_errors=stderr /lab/conns/client.php "$port" --hold 50 --path "$2" --body-regex "$3" --end-file /tmp/idle-end 2>&1)"
+  wait
+  docker rm -f lab-check-idle-server "$client" >/dev/null 2>&1
+  echo "$events"
+}
+
+# The idle client's hold mode (the seam of --idle): against a server that closes connections idle for 2 s, the client holds 50 and reports
+# them held at the start; ended at once they are all still there, ended 4 s later the server has closed every one of them and the client says
+# so; an answer whose body does not match the pattern is a failure with its reason, nothing is held.
+check_idle_client_hold_mode() {
+  local out
+  out="$(idle_client_run 18170 /health '^\{"status":"ok",.*\}$' 0)" || { echo "the client run failed: $out"; return 1; }
+  jq -es '(map(select(.event == "held")) | .[0]) as $h | (map(select(.event == "ended")) | .[0]) as $e
+    | $h.held == 50 and $h.closed_by_server == 0 and $h.failure == null and $h.rss_kb > 0 and $e.held == 50 and $e.closed_by_server == 0' <<<"$out" >/dev/null \
+    || { echo "held and ended at once: expected 50 held, none closed: $(tr '\n' ' ' <<<"$out")"; return 1; }
+  out="$(idle_client_run 18170 /health '^\{"status":"ok",.*\}$' 4)" || { echo "the client run failed: $out"; return 1; }
+  jq -es '(map(select(.event == "held")) | .[0]) as $h | (map(select(.event == "ended")) | .[0]) as $e
+    | $h.held == 50 and $e.held == 0 and $e.closed_by_server == 50' <<<"$out" >/dev/null \
+    || { echo "ended 4 s later: expected all 50 closed by the server: $(tr '\n' ' ' <<<"$out")"; return 1; }
+  out="$(idle_client_run 18170 /health '^nothing like this$' 0)" || { echo "the client run failed: $out"; return 1; }
+  jq -es '(map(select(.event == "held")) | .[0]) as $h | $h.held == 0 and $h.failure == "bad answer" and ($h.detail | contains("status"))' <<<"$out" >/dev/null \
+    || { echo "a body that does not match the pattern: expected the failure 'bad answer': $(tr '\n' ' ' <<<"$out")"; return 1; }
+}
+
+# check_series_rows <json> <jq path of the rows>: the rows are one per second with no gap, every row has the server's readings (CPU, memory,
+# fds) and the server's telemetry line, and its endpoints as an object. The CPU of the first row (a partial second, before the load) and of
+# the last (after it) can be a true 0; the rows between must have used some. Prints which clause failed and the seconds (as seconds into the run)
+# that break it, returns 1.
+check_series_rows() {
+  local verdict
+  verdict="$(jq -c "$2"' as $rows
+    | ($rows | map(.second)) as $s
+    | def at: . as $r | ($r.second - $rows[0].second);
+      {clauses: {
+         enough_rows: (($rows | length) > 5),
+         no_gap: ([range(1; $s | length) | select($s[.] != $s[. - 1] + 1)] | length == 0),
+         endpoints_are_objects: ($rows | map(.endpoints | type == "object") | all),
+         server_readings: ($rows | map(.server != null and .server.cpu_usec >= 0 and .server.pss_anon_kb > 0 and .server.memory_current > 0 and .server.fds > 0) | all),
+         server_cpu_in_the_rows_between: ($rows | .[1:-1] | map(.server != null and .server.cpu_usec > 0) | all),
+         telemetry_every_second: ($rows | map(.telemetry != null) | all)},
+       offending: {gaps_after_row: [range(1; $s | length) | select($s[.] != $s[. - 1] + 1) | . - 1],
+                   server_missing_or_zero: [$rows | to_entries[] | select(.value.server == null or .value.server.cpu_usec < 0 or .value.server.pss_anon_kb <= 0 or .value.server.memory_current <= 0 or .value.server.fds <= 0
+                                            or (.key > 0 and .key < ($rows | length) - 1 and .value.server.cpu_usec <= 0)) | {row: (.value | at), server: .value.server}],
+                   telemetry_missing: [$rows[] | select(.telemetry == null) | at]},
+       rows: ($rows | length)}' "$1")"
+  jq -e '.clauses | all' <<<"$verdict" >/dev/null \
+    || { echo "the per-second rows fail $(jq -c '[.clauses | to_entries[] | select(.value == false) | .key]' <<<"$verdict"): $(jq -c '{offending, rows}' <<<"$verdict")"; return 1; }
+}
+
+# The realistic mode with 3,000 idle connections: held at the start and at the end (the server counts them too), no k6 connection error, the
+# client's memory is measured, one row per second of the run with latency per endpoint and the server's readings and telemetry (the
+# telemetry's request count is the aggregator's within 3 %), the WAL's frames show the writes, and the copy was fully resident (no --cold).
+check_realistic_idle_run() {
+  local out rc=0 json left verdict
+  json="$(mktemp -d)/realistic.json"
+  out="$(bash "$LAB/realistic.sh" --image 8.5 --think-scale 0.1 --idle 3000 --hold 40,12 --label test --out "$json" 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "lab/realistic.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
+  grep -qx 'VALID' <<<"$out" || { echo "the run is not marked VALID: ${out//$'\n'/ | }"; return 1; }
+  grep -q '^idle connections: 3000 requested, 3000 held at the start and 3000 at the end, 0 closed by the server' <<<"$out" \
+    || { echo "the table does not report 3,000 held at the start and at the end: ${out//$'\n'/ | }"; return 1; }
+  grep -q '^k6 connection errors: 0$' <<<"$out" || { echo "the table does not say k6 had no connection error"; return 1; }
+  # Every clause is a named boolean, so that a failure says which one (and the numbers behind the counting ones).
+  # The telemetry's count against the aggregator's is made on the seconds both sides cover whole: not the first row (the sampler starts in
+  # the middle of a second) nor the last (its telemetry line is printed a moment after the run's last reading). A line the server lost is a
+  # whole second (about 40 requests here), so the tolerance is 2 % and 8 requests: the requests that sit on the edges of the window
+  # (k6 stamps a request when it ends, the server counts it when it starts) can fall on either side.
+  verdict="$(jq -c '
+    .results.series as $rows
+    | ($rows | .[1:-1]) as $inner
+    | ([$inner[].telemetry.requests // {} | to_entries[].value] | add // 0) as $tel
+    | ([$inner[].requests] | add // 0) as $agg
+    | {clauses: {
+         idle_held_at_start_and_end: (.idle.requested == 3000 and .idle.held_at_start == 3000 and .idle.held_at_end == 3000),
+         server_counts_the_idle_connections: (.idle.server_established_at_start == 3000 and .idle.server_established_at_end == 3000),
+         fds_and_client_memory: (.idle.server_fds_open_with_idle > 3000 and .idle.client.memory_current_mib_at_end > 1 and .idle.client.rss_mib > 1),
+         no_k6_connection_error: (.k6_connection_errors == 0),
+         warm_copy: (.cold.requested == false and .cold.resident_share > 0.95),
+         telemetry_on: (.server.env | index("APP_TELEMETRY=1") != null),
+         wal_frames_seen: (([$rows[].server.wal_frames] | max) > 0),
+         wal_bytes_seen: (([$rows[].server.wal_bytes] | max) > 0),
+         longest_callback_seen: (([$rows[].telemetry.longest_callback_ms] | max) > 0),
+         feed_endpoint_seen: ([$rows[].endpoints | keys[]] | unique | index("GET /feed") != null),
+         telemetry_counts_the_requests: (($tel - $agg | fabs) <= 0.02 * $agg + 8)},
+       numbers: {rows: ($rows | length), telemetry_requests: $tel, aggregator_requests: $agg,
+                 rows_without_telemetry: [$rows[] | select(.telemetry == null) | .second],
+                 rows_without_server: [$rows[] | select(.server == null) | .second],
+                 wal_frames_max: ([$rows[].server.wal_frames] | max), longest_callback_max: ([$rows[].telemetry.longest_callback_ms] | max)}}' "$json")"
+  jq -e '.clauses | all' <<<"$verdict" >/dev/null \
+    || { echo "the JSON does not hold the idle run, failing clauses $(jq -c '[.clauses | to_entries[] | select(.value == false) | .key]' <<<"$verdict"), numbers $(jq -c '.numbers' <<<"$verdict"), idle $(jq -c '.idle' "$json")"; return 1; }
+  check_series_rows "$json" '.results.series' || return 1
+  left="$(docker ps -a --format '{{.Names}}' | grep '^lab-realistic-' || true)"
+  [ -z "$left" ] || { echo "containers left behind: ${left//$'\n'/ }"; return 1; }
+}
+
+# A server that closes connections idle for 2 s: the run is INVALID with the reason (every one of the 200 idle connections was closed), exits 3,
+# and leaves no container behind.
+check_realistic_idle_closed_by_the_server_fails() {
+  local out rc=0 json left
+  json="$(mktemp -d)/realistic.json"
+  out="$(bash "$LAB/realistic.sh" --image 8.5 --server "$LAB/check/fixtures/idle-timeout-app.php" --think-scale 0.1 --idle 200 --hold 20,10 --out "$json" 2>&1)" || rc=$?
+  [ "$rc" = 3 ] || { echo "expected exit 3 when the server closes idle connections, got $rc: ${out//$'\n'/ | }"; return 1; }
+  grep -q '^INVALID: .*the server closed 200 of the 200 idle connections during the run: 0 held at the end' <<<"$out" \
+    || { echo "the reason is not reported: ${out//$'\n'/ | }"; return 1; }
+  jq -e '.valid == false and .idle.held_at_start == 200 and .idle.held_at_end == 0 and .idle.closed_by_server_at_end == 200' "$json" >/dev/null \
+    || { echo "the JSON does not say 200 held then 0: $(jq -c '{valid, idle}' "$json")"; return 1; }
+  left="$(docker ps -a --format '{{.Names}}' | grep '^lab-realistic-' || true)"
+  [ -z "$left" ] || { echo "containers left behind: ${left//$'\n'/ }"; return 1; }
+}
+
+# macro.sh on the app: --fresh-db starts it through lab_start_app, --cold evicts the copy (almost none of it resident, and the app reads the
+# database from disk: major faults), --per-second gives one row per second with the latency of /posts/:id and the server's readings, and the
+# aggregator saw exactly the requests k6's own summary counted.
+check_macro_fresh_db_cold_per_second() {
+  local out rc=0 json
+  json="$(mktemp -d)/macro.json"
+  out="$(bash "$LAB/macro.sh" --image 8.5 --server "$LAB/app/server.php" --fresh-db --cold --per-second --rate 400 --duration 8 --warmup 0 \
+    --script "$LAB/macro/k6/posts.js" --path /posts/1 --label app --out "$json" 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "lab/macro.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
+  grep -qx 'VALID' <<<"$out" || { echo "the run is not marked VALID: ${out//$'\n'/ | }"; return 1; }
+  jq -e '.valid == true and .cold.requested == true and .cold.resident_share < 0.05 and .server.ext == ["sockets", "event"]
+         and (.server.env | index("APP_TELEMETRY=1") != null) and .results.error_rate == 0
+         and .results.per_second.aggregator.requests == .results.requests and .results.per_second.aggregator.unparsed == 0
+         and .results.per_second.aggregator.connection_errors == 0
+         and ([.results.per_second.rows[].server.majflt] | add) > 0
+         and ([.results.per_second.rows[].endpoints | keys[]] | unique == ["/posts/:id"])
+         and ([.results.per_second.rows[].requests] | add) == .results.requests' "$json" >/dev/null \
+    || { echo "the JSON does not hold the cold per-second run: $(jq -c '{valid, cold, requests: .results.requests, per_second: (.results.per_second | {aggregator, rows: (.rows | length)})}' "$json")"; return 1; }
+  check_series_rows "$json" '.results.per_second.rows' || return 1
+  grep -q '^sec  VUs  req  /posts/:id ' <<<"$out" || { echo "the table has no per-second header: ${out//$'\n'/ | }"; return 1; }
+  [ -z "$(docker ps -a --format '{{.Names}}' | grep '^lab-macro-' || true)" ] || { echo "containers left behind"; return 1; }
+  docker volume ls --format '{{.Name}}' | grep -x lab-macro-run >/dev/null && { echo "the volume lab-macro-run is left behind"; return 1; }
+  return 0
+}
+
+# Without --fresh-db the bake-off server keeps copying its own seed: --cold alone is refused before any container starts.
+check_macro_cold_needs_fresh_db() {
+  local out rc=0
+  out="$(bash "$LAB/macro.sh" --image 8.5 --server "$LAB/servers/noop-swoole.php" --rate 100 --duration 2 --cold 2>&1)" || rc=$?
+  [ "$rc" = 2 ] || { echo "expected exit 2 for --cold without --fresh-db, got $rc: ${out//$'\n'/ | }"; return 1; }
+  grep -q -- '--cold needs --fresh-db' <<<"$out" || { echo "the message does not say why: ${out//$'\n'/ | }"; return 1; }
+  [ -z "$(docker ps -a --format '{{.Names}}' | grep '^lab-macro-' || true)" ] || { echo "a container was started"; return 1; }
+}
+
+# The fold of a profile into the steps (lab/profile/fold-lib.php) on a hand-written profile of 1,000 samples whose shares are known: the
+# leaf frame decides (an unnamed leaf is unclassified, even under a known frame), a stack with no route function is shared, the rules refuse a bad line.
+# Then the command line: the table on the fixture (every row, the all row at 100 %, the unknown frame named), microseconds with
+# --us-per-req, and an empty profile or a missing file refused.
+check_fold_cases() {
+  local out ok rc=0 fixture=/lab/check/fixtures/profile-collapsed.txt table
+  out="$(bash "$LAB/run.sh" 8.5 php /lab/check/fold-test.php 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "fold-test.php exited $rc: ${out//$'\n'/ | }"; return 1; }
+  grep -q '^FAIL' <<<"$out" && { echo "a case failed: ${out//$'\n'/ | }"; return 1; }
+  ok="$(grep -c '^ok  ' <<<"$out")"
+  [ "$ok" -ge 25 ] || { echo "expected at least 25 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
+  table="$(bash "$LAB/run.sh" 8.5 php /lab/profile/fold.php "$fixture" --us-per-req 40 2>&1)" || { echo "fold.php failed on the fixture: ${table//$'\n'/ | }"; return 1; }
+  grep -q '^all .*100.0% 40.0us$' <<<"$table" || { echo "the all row is not 100.0% 40.0us: ${table//$'\n'/ | }"; return 1; }
+  grep -q '^unclassified .* 1.0% 0.4us$' <<<"$table" || { echo "the unknown frame is not 1.0 % unclassified: ${table//$'\n'/ | }"; return 1; }
+  grep -q 'unclassified: 10 samples (1.0%), leaf frames: mysteryFrame (10)' <<<"$table" || { echo "the unknown frame is not named: ${table//$'\n'/ | }"; return 1; }
+  rc=0
+  bash "$LAB/run.sh" 8.5 sh -c ': > /tmp/empty; php /lab/profile/fold.php /tmp/empty' >/dev/null 2>&1 || rc=$?
+  [ "$rc" = 1 ] || { echo "an empty profile should exit 1, got $rc"; return 1; }
+  rc=0
+  bash "$LAB/run.sh" 8.5 php /lab/profile/fold.php /lab/check/fixtures/not-there.txt >/dev/null 2>&1 || rc=$?
+  [ "$rc" = 1 ] || { echo "a missing file should exit 1, got $rc"; return 1; }
+}
+
+# Where Excimer's samples land (lab/profile/calibrate.php), JIT on and off: an internal function's time (hash) is its calling PHP
+# function's, within 5 points of the share measured without the profiler; the CPU time of a spinning libevent loop and of a socket
+# pair ping-pong is all in the callbacks, and the samples add up to the CPU the process used (the kernel's time is counted).
+check_excimer_calibration() {
+  local jit out rc
+  for jit in tracing disable; do
+    rc=0
+    out="$(bash "$LAB/run.sh" 8.5 php -d extension=sockets -d extension=event -d extension=excimer -d memory_limit=-1 -d opcache.enable_cli=1 -d "opcache.jit=$jit" \
+      -d opcache.jit_buffer_size=32M -d opcache.file_update_protection=0 -d zend.assertions=-1 /lab/profile/calibrate.php hash --seconds 4 2>&1)" || rc=$?
+    [ "$rc" = 0 ] || { echo "the hash calibration exited $rc with opcache.jit=$jit: ${out//$'\n'/ | }"; return 1; }
+    grep -q "^jit: $([ "$jit" = tracing ] && echo on || echo off)\$" <<<"$out" || { echo "the JIT is not as asked ($jit): ${out//$'\n'/ | }"; return 1; }
+    grep -q 'hash (the internal function) 0.0%' <<<"$out" || { echo "samples landed on a frame of the internal function: ${out//$'\n'/ | }"; return 1; }
+    rc=0
+    out="$(bash "$LAB/run.sh" 8.5 php -d extension=sockets -d extension=event -d extension=excimer -d memory_limit=-1 -d opcache.enable_cli=1 -d "opcache.jit=$jit" \
+      -d opcache.jit_buffer_size=32M -d opcache.file_update_protection=0 -d zend.assertions=-1 /lab/profile/calibrate.php loop --seconds 2 2>&1)" || rc=$?
+    [ "$rc" = 0 ] || { echo "the loop calibration exited $rc with opcache.jit=$jit: ${out//$'\n'/ | }"; return 1; }
+    [ "$(grep -c ': ok$' <<<"$out")" = 2 ] || { echo "the loop calibration did not pass its two cases with opcache.jit=$jit: ${out//$'\n'/ | }"; return 1; }
+  done
+}
+
+# check_profile_json <json> <step table text>: the JSON of a profiled run holds the profile (samples, the cgroup's user and system CPU,
+# unclassified under 5 %), and the table has a column for each of the five endpoints and a row for each step. The four endpoints of the
+# bench's journey have samples; S9 is empty (the commit is inside the write query).
+check_profile_json() {
+  local json="$1" fold="$2" row
+  jq -e '.profile.samples > 100 and .profile.cgroup.user_usec > 0 and .profile.cgroup.system_usec > 0 and .profile.unclassified_share < 0.05
+         and .profile.samples_over_cgroup_cpu > 0.8 and .profile.samples_over_cgroup_cpu < 1.2 and .server.ext == ["sockets", "event", "excimer"]
+         and (.server.env | index("APP_TELEMETRY=0") != null) and (.server.env | index("APP_PROFILE=/tmp/profile.collapsed") != null)' "$json" >/dev/null \
+    || { echo "the JSON does not hold a sound profile: $(jq -c '{profile: (.profile | del(.fold)), ext: .server.ext, env: .server.env}' "$json")"; return 1; }
+  grep -q '^step  *GET /health  *GET /feed  *GET /posts/:id  *POST /posts  *POST /posts/:id/like  *shared  *all$' <<<"$fold" || { echo "the table has not the five endpoints, shared and all: ${fold//$'\n'/ | }"; return 1; }
+  for row in 'S1 accept' 'S2 read' 'S3 route' 'S4 verify' 'S5 validate' 'S6 query' 'S7 build' 'S8 write' 'S9 durability' 'event loop' 'unclassified'; do
+    grep -q "^$row" <<<"$fold" || { echo "the table has no row '$row': ${fold//$'\n'/ | }"; return 1; }
+  done
+  grep -q '^all .*100.0%' <<<"$fold" || { echo "the all row is not 100.0 %: ${fold//$'\n'/ | }"; return 1; }
+  # The weight of each column in all the samples: health (only the harness's own polls), feed, post, create, like, shared.
+  row="$(awk '/^weight in all samples/ { print $5, $6, $7, $8, $9, $10 }' <<<"$fold")"
+  [ -n "$row" ] || { echo "the table has no weight row: ${fold//$'\n'/ | }"; return 1; }
+  read -r _ feed post create like shared <<<"$row"
+  for w in "$feed" "$post" "$create" "$like"; do
+    [ "$w" != 0.0% ] || { echo "an endpoint of the journey has no sample: weights feed $feed, post $post, create $create, like $like, shared $shared"; return 1; }
+  done
+  grep -q '^S9 durability  *0.0%' <<<"$fold" || { echo "S9 is not empty: ${fold//$'\n'/ | }"; return 1; }
+}
+
+# A 20 s profiled run of the realistic mode (the bench's journey, scaled): the collapsed stacks are copied out of the container, the fold
+# is printed with the cgroup's user and system CPU of the window, no container or volume is left, and an image with no Excimer is refused
+# before anything starts.
+check_realistic_profile_smoke() {
+  local out rc=0 dir json collapsed fold
+  dir="$(mktemp -d)"
+  json="$dir/realistic.json"
+  collapsed="$dir/profile.collapsed"
+  out="$(bash "$LAB/realistic.sh" --image 8.5 --think-scale 0.1 --warmup 100,5 --hold 300,20 --ramp 3 --profile "$collapsed" --out "$json" 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "lab/realistic.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
+  [ -s "$collapsed" ] || { echo "no collapsed stacks were copied out"; return 1; }
+  grep -q '^/lab/app/server.php;DiyServer::run;' "$collapsed" || { echo "the collapsed stacks do not look like the app's: $(head -n 2 "$collapsed")"; return 1; }
+  fold="$(jq -r '.profile.fold' "$json")"
+  check_profile_json "$json" "$fold" || return 1
+  grep -q '^cgroup CPU over the profiled window: user [0-9]* ms, system [0-9]* ms' <<<"$out" || { echo "the cgroup's user and system split is not printed: ${out//$'\n'/ | }"; return 1; }
+  grep -q '^S6 query SQLite ' <<<"$out" || { echo "the table is not printed: ${out//$'\n'/ | }"; return 1; }
+  [ -z "$(docker ps -a --format '{{.Names}}' | grep '^lab-realistic-' || true)" ] || { echo "containers left behind"; return 1; }
+  docker volume ls --format '{{.Name}}' | grep -x lab-realistic-run >/dev/null && { echo "the volume lab-realistic-run is left behind"; return 1; }
+  rc=0
+  out="$(bash "$LAB/realistic.sh" --image 8.6 --think-scale 0.1 --hold 100,5 --profile "$dir/none.collapsed" --out "$dir/none.json" 2>&1)" || rc=$?
+  [ "$rc" = 1 ] || { echo "an image with no Excimer should exit 1, got $rc: ${out//$'\n'/ | }"; return 1; }
+  grep -q 'this image has no Excimer' <<<"$out" || { echo "the message does not say why: ${out//$'\n'/ | }"; return 1; }
+  [ -z "$(docker ps -a --format '{{.Names}}' | grep '^lab-realistic-' || true)" ] || { echo "containers left behind after the refusal"; return 1; }
+  return 0
+}
+
+# macro.sh takes --profile too (with the app, --fresh-db): the same collapsed stacks and fold; without --fresh-db it is refused.
+check_macro_profile() {
+  local out rc=0 dir json
+  dir="$(mktemp -d)"
+  json="$dir/macro.json"
+  out="$(bash "$LAB/macro.sh" --image 8.5 --server "$LAB/app/server.php" --fresh-db --rate 300 --duration 8 --warmup 2 \
+    --script "$LAB/macro/k6/posts.js" --path /posts/1 --profile "$dir/profile.collapsed" --out "$json" 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "lab/macro.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
+  [ -s "$dir/profile.collapsed" ] || { echo "no collapsed stacks were copied out"; return 1; }
+  jq -e '.profile.samples > 100 and .profile.cgroup.user_usec > 0 and .profile.cgroup.system_usec > 0 and .profile.unclassified_share < 0.05
+         and (.profile.fold | test("GET /posts/:id")) and .server.ext == ["sockets", "event", "excimer"]' "$json" >/dev/null \
+    || { echo "the JSON does not hold a sound profile: $(jq -c '.profile | del(.fold)' "$json")"; return 1; }
+  grep -q '^S6 query SQLite ' <<<"$out" || { echo "the table is not printed: ${out//$'\n'/ | }"; return 1; }
+  [ -z "$(docker ps -a --format '{{.Names}}' | grep '^lab-macro-' || true)" ] || { echo "containers left behind"; return 1; }
+  rc=0
+  out="$(bash "$LAB/macro.sh" --image 8.5 --server "$LAB/servers/noop-swoole.php" --rate 100 --duration 2 --profile "$dir/x" 2>&1)" || rc=$?
+  [ "$rc" = 2 ] || { echo "expected exit 2 for --profile without --fresh-db, got $rc: ${out//$'\n'/ | }"; return 1; }
+  grep -q -- '--profile needs --fresh-db' <<<"$out" || { echo "the message does not say why: ${out//$'\n'/ | }"; return 1; }
+}
+
+# The aggregator keeps up with k6 at the rows of 40,000 req/s (about 12 rows a request): a recorded CSV, replayed at 480,000 rows a
+# second for 10 s, is read in full (every row, every request counted, none unparsed) with a lag under 3 s, and the feeder itself
+# was never more than a second late (a feeder that blocks on a full FIFO proves nothing).
+check_replay_keeps_up() {
+  local out rc=0 fed result cfg
+  cfg='{"fifo":"/tmp/csv","status":"/tmp/status.json","result":"/tmp/result.json","steps":[],"stop_on_fail":false,"users_per_rps":9.45,"server_cgroup":null,"k6_cgroup":null,"limits":{"p95_ms":500,"p99_ms":1000,"error_rate":0.01,"achieved_ratio":0.97}}'
+  out="$(docker run --rm --cpuset-cpus "$LAB_CPUSET_K6" -v "$LAB:/lab:ro" -e "AGG_CONFIG=$cfg" "$LAB_IMAGE:8.5" sh -c '
+    mkfifo /tmp/csv
+    php -d memory_limit=-1 -d opcache.enable_cli=1 -d opcache.jit=tracing -d opcache.jit_buffer_size=32M /lab/macro/aggregate.php &
+    sleep 1
+    php /lab/macro/replay.php /lab/check/fixtures/k6-rows.csv /tmp/csv 480000 10
+    wait
+    cat /tmp/result.json' 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "the replay exited $rc: ${out//$'\n'/ | }"; return 1; }
+  fed="$(grep '^fed ' <<<"$out")"
+  result="$(grep '^{' <<<"$out")"
+  [ -n "$fed" ] && [ -n "$result" ] || { echo "no feeder line or no result: ${out//$'\n'/ | }"; return 1; }
+  awk -v f="$fed" 'BEGIN { split(f, a, " "); split(a[5], b, "="); exit !(b[2] <= 1.0) }' || { echo "the feeder was late, the replay proves nothing: $fed"; return 1; }
+  jq -e --arg fed "$fed" '($fed | capture("requests=(?<r>[0-9]+)").r | tonumber) as $requests
+    | ($fed | capture("rows=(?<r>[0-9]+)").r | tonumber) as $rows
+    | .requests == $requests and .rows >= $rows and .unparsed == 0 and .lag_max_s < 3 and $rows > 4000000' <<<"$result" >/dev/null \
+    || { echo "the aggregator did not keep up ($fed): $(jq -c '{rows, requests, unparsed, lag_max_s}' <<<"$result")"; return 1; }
+}
+
 # The bash scripts of the lab, one repo-relative path per line: every `*.sh` and every file whose first line is a bash or sh
 # shebang, except the fixtures (they hold deliberate warnings) and the seed data.
 lab_bash_scripts() {
@@ -407,6 +1057,101 @@ check_shellcheck_catches_warning() {
   fi
 }
 
+# results_check <root>: every <root>/*/summarize.sh is run from its folder, and what it prints must be in that folder's README.md, so
+# a README cannot drift from its raw files. A README with the lines `<!-- BEGIN summarize -->` and `<!-- END summarize -->` holds the
+# output between them exactly (a stale extra line, a missing one, a changed one all fail); a README without them only has to hold every
+# non-empty line the script prints, byte for byte, somewhere. One line per folder on stderr: `ok`, `skip` (no summarize.sh) or the
+# first difference. Returns 1 if any folder fails or none was checked.
+results_check() {
+  local root="$1" dir name out rc checked=0 failed=0 missing begins ends
+  out="$(mktemp)"
+  for dir in "$root"/*/; do
+    dir="${dir%/}"
+    name="${dir##*/}"
+    if [ ! -f "$dir/summarize.sh" ]; then
+      echo "  skip  $name (no summarize.sh)" >&2
+      continue
+    fi
+    checked=$((checked + 1))
+    rc=0
+    bash "$dir/summarize.sh" >"$out" 2>/dev/null </dev/null || rc=$?
+    if [ "$rc" != 0 ]; then
+      echo "  FAIL  $name: summarize.sh exited $rc" >&2; failed=1; continue
+    fi
+    if [ ! -s "$out" ]; then
+      echo "  FAIL  $name: summarize.sh prints nothing" >&2; failed=1; continue
+    fi
+    [ -f "$dir/README.md" ] || { echo "  FAIL  $name: no README.md" >&2; failed=1; continue; }
+    begins="$(grep -c '^<!-- BEGIN summarize -->$' "$dir/README.md" || true)"
+    ends="$(grep -c '^<!-- END summarize -->$' "$dir/README.md" || true)"
+    if [ "$begins" != 0 ] || [ "$ends" != 0 ]; then
+      if [ "$begins" != 1 ] || [ "$ends" != 1 ]; then
+        echo "  FAIL  $name: README.md needs exactly one BEGIN and one END summarize line, has $begins and $ends" >&2; failed=1; continue
+      fi
+      missing="$(diff <(sed -n '/^<!-- BEGIN summarize -->$/,/^<!-- END summarize -->$/p' "$dir/README.md" | sed '1d;$d') "$out" | sed -n '/^[<>]/{p;q;}')"
+      if [ -n "$missing" ]; then
+        echo "  FAIL  $name: README.md's summarize block differs from summarize.sh (< README, > script): $missing" >&2; failed=1
+      else
+        echo "  ok    $name (the block, $(wc -l <"$out" | tr -d ' ') lines)" >&2
+      fi
+      continue
+    fi
+    # Why: awk compares whole lines as bytes (a set lookup), which grep -x with a pattern would not do for `|` and `.`.
+    missing="$(awk 'NR == FNR { seen[$0] = 1; next } $0 != "" && !($0 in seen) { print; exit }' "$dir/README.md" "$out")"
+    if [ -n "$missing" ]; then
+      echo "  FAIL  $name: README.md lacks the line: $missing" >&2; failed=1
+    else
+      echo "  ok    $name ($(grep -c . "$out") lines)" >&2
+    fi
+  done
+  rm -f "$out"
+  [ "$checked" -gt 0 ] || { echo "  FAIL  no summarize.sh under $root" >&2; return 1; }
+  return "$failed"
+}
+
+# Every results folder with a summarize.sh still prints, line for line, tables that its README holds.
+check_results_regenerate() {
+  local report rc=0
+  report="$(results_check "$LAB/results" 2>&1)" || rc=$?
+  echo "$report" >&2
+  [ "$rc" = 0 ] || { echo "a README differs from its summarize.sh: ${report//$'\n'/ | }"; return 1; }
+}
+
+# The fixtures: one README misses a line of its summarize.sh (it holds a near copy), one has a stale extra line in its
+# BEGIN/END block (the line check alone would pass it, every printed line is in the file), a folder without a script is skipped, and
+# folders that are right pass: with the lines anywhere, and with a block that is exact (prose outside it is free).
+check_results_check_catches_drift() {
+  local out rc=0 good
+  out="$(results_check "$LAB/check/fixtures/results-drift" 2>&1)" || rc=$?
+  [ "$rc" = 1 ] || { echo "expected exit 1 on the drifted fixtures, got $rc: ${out//$'\n'/ | }"; return 1; }
+  grep -qxF '  FAIL  drifted: README.md lacks the line: | b | 2 | µs |' <<<"$out" || { echo "the missing line is not named: ${out//$'\n'/ | }"; return 1; }
+  grep -qxF "  FAIL  stale-block: README.md's summarize block differs from summarize.sh (< README, > script): < | c | 3 |" <<<"$out" \
+    || { echo "the stale line of the block is not named: ${out//$'\n'/ | }"; return 1; }
+  grep -qxF '  skip  hand-written (no summarize.sh)' <<<"$out" || { echo "the folder without a script is not named as skipped: ${out//$'\n'/ | }"; return 1; }
+  grep -q 'FAIL  hand-written' <<<"$out" && { echo "the folder without a script fails"; return 1; }
+  good="$(mktemp -d)"
+  mkdir "$good/whole" "$good/block"
+  printf '%s\n' 'echo "| a | 1 |"' 'echo' 'echo "| b | 2 | µs |"' >"$good/whole/summarize.sh"
+  printf '%s\n' 'prose' '| a | 1 |' '| b | 2 | µs |' >"$good/whole/README.md"
+  cp "$good/whole/summarize.sh" "$good/block/summarize.sh"
+  printf '%s\n' 'prose with | z | 9 | in it' '<!-- BEGIN summarize -->' '| a | 1 |' '' '| b | 2 | µs |' '<!-- END summarize -->' 'more prose' >"$good/block/README.md"
+  rc=0
+  out="$(results_check "$good" 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "a README that holds every line fails: ${out//$'\n'/ | }"; return 1; }
+  # A block that lost a line, and a block with one marker only, fail.
+  printf '%s\n' '<!-- BEGIN summarize -->' '| a | 1 |' '' '<!-- END summarize -->' '| b | 2 | µs |' >"$good/block/README.md"
+  rc=0
+  out="$(results_check "$good" 2>&1)" || rc=$?
+  [ "$rc" = 1 ] && grep -qF "block differs from summarize.sh (< README, > script): > | b | 2 | µs |" <<<"$out" \
+    || { echo "a block that lost a line passes or is not named (exit $rc): ${out//$'\n'/ | }"; rm -rf "$good"; return 1; }
+  printf '%s\n' '<!-- BEGIN summarize -->' '| a | 1 |' '' '| b | 2 | µs |' >"$good/block/README.md"
+  rc=0
+  out="$(results_check "$good" 2>&1)" || rc=$?
+  rm -rf "$good"
+  [ "$rc" = 1 ] && grep -qF "needs exactly one BEGIN and one END summarize line, has 1 and 0" <<<"$out" \
+    || { echo "a block with no END passes or is not named (exit $rc): ${out//$'\n'/ | }"; return 1; }
+}
+
 CHECKS=(
   check_seed_files_exist
   check_seed_has_posts
@@ -426,6 +1171,7 @@ CHECKS=(
   check_macro_cleans_up_after_failure
   check_conformance_bake_swoole
   check_conformance_fails_on_wrong_server
+  check_results_hold_no_container_names
   check_macro_bake_swoole_posts_is_valid
   check_conns_holds_steps
   check_conns_finds_ceiling
@@ -438,9 +1184,40 @@ CHECKS=(
   check_diy_partial_write
   check_conformance_bake_diy
   check_macro_bake_diy_posts_is_valid
+  check_app_cases
+  check_challenge_test_passes_on_app
+  check_challenge_test_fails_on_wrong_golden
+  check_aggregate_cases
+  check_series_cases
+  check_telemetry_cases
+  check_realistic_script_is_the_benchs
+  check_replay_keeps_up
+  check_realistic_staircase_passes
+  check_realistic_no_series
+  check_realistic_stops_at_a_failing_step
+  check_realistic_refuses_vus_above_the_cap
+  check_realistic_marks_invalid_run
+  check_realistic_cleans_up_after_failure
+  check_realistic_calibrates
+  check_cold_start_evicts_the_copy
+  check_app_telemetry
+  check_idle_client_hold_mode
+  check_realistic_idle_run
+  check_realistic_idle_closed_by_the_server_fails
+  check_macro_fresh_db_cold_per_second
+  check_macro_cold_needs_fresh_db
+  check_fold_cases
+  check_excimer_calibration
+  check_realistic_profile_smoke
+  check_macro_profile
   check_shellcheck
   check_shellcheck_catches_warning
+  check_results_check_catches_drift
+  check_results_regenerate
 )
+
+# Names given as arguments: only those checks (`bash lab/check.sh check_replay_keeps_up`).
+[ "$#" -eq 0 ] || CHECKS=("$@")
 
 failed=0
 for check in "${CHECKS[@]}"; do

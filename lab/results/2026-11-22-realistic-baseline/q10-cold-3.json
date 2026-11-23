@@ -1,0 +1,1591 @@
+{
+  "date": "2026-11-22T22:28:27Z",
+  "command": "lab/macro.sh --image 8.5 --server lab/app/server.php --fresh-db --per-second --cold --rate 7000 --duration 30 --warmup 0 --script lab/macro/k6/posts.js --path /posts/1 --label q10-cold --out ./lab/results/2026-11-22-realistic-baseline/q10-cold-3.json",
+  "label": "q10-cold",
+  "other_containers": {
+    "count": 0,
+    "names": []
+  },
+  "valid": true,
+  "invalid_reasons": [],
+  "host": {
+    "docker_desktop": "Docker Desktop 4.76.0 (228118)",
+    "engine": "29.5.2",
+    "vm_kernel": "6.12.76-linuxkit",
+    "arch": "arm64",
+    "cpuset_server": "2",
+    "cpuset_k6": "4-11",
+    "cpuset_probe": "0-1",
+    "limits": "--cpus=1 --memory=2g --memory-swap=2g --ulimit nofile=65535:65535"
+  },
+  "server": {
+    "variant": "8.5",
+    "image_id": "sha256:a23707c8168f1cde43edcf9d3fe6aa9a934e184f23992f7b8dc6c76eb8d565d3",
+    "php_version": "8.5.13",
+    "swoole_version": "",
+    "file": "app/server.php",
+    "port": 18080,
+    "php_flags": "-d extension=sockets -d extension=event -d memory_limit=-1 -d opcache.enable_cli=1 -d opcache.jit=tracing -d opcache.jit_buffer_size=32M -d opcache.file_update_protection=0 -d zend.assertions=-1",
+    "ini": {
+      "opcache.enable_cli": "1",
+      "opcache.jit": "tracing",
+      "opcache.jit_buffer_size": "32M",
+      "opcache.file_update_protection": "0",
+      "zend.assertions": "-1",
+      "memory_limit": "-1",
+      "jit_on": true
+    },
+    "ext": [
+      "sockets",
+      "event"
+    ],
+    "env": [
+      "APP_TELEMETRY=1"
+    ],
+    "socket": {
+      "backlog": 4096,
+      "tcp_nodelay": 1
+    }
+  },
+  "k6": {
+    "image": "grafana/k6:1.8.3@sha256:2cd9cd09e4119340a122aaf06f30cf3009c19db23b87954909fba0d3eda58e08",
+    "version": "k6 v1.8.3 (commit/58bbfd8e48, go1.26.4, linux/arm64)",
+    "script": "macro/k6/posts.js",
+    "target_url": "http://127.0.0.1:18080/posts/1",
+    "rate": 7000,
+    "duration_s": 30,
+    "warmup_s": 0,
+    "pre_allocated_vus": 700,
+    "max_vus": 700
+  },
+  "cold": {
+    "requested": true,
+    "resident_bytes": 0,
+    "size_bytes": 249843712,
+    "resident_pages": 0,
+    "pages": 60997,
+    "resident_share": 0
+  },
+  "profile": null,
+  "results": {
+    "per_second": {
+      "aggregator": {
+        "max_lag_s": 1.957,
+        "rows": 2730060,
+        "requests": 210000,
+        "unparsed": 0,
+        "connection_errors": 0,
+        "error_codes": {}
+      },
+      "rows": [
+        {
+          "second": 1795386474,
+          "vus": null,
+          "requests": 0,
+          "errors": 0,
+          "endpoints": {},
+          "server": {
+            "cpu_usec": 4583,
+            "pss_anon_kb": 6488,
+            "memory_current": 11018240,
+            "wal_bytes": 0,
+            "wal_frames": 0,
+            "fds": 12,
+            "minflt": 0,
+            "majflt": 0
+          },
+          "telemetry": {
+            "second": 1795386474,
+            "requests": {},
+            "wal_bytes": 0,
+            "longest_callback_ms": 0,
+            "gc_runs": 0,
+            "gc_collected": 0,
+            "minflt": 0,
+            "majflt": 0
+          }
+        },
+        {
+          "second": 1795386475,
+          "vus": null,
+          "requests": 6059,
+          "errors": 0,
+          "endpoints": {
+            "/posts/:id": {
+              "count": 6059,
+              "p50": 0.135,
+              "p99": 24.376,
+              "max": 25.121
+            }
+          },
+          "server": {
+            "cpu_usec": 160383,
+            "pss_anon_kb": 6652,
+            "memory_current": 40071168,
+            "wal_bytes": 0,
+            "wal_frames": 0,
+            "fds": 712,
+            "minflt": 426,
+            "majflt": 350
+          },
+          "telemetry": {
+            "second": 1795386475,
+            "requests": {
+              "GET /posts/:id": 6076
+            },
+            "wal_bytes": 0,
+            "longest_callback_ms": 2.627,
+            "gc_runs": 0,
+            "gc_collected": 0,
+            "minflt": 422,
+            "majflt": 348
+          }
+        },
+        {
+          "second": 1795386476,
+          "vus": 7,
+          "requests": 7001,
+          "errors": 0,
+          "endpoints": {
+            "/posts/:id": {
+              "count": 7001,
+              "p50": 0.106,
+              "p99": 0.737,
+              "max": 4.695
+            }
+          },
+          "server": {
+            "cpu_usec": 137482,
+            "pss_anon_kb": 6652,
+            "memory_current": 66584576,
+            "wal_bytes": 0,
+            "wal_frames": 0,
+            "fds": 712,
+            "minflt": 378,
+            "majflt": 371
+          },
+          "telemetry": {
+            "second": 1795386476,
+            "requests": {
+              "GET /posts/:id": 7003
+            },
+            "wal_bytes": 0,
+            "longest_callback_ms": 3.101,
+            "gc_runs": 0,
+            "gc_collected": 0,
+            "minflt": 379,
+            "majflt": 372
+          }
+        },
+        {
+          "second": 1795386477,
+          "vus": 5,
+          "requests": 7002,
+          "errors": 0,
+          "endpoints": {
+            "/posts/:id": {
+              "count": 7002,
+              "p50": 0.118,
+              "p99": 8.345,
+              "max": 15.464
+            }
+          },
+          "server": {
+            "cpu_usec": 167866,
+            "pss_anon_kb": 6652,
+            "memory_current": 93933568,
+            "wal_bytes": 0,
+            "wal_frames": 0,
+            "fds": 712,
+            "minflt": 378,
+            "majflt": 374
+          },
+          "telemetry": {
+            "second": 1795386477,
+            "requests": {
+              "GET /posts/:id": 7000
+            },
+            "wal_bytes": 0,
+            "longest_callback_ms": 15.288,
+            "gc_runs": 0,
+            "gc_collected": 0,
+            "minflt": 380,
+            "majflt": 373
+          }
+        },
+        {
+          "second": 1795386478,
+          "vus": 0,
+          "requests": 6984,
+          "errors": 0,
+          "endpoints": {
+            "/posts/:id": {
+              "count": 6984,
+              "p50": 0.12,
+              "p99": 2.574,
+              "max": 5.944
+            }
+          },
+          "server": {
+            "cpu_usec": 168586,
+            "pss_anon_kb": 6652,
+            "memory_current": 119877632,
+            "wal_bytes": 0,
+            "wal_frames": 0,
+            "fds": 712,
+            "minflt": 381,
+            "majflt": 372
+          },
+          "telemetry": {
+            "second": 1795386478,
+            "requests": {
+              "GET /posts/:id": 6988
+            },
+            "wal_bytes": 0,
+            "longest_callback_ms": 5.721,
+            "gc_runs": 0,
+            "gc_collected": 0,
+            "minflt": 379,
+            "majflt": 371
+          }
+        },
+        {
+          "second": 1795386479,
+          "vus": 1,
+          "requests": 6999,
+          "errors": 0,
+          "endpoints": {
+            "/posts/:id": {
+              "count": 6999,
+              "p50": 0.106,
+              "p99": 1.696,
+              "max": 15.093
+            }
+          },
+          "server": {
+            "cpu_usec": 170527,
+            "pss_anon_kb": 6652,
+            "memory_current": 128253952,
+            "wal_bytes": 0,
+            "wal_frames": 0,
+            "fds": 712,
+            "minflt": 123,
+            "majflt": 115
+          },
+          "telemetry": {
+            "second": 1795386479,
+            "requests": {
+              "GET /posts/:id": 7011
+            },
+            "wal_bytes": 0,
+            "longest_callback_ms": 0.653,
+            "gc_runs": 0,
+            "gc_collected": 0,
+            "minflt": 126,
+            "majflt": 118
+          }
+        },
+        {
+          "second": 1795386480,
+          "vus": 4,
+          "requests": 7009,
+          "errors": 0,
+          "endpoints": {
+            "/posts/:id": {
+              "count": 7009,
+              "p50": 0.145,
+              "p99": 4.532,
+              "max": 15.845
+            }
+          },
+          "server": {
+            "cpu_usec": 226511,
+            "pss_anon_kb": 6652,
+            "memory_current": 127754240,
+            "wal_bytes": 0,
+            "wal_frames": 0,
+            "fds": 712,
+            "minflt": 0,
+            "majflt": 0
+          },
+          "telemetry": {
+            "second": 1795386480,
+            "requests": {
+              "GET /posts/:id": 6988
+            },
+            "wal_bytes": 0,
+            "longest_callback_ms": 1.968,
+            "gc_runs": 0,
+            "gc_collected": 0,
+            "minflt": 0,
+            "majflt": 0
+          }
+        },
+        {
+          "second": 1795386481,
+          "vus": 9,
+          "requests": 7001,
+          "errors": 0,
+          "endpoints": {
+            "/posts/:id": {
+              "count": 7001,
+              "p50": 0.115,
+              "p99": 1.007,
+              "max": 2.181
+            }
+          },
+          "server": {
+            "cpu_usec": 188579,
+            "pss_anon_kb": 6652,
+            "memory_current": 128573440,
+            "wal_bytes": 0,
+            "wal_frames": 0,
+            "fds": 712,
+            "minflt": 0,
+            "majflt": 0
+          },
+          "telemetry": {
+            "second": 1795386481,
+            "requests": {
+              "GET /posts/:id": 7005
+            },
+            "wal_bytes": 0,
+            "longest_callback_ms": 0.909,
+            "gc_runs": 0,
+            "gc_collected": 0,
+            "minflt": 0,
+            "majflt": 0
+          }
+        },
+        {
+          "second": 1795386482,
+          "vus": 2,
+          "requests": 7002,
+          "errors": 0,
+          "endpoints": {
+            "/posts/:id": {
+              "count": 7002,
+              "p50": 0.105,
+              "p99": 2.389,
+              "max": 4.552
+            }
+          },
+          "server": {
+            "cpu_usec": 160433,
+            "pss_anon_kb": 6652,
+            "memory_current": 127819776,
+            "wal_bytes": 0,
+            "wal_frames": 0,
+            "fds": 712,
+            "minflt": 0,
+            "majflt": 0
+          },
+          "telemetry": {
+            "second": 1795386482,
+            "requests": {
+              "GET /posts/:id": 7006
+            },
+            "wal_bytes": 0,
+            "longest_callback_ms": 0.577,
+            "gc_runs": 0,
+            "gc_collected": 0,
+            "minflt": 0,
+            "majflt": 0
+          }
+        },
+        {
+          "second": 1795386483,
+          "vus": 4,
+          "requests": 6999,
+          "errors": 0,
+          "endpoints": {
+            "/posts/:id": {
+              "count": 6999,
+              "p50": 0.106,
+              "p99": 0.508,
+              "max": 1.209
+            }
+          },
+          "server": {
+            "cpu_usec": 162843,
+            "pss_anon_kb": 6652,
+            "memory_current": 128069632,
+            "wal_bytes": 0,
+            "wal_frames": 0,
+            "fds": 712,
+            "minflt": 0,
+            "majflt": 0
+          },
+          "telemetry": {
+            "second": 1795386483,
+            "requests": {
+              "GET /posts/:id": 6990
+            },
+            "wal_bytes": 0,
+            "longest_callback_ms": 0.383,
+            "gc_runs": 0,
+            "gc_collected": 0,
+            "minflt": 0,
+            "majflt": 0
+          }
+        },
+        {
+          "second": 1795386484,
+          "vus": 0,
+          "requests": 7001,
+          "errors": 0,
+          "endpoints": {
+            "/posts/:id": {
+              "count": 7001,
+              "p50": 0.103,
+              "p99": 2.251,
+              "max": 4.084
+            }
+          },
+          "server": {
+            "cpu_usec": 170986,
+            "pss_anon_kb": 6652,
+            "memory_current": 128110592,
+            "wal_bytes": 0,
+            "wal_frames": 0,
+            "fds": 712,
+            "minflt": 0,
+            "majflt": 0
+          },
+          "telemetry": {
+            "second": 1795386484,
+            "requests": {
+              "GET /posts/:id": 7006
+            },
+            "wal_bytes": 0,
+            "longest_callback_ms": 0.712,
+            "gc_runs": 0,
+            "gc_collected": 0,
+            "minflt": 0,
+            "majflt": 0
+          }
+        },
+        {
+          "second": 1795386485,
+          "vus": 14,
+          "requests": 6993,
+          "errors": 0,
+          "endpoints": {
+            "/posts/:id": {
+              "count": 6993,
+              "p50": 0.106,
+              "p99": 0.35,
+              "max": 0.942
+            }
+          },
+          "server": {
+            "cpu_usec": 181691,
+            "pss_anon_kb": 6652,
+            "memory_current": 127811584,
+            "wal_bytes": 0,
+            "wal_frames": 0,
+            "fds": 712,
+            "minflt": 0,
+            "majflt": 0
+          },
+          "telemetry": {
+            "second": 1795386485,
+            "requests": {
+              "GET /posts/:id": 6987
+            },
+            "wal_bytes": 0,
+            "longest_callback_ms": 0.208,
+            "gc_runs": 0,
+            "gc_collected": 0,
+            "minflt": 0,
+            "majflt": 0
+          }
+        },
+        {
+          "second": 1795386486,
+          "vus": 0,
+          "requests": 6995,
+          "errors": 0,
+          "endpoints": {
+            "/posts/:id": {
+              "count": 6995,
+              "p50": 0.133,
+              "p99": 1.774,
+              "max": 3.285
+            }
+          },
+          "server": {
+            "cpu_usec": 219332,
+            "pss_anon_kb": 6652,
+            "memory_current": 127557632,
+            "wal_bytes": 0,
+            "wal_frames": 0,
+            "fds": 712,
+            "minflt": 0,
+            "majflt": 0
+          },
+          "telemetry": {
+            "second": 1795386486,
+            "requests": {
+              "GET /posts/:id": 7013
+            },
+            "wal_bytes": 0,
+            "longest_callback_ms": 1.4,
+            "gc_runs": 0,
+            "gc_collected": 0,
+            "minflt": 0,
+            "majflt": 0
+          }
+        },
+        {
+          "second": 1795386487,
+          "vus": 0,
+          "requests": 7013,
+          "errors": 0,
+          "endpoints": {
+            "/posts/:id": {
+              "count": 7013,
+              "p50": 0.116,
+              "p99": 0.508,
+              "max": 1.164
+            }
+          },
+          "server": {
+            "cpu_usec": 173006,
+            "pss_anon_kb": 6652,
+            "memory_current": 127557632,
+            "wal_bytes": 0,
+            "wal_frames": 0,
+            "fds": 712,
+            "minflt": 0,
+            "majflt": 0
+          },
+          "telemetry": {
+            "second": 1795386487,
+            "requests": {
+              "GET /posts/:id": 7011
+            },
+            "wal_bytes": 0,
+            "longest_callback_ms": 0.356,
+            "gc_runs": 0,
+            "gc_collected": 0,
+            "minflt": 0,
+            "majflt": 0
+          }
+        },
+        {
+          "second": 1795386488,
+          "vus": 1,
+          "requests": 7000,
+          "errors": 0,
+          "endpoints": {
+            "/posts/:id": {
+              "count": 7000,
+              "p50": 0.115,
+              "p99": 0.598,
+              "max": 2.205
+            }
+          },
+          "server": {
+            "cpu_usec": 176499,
+            "pss_anon_kb": 6652,
+            "memory_current": 127799296,
+            "wal_bytes": 0,
+            "wal_frames": 0,
+            "fds": 712,
+            "minflt": 0,
+            "majflt": 0
+          },
+          "telemetry": {
+            "second": 1795386488,
+            "requests": {
+              "GET /posts/:id": 6992
+            },
+            "wal_bytes": 0,
+            "longest_callback_ms": 1.478,
+            "gc_runs": 0,
+            "gc_collected": 0,
+            "minflt": 0,
+            "majflt": 0
+          }
+        },
+        {
+          "second": 1795386489,
+          "vus": 0,
+          "requests": 6990,
+          "errors": 0,
+          "endpoints": {
+            "/posts/:id": {
+              "count": 6990,
+              "p50": 0.123,
+              "p99": 2.185,
+              "max": 3.634
+            }
+          },
+          "server": {
+            "cpu_usec": 187815,
+            "pss_anon_kb": 6652,
+            "memory_current": 127557632,
+            "wal_bytes": 0,
+            "wal_frames": 0,
+            "fds": 712,
+            "minflt": 0,
+            "majflt": 0
+          },
+          "telemetry": {
+            "second": 1795386489,
+            "requests": {
+              "GET /posts/:id": 6989
+            },
+            "wal_bytes": 0,
+            "longest_callback_ms": 0.319,
+            "gc_runs": 0,
+            "gc_collected": 0,
+            "minflt": 0,
+            "majflt": 0
+          }
+        },
+        {
+          "second": 1795386490,
+          "vus": 6,
+          "requests": 6999,
+          "errors": 0,
+          "endpoints": {
+            "/posts/:id": {
+              "count": 6999,
+              "p50": 0.103,
+              "p99": 0.465,
+              "max": 1.117
+            }
+          },
+          "server": {
+            "cpu_usec": 163423,
+            "pss_anon_kb": 6652,
+            "memory_current": 127561728,
+            "wal_bytes": 0,
+            "wal_frames": 0,
+            "fds": 712,
+            "minflt": 0,
+            "majflt": 0
+          },
+          "telemetry": {
+            "second": 1795386490,
+            "requests": {
+              "GET /posts/:id": 7010
+            },
+            "wal_bytes": 0,
+            "longest_callback_ms": 0.209,
+            "gc_runs": 0,
+            "gc_collected": 0,
+            "minflt": 0,
+            "majflt": 0
+          }
+        },
+        {
+          "second": 1795386491,
+          "vus": 1,
+          "requests": 7011,
+          "errors": 0,
+          "endpoints": {
+            "/posts/:id": {
+              "count": 7011,
+              "p50": 0.145,
+              "p99": 3.519,
+              "max": 10.072
+            }
+          },
+          "server": {
+            "cpu_usec": 199324,
+            "pss_anon_kb": 6652,
+            "memory_current": 128069632,
+            "wal_bytes": 0,
+            "wal_frames": 0,
+            "fds": 712,
+            "minflt": 0,
+            "majflt": 0
+          },
+          "telemetry": {
+            "second": 1795386491,
+            "requests": {
+              "GET /posts/:id": 6997
+            },
+            "wal_bytes": 0,
+            "longest_callback_ms": 5.899,
+            "gc_runs": 0,
+            "gc_collected": 0,
+            "minflt": 0,
+            "majflt": 0
+          }
+        },
+        {
+          "second": 1795386492,
+          "vus": 4,
+          "requests": 6999,
+          "errors": 0,
+          "endpoints": {
+            "/posts/:id": {
+              "count": 6999,
+              "p50": 0.11,
+              "p99": 0.949,
+              "max": 2.849
+            }
+          },
+          "server": {
+            "cpu_usec": 183039,
+            "pss_anon_kb": 6652,
+            "memory_current": 127549440,
+            "wal_bytes": 0,
+            "wal_frames": 0,
+            "fds": 712,
+            "minflt": 0,
+            "majflt": 0
+          },
+          "telemetry": {
+            "second": 1795386492,
+            "requests": {
+              "GET /posts/:id": 6999
+            },
+            "wal_bytes": 0,
+            "longest_callback_ms": 0.584,
+            "gc_runs": 0,
+            "gc_collected": 0,
+            "minflt": 0,
+            "majflt": 0
+          }
+        },
+        {
+          "second": 1795386493,
+          "vus": 0,
+          "requests": 6985,
+          "errors": 0,
+          "endpoints": {
+            "/posts/:id": {
+              "count": 6985,
+              "p50": 0.135,
+              "p99": 2.354,
+              "max": 5.447
+            }
+          },
+          "server": {
+            "cpu_usec": 166061,
+            "pss_anon_kb": 6652,
+            "memory_current": 128081920,
+            "wal_bytes": 0,
+            "wal_frames": 0,
+            "fds": 712,
+            "minflt": 0,
+            "majflt": 0
+          },
+          "telemetry": {
+            "second": 1795386493,
+            "requests": {
+              "GET /posts/:id": 6993
+            },
+            "wal_bytes": 0,
+            "longest_callback_ms": 0.878,
+            "gc_runs": 0,
+            "gc_collected": 0,
+            "minflt": 0,
+            "majflt": 0
+          }
+        },
+        {
+          "second": 1795386494,
+          "vus": 4,
+          "requests": 7016,
+          "errors": 0,
+          "endpoints": {
+            "/posts/:id": {
+              "count": 7016,
+              "p50": 0.113,
+              "p99": 0.479,
+              "max": 1.175
+            }
+          },
+          "server": {
+            "cpu_usec": 171162,
+            "pss_anon_kb": 6652,
+            "memory_current": 128602112,
+            "wal_bytes": 0,
+            "wal_frames": 0,
+            "fds": 712,
+            "minflt": 0,
+            "majflt": 0
+          },
+          "telemetry": {
+            "second": 1795386494,
+            "requests": {
+              "GET /posts/:id": 7022
+            },
+            "wal_bytes": 0,
+            "longest_callback_ms": 0.488,
+            "gc_runs": 0,
+            "gc_collected": 0,
+            "minflt": 0,
+            "majflt": 0
+          }
+        },
+        {
+          "second": 1795386495,
+          "vus": 1,
+          "requests": 6993,
+          "errors": 0,
+          "endpoints": {
+            "/posts/:id": {
+              "count": 6993,
+              "p50": 0.125,
+              "p99": 0.843,
+              "max": 6.558
+            }
+          },
+          "server": {
+            "cpu_usec": 191737,
+            "pss_anon_kb": 6652,
+            "memory_current": 127803392,
+            "wal_bytes": 0,
+            "wal_frames": 0,
+            "fds": 712,
+            "minflt": 0,
+            "majflt": 0
+          },
+          "telemetry": {
+            "second": 1795386495,
+            "requests": {
+              "GET /posts/:id": 6980
+            },
+            "wal_bytes": 0,
+            "longest_callback_ms": 2.246,
+            "gc_runs": 0,
+            "gc_collected": 0,
+            "minflt": 0,
+            "majflt": 0
+          }
+        },
+        {
+          "second": 1795386496,
+          "vus": 3,
+          "requests": 7001,
+          "errors": 0,
+          "endpoints": {
+            "/posts/:id": {
+              "count": 7001,
+              "p50": 0.125,
+              "p99": 0.684,
+              "max": 1.121
+            }
+          },
+          "server": {
+            "cpu_usec": 196595,
+            "pss_anon_kb": 6652,
+            "memory_current": 128053248,
+            "wal_bytes": 0,
+            "wal_frames": 0,
+            "fds": 712,
+            "minflt": 0,
+            "majflt": 0
+          },
+          "telemetry": {
+            "second": 1795386496,
+            "requests": {
+              "GET /posts/:id": 6991
+            },
+            "wal_bytes": 0,
+            "longest_callback_ms": 0.449,
+            "gc_runs": 0,
+            "gc_collected": 0,
+            "minflt": 0,
+            "majflt": 0
+          }
+        },
+        {
+          "second": 1795386497,
+          "vus": 6,
+          "requests": 7006,
+          "errors": 0,
+          "endpoints": {
+            "/posts/:id": {
+              "count": 7006,
+              "p50": 0.135,
+              "p99": 1.855,
+              "max": 4.457
+            }
+          },
+          "server": {
+            "cpu_usec": 171123,
+            "pss_anon_kb": 6652,
+            "memory_current": 127143936,
+            "wal_bytes": 0,
+            "wal_frames": 0,
+            "fds": 712,
+            "minflt": 0,
+            "majflt": 0
+          },
+          "telemetry": {
+            "second": 1795386497,
+            "requests": {
+              "GET /posts/:id": 7019
+            },
+            "wal_bytes": 0,
+            "longest_callback_ms": 0.608,
+            "gc_runs": 0,
+            "gc_collected": 0,
+            "minflt": 0,
+            "majflt": 0
+          }
+        },
+        {
+          "second": 1795386498,
+          "vus": 6,
+          "requests": 6993,
+          "errors": 0,
+          "endpoints": {
+            "/posts/:id": {
+              "count": 6993,
+              "p50": 0.11,
+              "p99": 0.4,
+              "max": 1.392
+            }
+          },
+          "server": {
+            "cpu_usec": 162980,
+            "pss_anon_kb": 6652,
+            "memory_current": 128323584,
+            "wal_bytes": 0,
+            "wal_frames": 0,
+            "fds": 712,
+            "minflt": 0,
+            "majflt": 0
+          },
+          "telemetry": {
+            "second": 1795386498,
+            "requests": {
+              "GET /posts/:id": 6994
+            },
+            "wal_bytes": 0,
+            "longest_callback_ms": 0.348,
+            "gc_runs": 0,
+            "gc_collected": 0,
+            "minflt": 0,
+            "majflt": 0
+          }
+        },
+        {
+          "second": 1795386499,
+          "vus": 3,
+          "requests": 7007,
+          "errors": 0,
+          "endpoints": {
+            "/posts/:id": {
+              "count": 7007,
+              "p50": 0.105,
+              "p99": 0.355,
+              "max": 0.604
+            }
+          },
+          "server": {
+            "cpu_usec": 173981,
+            "pss_anon_kb": 6652,
+            "memory_current": 128069632,
+            "wal_bytes": 0,
+            "wal_frames": 0,
+            "fds": 712,
+            "minflt": 0,
+            "majflt": 0
+          },
+          "telemetry": {
+            "second": 1795386499,
+            "requests": {
+              "GET /posts/:id": 7016
+            },
+            "wal_bytes": 0,
+            "longest_callback_ms": 0.206,
+            "gc_runs": 0,
+            "gc_collected": 0,
+            "minflt": 0,
+            "majflt": 0
+          }
+        },
+        {
+          "second": 1795386500,
+          "vus": 2,
+          "requests": 7000,
+          "errors": 0,
+          "endpoints": {
+            "/posts/:id": {
+              "count": 7000,
+              "p50": 0.11,
+              "p99": 0.377,
+              "max": 0.818
+            }
+          },
+          "server": {
+            "cpu_usec": 174816,
+            "pss_anon_kb": 6652,
+            "memory_current": 128065536,
+            "wal_bytes": 0,
+            "wal_frames": 0,
+            "fds": 712,
+            "minflt": 0,
+            "majflt": 0
+          },
+          "telemetry": {
+            "second": 1795386500,
+            "requests": {
+              "GET /posts/:id": 6984
+            },
+            "wal_bytes": 0,
+            "longest_callback_ms": 0.221,
+            "gc_runs": 0,
+            "gc_collected": 0,
+            "minflt": 0,
+            "majflt": 0
+          }
+        },
+        {
+          "second": 1795386501,
+          "vus": 7,
+          "requests": 6984,
+          "errors": 0,
+          "endpoints": {
+            "/posts/:id": {
+              "count": 6984,
+              "p50": 0.113,
+              "p99": 1.038,
+              "max": 2.232
+            }
+          },
+          "server": {
+            "cpu_usec": 174734,
+            "pss_anon_kb": 6652,
+            "memory_current": 127758336,
+            "wal_bytes": 0,
+            "wal_frames": 0,
+            "fds": 712,
+            "minflt": 0,
+            "majflt": 0
+          },
+          "telemetry": {
+            "second": 1795386501,
+            "requests": {
+              "GET /posts/:id": 7007
+            },
+            "wal_bytes": 0,
+            "longest_callback_ms": 0.477,
+            "gc_runs": 0,
+            "gc_collected": 0,
+            "minflt": 0,
+            "majflt": 0
+          }
+        },
+        {
+          "second": 1795386502,
+          "vus": 3,
+          "requests": 7015,
+          "errors": 0,
+          "endpoints": {
+            "/posts/:id": {
+              "count": 7015,
+              "p50": 0.145,
+              "p99": 18.646,
+              "max": 30.83
+            }
+          },
+          "server": {
+            "cpu_usec": 278644,
+            "pss_anon_kb": 6652,
+            "memory_current": 127279104,
+            "wal_bytes": 0,
+            "wal_frames": 0,
+            "fds": 712,
+            "minflt": 0,
+            "majflt": 0
+          },
+          "telemetry": {
+            "second": 1795386502,
+            "requests": {
+              "GET /posts/:id": 6993
+            },
+            "wal_bytes": 0,
+            "longest_callback_ms": 5.609,
+            "gc_runs": 0,
+            "gc_collected": 0,
+            "minflt": 0,
+            "majflt": 0
+          }
+        },
+        {
+          "second": 1795386503,
+          "vus": 44,
+          "requests": 6996,
+          "errors": 0,
+          "endpoints": {
+            "/posts/:id": {
+              "count": 6996,
+              "p50": 0.152,
+              "p99": 13.438,
+              "max": 51.391
+            }
+          },
+          "server": {
+            "cpu_usec": 192998,
+            "pss_anon_kb": 6656,
+            "memory_current": 127959040,
+            "wal_bytes": 0,
+            "wal_frames": 0,
+            "fds": 712,
+            "minflt": 1,
+            "majflt": 0
+          },
+          "telemetry": {
+            "second": 1795386503,
+            "requests": {
+              "GET /posts/:id": 7005
+            },
+            "wal_bytes": 0,
+            "longest_callback_ms": 3.508,
+            "gc_runs": 0,
+            "gc_collected": 0,
+            "minflt": 1,
+            "majflt": 0
+          }
+        },
+        {
+          "second": 1795386504,
+          "vus": 3,
+          "requests": 7002,
+          "errors": 0,
+          "endpoints": {
+            "/posts/:id": {
+              "count": 7002,
+              "p50": 0.116,
+              "p99": 0.458,
+              "max": 0.886
+            }
+          },
+          "server": {
+            "cpu_usec": 174477,
+            "pss_anon_kb": 6656,
+            "memory_current": 127303680,
+            "wal_bytes": 0,
+            "wal_frames": 0,
+            "fds": 712,
+            "minflt": 0,
+            "majflt": 0
+          },
+          "telemetry": {
+            "second": 1795386504,
+            "requests": {
+              "GET /posts/:id": 6992
+            },
+            "wal_bytes": 0,
+            "longest_callback_ms": 0.229,
+            "gc_runs": 0,
+            "gc_collected": 0,
+            "minflt": 0,
+            "majflt": 0
+          }
+        },
+        {
+          "second": 1795386505,
+          "vus": 6,
+          "requests": 945,
+          "errors": 0,
+          "endpoints": {
+            "/posts/:id": {
+              "count": 945,
+              "p50": 0.127,
+              "p99": 0.737,
+              "max": 0.891
+            }
+          },
+          "server": {
+            "cpu_usec": 29353,
+            "pss_anon_kb": 6660,
+            "memory_current": 124387328,
+            "wal_bytes": 0,
+            "wal_frames": 0,
+            "fds": 12,
+            "minflt": 3,
+            "majflt": 0
+          },
+          "telemetry": {
+            "second": 1795386505,
+            "requests": {
+              "GET /posts/:id": 933
+            },
+            "wal_bytes": 0,
+            "longest_callback_ms": 0.381,
+            "gc_runs": 0,
+            "gc_collected": 0,
+            "minflt": 3,
+            "majflt": 0
+          }
+        }
+      ]
+    },
+    "requests": 210000,
+    "requested_req_per_s": 7000,
+    "achieved_req_per_s": 6999.496862633153,
+    "server_cpu_usec": 5457003,
+    "cpu_usec_per_request": 25.98572857142857,
+    "latency_ms": {
+      "avg": 0.28359986060000414,
+      "min": 0.022959,
+      "p50": 0.116541,
+      "p90": 0.329208,
+      "p95": 0.6137100999999996,
+      "p99": 3.003749259999992,
+      "max": 51.390542
+    },
+    "error_rate": 0,
+    "dropped_iterations": 0,
+    "vus_used": 44,
+    "connections_open": 700,
+    "connections_samples": {
+      "q1": 700,
+      "q2": 700,
+      "q3": 700
+    },
+    "window_s": 30.351933,
+    "server_cpu_percent_of_one_cpu": 17.979095433559372,
+    "server_throttled_usec": 0,
+    "server_idle_usec_per_s": 459.4905446054718,
+    "k6_cpu_percent_of_one_cpu": 142.99826637071186,
+    "memory": {
+      "cgroup_memory_peak_mib": 484.92,
+      "cgroup_memory_current_mib": 118.38,
+      "vmhwm_mib": 131.57,
+      "note": "memory.peak counts page cache, VmHWM does not; both cover the whole life of the server, warm-up included",
+      "under_load": {
+        "samples": {
+          "q1": {
+            "pss_kb": 125958,
+            "pss_anon_kb": 6652,
+            "cgroup_current": 127553536
+          },
+          "q2": {
+            "pss_kb": 125959,
+            "pss_anon_kb": 6652,
+            "cgroup_current": 128065536
+          },
+          "q3": {
+            "pss_kb": 125958,
+            "pss_anon_kb": 6652,
+            "cgroup_current": 127623168
+          }
+        },
+        "max_pss_mib": 123.01,
+        "max_pss_anon_mib": 6.5,
+        "max_cgroup_current_mib": 122.13,
+        "note": "read at 1/4, 1/2 and 3/4 of the measured run; Pss and Pss_Anon are sums over the server processes (/proc/<pid>/smaps_rollup), a shared page split between the processes that map it. Pss includes the mapped SQLite database pages (they grow with the rows the requests touched); Pss_Anon does not: compare runtimes on Pss_Anon and cgroup memory.current"
+      }
+    }
+  },
+  "raw": {
+    "cpu_stat_before": {
+      "time": {
+        "us": 1795386475026046
+      },
+      "server": {
+        "usage_usec": 256656,
+        "user_usec": 21469,
+        "system_usec": 235187,
+        "nice_usec": 0,
+        "nr_periods": 10,
+        "nr_throttled": 0,
+        "throttled_usec": 0,
+        "nr_bursts": 0,
+        "burst_usec": 0
+      },
+      "k6": {
+        "usage_usec": 32290,
+        "user_usec": 23064,
+        "system_usec": 9225,
+        "nice_usec": 0,
+        "nr_periods": 0,
+        "nr_throttled": 0,
+        "throttled_usec": 0,
+        "nr_bursts": 0,
+        "burst_usec": 0
+      }
+    },
+    "cpu_stat_after": {
+      "time": {
+        "us": 1795386505377979
+      },
+      "server": {
+        "usage_usec": 5713659,
+        "user_usec": 3155996,
+        "system_usec": 2557663,
+        "nice_usec": 0,
+        "nr_periods": 313,
+        "nr_throttled": 0,
+        "throttled_usec": 0,
+        "nr_bursts": 0,
+        "burst_usec": 0
+      },
+      "k6": {
+        "usage_usec": 43435028,
+        "user_usec": 37711335,
+        "system_usec": 5723693,
+        "nice_usec": 0,
+        "nr_periods": 0,
+        "nr_throttled": 0,
+        "throttled_usec": 0,
+        "nr_bursts": 0,
+        "burst_usec": 0
+      }
+    },
+    "cpu_stat_idle_before": {
+      "time": {
+        "us": 1795386472555012
+      },
+      "server": {
+        "usage_usec": 255556,
+        "user_usec": 20483,
+        "system_usec": 235073,
+        "nice_usec": 0,
+        "nr_periods": 8,
+        "nr_throttled": 0,
+        "throttled_usec": 0,
+        "nr_bursts": 0,
+        "burst_usec": 0
+      },
+      "k6": {
+        "usage_usec": 32290,
+        "user_usec": 23064,
+        "system_usec": 9225,
+        "nice_usec": 0,
+        "nr_periods": 0,
+        "nr_throttled": 0,
+        "throttled_usec": 0,
+        "nr_bursts": 0,
+        "burst_usec": 0
+      }
+    },
+    "cpu_stat_idle_after": {
+      "time": {
+        "us": 1795386474661693
+      },
+      "server": {
+        "usage_usec": 256524,
+        "user_usec": 21451,
+        "system_usec": 235073,
+        "nice_usec": 0,
+        "nr_periods": 10,
+        "nr_throttled": 0,
+        "throttled_usec": 0,
+        "nr_bursts": 0,
+        "burst_usec": 0
+      },
+      "k6": {
+        "usage_usec": 32290,
+        "user_usec": 23064,
+        "system_usec": 9225,
+        "nice_usec": 0,
+        "nr_periods": 0,
+        "nr_throttled": 0,
+        "throttled_usec": 0,
+        "nr_bursts": 0,
+        "burst_usec": 0
+      }
+    },
+    "memory": {
+      "memory": {
+        "peak": 508473344,
+        "current": 124125184,
+        "max": 2147483648
+      },
+      "memory_stat": {
+        "anon": 6819840,
+        "file": 116404224,
+        "kernel": 901120,
+        "kernel_stack": 16384,
+        "pagetables": 368640,
+        "sec_pagetables": 0,
+        "percpu": 728,
+        "sock": 0,
+        "vmalloc": 8192,
+        "shmem": 2797568,
+        "zswap": 0,
+        "zswapped": 0,
+        "file_mapped": 116252672,
+        "file_dirty": 0,
+        "file_writeback": 0,
+        "swapcached": 0,
+        "anon_thp": 2097152,
+        "file_thp": 0,
+        "shmem_thp": 0,
+        "inactive_anon": 0,
+        "active_anon": 9617408,
+        "inactive_file": 61440,
+        "active_file": 113545216,
+        "unevictable": 0,
+        "slab_reclaimable": 405664,
+        "slab_unreclaimable": 86760,
+        "slab": 492424,
+        "workingset_refault_anon": 0,
+        "workingset_refault_file": 0,
+        "workingset_activate_anon": 0,
+        "workingset_activate_file": 0,
+        "workingset_restore_anon": 0,
+        "workingset_restore_file": 0,
+        "workingset_nodereclaim": 0,
+        "pgdemote_kswapd": 0,
+        "pgdemote_direct": 0,
+        "pgdemote_khugepaged": 0,
+        "pgscan": 0,
+        "pgsteal": 0,
+        "pgscan_kswapd": 0,
+        "pgscan_direct": 0,
+        "pgscan_khugepaged": 0,
+        "pgsteal_kswapd": 0,
+        "pgsteal_direct": 0,
+        "pgsteal_khugepaged": 0,
+        "pgfault": 7767,
+        "pgmajfault": 1588,
+        "pgrefill": 0,
+        "pgactivate": 0,
+        "pgdeactivate": 0,
+        "pglazyfree": 0,
+        "pglazyfreed": 0,
+        "swpin_zero": 0,
+        "swpout_zero": 0,
+        "zswpin": 0,
+        "zswpout": 0,
+        "zswpwb": 0,
+        "thp_fault_alloc": 3,
+        "thp_collapse_alloc": 0,
+        "thp_swpout": 0,
+        "thp_swpout_fallback": 0
+      },
+      "vmhwm_kb": {
+        "33401": 134732
+      }
+    },
+    "k6_summary_measured": {
+      "root_group": {
+        "name": "",
+        "path": "",
+        "id": "d41d8cd98f00b204e9800998ecf8427e",
+        "groups": {},
+        "checks": {}
+      },
+      "metrics": {
+        "http_req_waiting": {
+          "p(90)": 0.288583,
+          "p(95)": 0.5116681499999995,
+          "p(99)": 2.260421839999999,
+          "max": 47.927375,
+          "avg": 0.22979122783333578,
+          "min": 0.0165,
+          "med": 0.095333
+        },
+        "http_req_receiving": {
+          "p(99)": 0.10312540999999992,
+          "max": 19.218334,
+          "avg": 0.018136790400000113,
+          "min": 0.002083,
+          "med": 0.007458,
+          "p(90)": 0.022042,
+          "p(95)": 0.052333049999999985
+        },
+        "data_sent": {
+          "count": 17384248,
+          "rate": 579433.282548746
+        },
+        "iteration_duration": {
+          "min": 0.044375,
+          "med": 0.159416,
+          "p(90)": 0.4034581,
+          "p(95)": 0.736042,
+          "p(99)": 3.358229829999996,
+          "max": 51.628625,
+          "avg": 0.34424131325237733
+        },
+        "vus": {
+          "value": 6,
+          "min": 0,
+          "max": 44
+        },
+        "http_req_sending": {
+          "p(95)": 0.036375,
+          "p(99)": 0.2895422499999998,
+          "max": 35.121834,
+          "avg": 0.035671842366667185,
+          "min": 0.000958,
+          "med": 0.003791,
+          "p(90)": 0.011167
+        },
+        "http_req_tls_handshaking": {
+          "max": 0,
+          "avg": 0,
+          "min": 0,
+          "med": 0,
+          "p(90)": 0,
+          "p(95)": 0,
+          "p(99)": 0
+        },
+        "iterations": {
+          "count": 210000,
+          "rate": 6999.496862633153
+        },
+        "http_req_blocked": {
+          "max": 38.173334,
+          "avg": 0.010117583057142327,
+          "min": 0.0005,
+          "med": 0.001666,
+          "p(90)": 0.003208,
+          "p(95)": 0.005583,
+          "p(99)": 0.013542
+        },
+        "http_req_failed": {
+          "passes": 0,
+          "fails": 210000,
+          "value": 0
+        },
+        "vus_max": {
+          "value": 700,
+          "min": 700,
+          "max": 700
+        },
+        "http_req_duration": {
+          "med": 0.116541,
+          "p(90)": 0.329208,
+          "p(95)": 0.6137100999999996,
+          "p(99)": 3.003749259999992,
+          "max": 51.390542,
+          "avg": 0.28359986060000414,
+          "min": 0.022959
+        },
+        "http_req_duration{expected_response:true}": {
+          "p(95)": 0.6137100999999996,
+          "p(99)": 3.003749259999992,
+          "max": 51.390542,
+          "avg": 0.28359986060000414,
+          "min": 0.022959,
+          "med": 0.116541,
+          "p(90)": 0.329208
+        },
+        "http_req_connecting": {
+          "min": 0,
+          "med": 0,
+          "p(90)": 0,
+          "p(95)": 0,
+          "p(99)": 0,
+          "max": 23.529917,
+          "avg": 0.004683823642857144
+        },
+        "data_received": {
+          "count": 66585470,
+          "rate": 2219356.1350569236
+        },
+        "http_reqs": {
+          "count": 210000,
+          "rate": 6999.496862633153
+        }
+      }
+    },
+    "k6_summary_warmup": {}
+  }
+}

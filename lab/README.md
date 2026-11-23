@@ -54,20 +54,22 @@ An unknown variant exits non-zero and lists the known ones. `lab/run.sh` runs a 
 no swap, 65535 file descriptors, on the host network, pinned to CPU 2; `lab/` is mounted at `/lab` (read-only, except
 `lab/results/` and `lab/data/`). The CPU layout and the limits live in `lab/lib.sh`, shared by every lab script.
 `php-info` prints the PHP, Swoole and SQLite versions, OPcache and JIT, and which extensions are present (`swoole:
-not built` when the image has no Swoole), then `pcntl`, `sockets`, `event` (its version, or `not built`) and the Workerman
-version of its two trees (`workerman: 5.2.4 (stock, nocache)`).
+not built` when the image has no Swoole), then `pcntl`, `sockets`, `event` (its version, or `not built`), `excimer` (the same) and the
+Workerman version of its two trees (`workerman: 5.2.4 (stock, nocache)`).
 
 ### Extensions and Workerman
 
-The last layer of `Dockerfile.src` (`images/install-extras.sh`, about 12 to 14 s to build) comes after PHP and Swoole, so a
-change to it, or to `php-info`, reuses those two layers (a `php-info` change rebuilds in under a second). It adds, on every
-source image (8.3 to 8.6; `8.3-apt` is left as it was, nothing in the lab runs Workerman or the hand-written server on it):
+The layer of `Dockerfile.src` after Swoole (`images/install-extras.sh`, about 12 to 14 s to build) reuses PHP and Swoole's layers when it
+changes, and the profiler has a layer after it (`images/install-excimer.sh`, about 14 s) so that building Excimer does not rerun this
+script's `apt-get update` and could not move libevent between two measurements; a `php-info` change rebuilds in under a second. The extras add,
+on every source image (8.3 to 8.6; `8.3-apt` is left as it was, nothing in the lab runs Workerman or the hand-written server on it):
 
 | What | Version | Built from |
 | --- | --- | --- |
 | `pcntl`, `sockets` | the image's PHP | shared extensions, `phpize` on **the php.net tarball and sha256 the image's PHP was built from**, `CFLAGS=-O2` |
 | `event` (PECL) | 3.2.0 | shared extension, `phpize`, against Ubuntu's `libevent-dev`, with `sockets` support; no OpenSSL, no pthreads |
 | Workerman | 5.2.4 | the GitHub tag tarball, with `workerman/coroutine` 1.1.7 (the release its `composer.json` accepts) |
+| `excimer` (PECL) | 1.2.6 | shared extension, `phpize`, in a layer of its own after this one (`images/install-excimer.sh`, `WITH_EXCIMER`): see "The profile" |
 
 Every download is pinned by sha256 in the script, and the build stops on a mismatch. None of the three extensions is enabled
 globally: a server loads them with `-d extension=...` (`--ext` of `macro.sh`, `conformance.sh` and `conns.sh`), **in this
@@ -244,7 +246,8 @@ least 50: see "VUs and connections"),
 `-d extension=<name>`, repeatable, default `swoole`; giving one replaces the default), `--env K=V` (passed to the server
 container with `-e`, repeatable) and `--label <text>` (letters, digits, `.`, `_`, `-`; goes in the JSON and in the default
 file name after the server's name: `macro-<server>-<label>-<image>-...`). The JSON records `server.ext`, `server.env` and `label`;
-Swoole's version is probed only when `swoole` is among the extensions.
+Swoole's version is probed only when `swoole` is among the extensions. Three switches for the challenge app (see "The challenge
+app on `macro.sh`" below): `--fresh-db`, `--cold` and `--per-second`.
 
 `lab/servers/noop-swoole.php` is the floor: a Swoole HTTP server with the settings of the `php-swoole-mattsplat` entry
 (`SWOOLE_BASE`, one worker, no coroutine, POST/cookie/file parsing and compression off) that answers `200 {"status":"ok"}`
@@ -312,7 +315,7 @@ The runtime bake-off compares runtimes (Swoole, Workerman, ext-event, a hand-wri
     --duration 20 --path /posts/1 --script lab/macro/k6/posts.js
   ```
 
-  - **The loop** (`bake-diy.php`): one `EventBase` (`epoll`); one persistent read event on the listening socket, which accepts
+  - **The loop** (`diy-server.php`, shared with the challenge app): one `EventBase` (`epoll`); one persistent read event on the listening socket, which accepts
     until `accept()` has nothing left, so a burst of connections is taken in one callback; one persistent read event per
     connection; a write event only while a connection holds bytes the socket did not take. A connection's state is one small
     object (`DiyPeer`: its parser object and its two events) allocated at accept. A request
@@ -326,15 +329,17 @@ The runtime bake-off compares runtimes (Swoole, Workerman, ext-event, a hand-wri
   - **The parser** (`diy-connection.php`, class `DiyConnection`, which knows nothing about the loop and works on any
     non-blocking stream): on each read it appends to the connection's buffer, then, while the buffer holds a whole request,
     finds `\r\n\r\n`, reads the request line (method, target, `HTTP/1.1` or `HTTP/1.0`), reads `Content-Length`, `Connection` and
-    `Transfer-Encoding` (names compared without case) and waits for the whole body. It calls the handler with the method, the
-    target (the handler cuts a `?query`) and the body, and appends the response to the write buffer. The answer is
-    `HTTP/1.1 <status> <reason>`, `Content-Type: application/json`, `Content-Length`, nothing else.
+    `Transfer-Encoding` and `Authorization` (names compared without case) and waits for the whole body. It calls
+    `handler_handle($method, $target, $body, $authorization)` (the bake-off's handler takes the first three and ignores the
+    fourth; the target keeps its `?query`, which the handler cuts) and appends the response to the write buffer. The answer is
+    `HTTP/1.1 <status> <reason>`, `Content-Type: application/json`, `Content-Length`, nothing else (the statuses it knows are 200,
+    201, 400, 401, 404, 500 and 503). The `Authorization` value is handed over without its surrounding spaces, `''` when the request
+    has none.
   - **What it refuses with `400 {"error":"bad request"}` and a close:** a request line that does not have a method, a target and
     `HTTP/1.1` or `HTTP/1.0`; a header line without a name and a colon; a block of request line and headers over 8 KiB (checked
     before the blank line arrives too, so a client that never ends its headers is cut at 8 KiB); a `Content-Length` that is not
     plain digits, appears twice, or is over 1 MiB (a bound on one connection's memory; the challenge's bodies are tiny);
-    `Transfer-Encoding` of any kind (k6 never sends a chunked body). **What it does not read:** `Authorization` (a later phase),
-    other headers (a line only has to have a name and a colon), absolute-form targets (the handler answers 404), lines ended by a
+    `Transfer-Encoding` of any kind (k6 never sends a chunked body). **What it does not read:** other headers (a line only has to have a name and a colon), absolute-form targets (the handler answers 404), lines ended by a
     bare `\n`.
   - **Keep-alive:** on by default on `HTTP/1.1`. `Connection: close` closes the connection after its response is fully written,
     and what the client sent after that request is not answered; so does `HTTP/1.0` without `Connection: keep-alive`. An
@@ -382,9 +387,10 @@ bash lab/macro.sh --image 8.5 --server lab/servers/bake-swoole.php --rate 7000 -
 ### Quiet VM
 
 A measurement next to other work is not comparable with one on a quiet VM. Just before the measured run, `macro.sh` lists the
-running containers that are not its own three (whoever started them, another checkout's lab run included) and writes them in
-the JSON (`other_containers`: `count` and `names`). Above 0, it prints `WARNING: N other containers running (...)` when it
-reads them and again before the verdict. The run completes and its validity does not change: a smoke run is not a measurement,
+running containers that are not its own three (whoever started them, another checkout's lab run included) and writes how
+many in the JSON (`other_containers`: `count`, never the names: they belong to other projects and the results are committed).
+Above 0, it prints `WARNING: N other containers running: see docker ps` when it reads them and again before the verdict.
+The run completes and its validity does not change: a smoke run is not a measurement,
 and whether the VM is quiet enough is for whoever reads the results to judge. `macro.sh` and `conns.sh` do the same; `micro.sh` does not.
 
 ### Layout
@@ -500,6 +506,374 @@ full summaries of the measured run and the warm-up. Numbers from another machine
   `vus.max`, `dropped_iterations.count`, which k6 leaves out when it is 0): re-check them when the pin moves.
 - Do not start an image build or another benchmark during a measured run: they share the VM's CPUs and its memory bus.
 
+## The challenge app and its test
+
+`lab/app/` is the challenge's five endpoints (`GET /health`, `GET /feed`, `GET /posts/:id`, `POST /posts`,
+`POST /posts/:id/like`, as `reference/twelve-dollar-server-challenge/SPEC.md` says) served by the DIY loop, with the simplest
+variant of every step of a request, on purpose: later work measures the alternatives one by one.
+
+- **`lab/app/server.php`** is the entry, started like a challenge submission: `SQLITE_PATH` (the file it opens, never a copy),
+  `JWT_SECRET`, `HOST` (default `0.0.0.0`) and `PORT` (default 8080), with `--ext sockets --ext event`. It listens only once the
+  database is open and prints the same boot lines as the bake-off's DIY server (`listening on`, `loop:`, `socket:`).
+  **`lab/app/app.php`** holds the work, one function per step so that a profiler can tell them apart: `handler_handle` (the
+  route, a plain match), `jwt_verify`, `id_validate`, `body_validate`, `feed_query`, `post_query`, `post_insert`, `post_exists`,
+  `like_insert`, `feed_json`, `post_json`, `like_json`, `health_json`, `response_json`, `response_error`. Parsing and writing are
+  `DiyConnection`'s. The SQL is the spec's reference SQL; every write is its own autocommit transaction, committed before the
+  response is built; the pragmas are the bake-off handler's. Every token is verified on every request, and a token without `exp`
+  is rejected. `lab/check/app-test.php` covers what the challenge's suite does not (the JWT and body rules, one like per user,
+  the feed's order).
+- **`lab_start_app`** (`lab/lib.sh`) is how a harness starts the app on a fresh database: it copies `lab/data/feed.db` **with
+  `cp` inside the server container** (the copy's page cache is charged to the server's cgroup, like the bake-off's copy), runs
+  `sync` on the copy, then starts the app with `SQLITE_PATH` pointing at it. `lab/data/` is mounted read-only and never written.
+- **`lab/challenge-test.sh`** runs the challenge's own `test/test.sh`, unchanged, against it:
+
+  ```bash
+  bash lab/challenge-test.sh --image 8.5 [--server lab/app/server.php] [--ext sockets --ext event] [--port 18110]
+  ```
+
+  It starts the server on a fresh copy, waits for `GET /health` (60 s at most, like the challenge's `test/run.sh`), prints the
+  suite's output and exits with its code (`passed=42 failed=0`, exit 0). Both containers are removed at the end, whatever
+  happens. Run it twice in a row: each run has its own copy, so the second passes as well (the suite's golden answers fail on a
+  database a first run wrote to). `--server` takes any file that reads the same environment: `lab/check/fixtures/wrong-golden-app.php`
+  is the real app on a database with one post changed, and `lab/check.sh` checks that the harness fails on it and names the check.
+- **Where the suite runs:** in a container on the host network, from the image `php-lab-tools:1` (`lab/images/Dockerfile.tools`:
+  Ubuntu 24.04 by digest, plus bash, curl, jq and openssl, which `test.sh` needs and the php-lab images lack: no `jq`). It is built
+  the first time (`lab_ensure_tools_image`). Docker Desktop does not publish a host-network container's ports to macOS unless
+  its host networking setting is on, and a harness must not change that setting, so running `test.sh` from the Mac does not work
+  here. No published image was used for the four tools: building them from the pinned Ubuntu is less to trust than a third-party
+  image.
+
+## The realistic mode
+
+```bash
+bash lab/realistic.sh --image 8.5 --think-scale 0.03 --staircase 2000,2000,12000,60   # req/s: from, step, to, s per plateau
+bash lab/realistic.sh --image 8.5 --think-scale 0.03 --hold 10000,300                  # req/s, seconds of the plateau
+bash lab/realistic.sh --image 8.5 --think-scale 0.03 --calibrate                       # k6's memory per VU, the VU cap, the scale
+```
+
+Loads the challenge app (`lab/app/server.php`, started on a fresh copy of the seed) the way the challenge's bench does. k6 runs
+**the bench's own script**: `lab/macro/k6/realistic.js` is a copy of `reference/twelve-dollar-server-challenge/bench/load.js`
+(the loop: the feed, a post from it, 15 % like, 2 % new post, think time between; the tokens of `lab/data/tokens.json`; the
+`name` tags) with **two changes**, both named in its header: every `sleep(x)` is `sleep(x * THINK_SCALE)`, and `options` come
+from the environment (`REALISTIC_OPTIONS`, built by the harness). `check_realistic_script_is_the_benchs` in `lab/check.sh` diffs
+the copy against `load.js` and fails on any other change, an unscaled sleep included. The MIT credit is in `lab/NOTICE.md`.
+
+### The numbers of the journey
+
+- One loop is **2.17 requests** (1 feed + 1 post + 0.15 like + 0.02 new post) and **20.5 s of mean think time** (5 + 5.5 + 10).
+  One VU offers `2.17 / (20.5 * scale)` req/s; the harness turns a rate into VUs with `rate * 20.5 * scale / 2.17`, rounded up.
+- A steady load is **9.45 users per req/s** (20.5 / 2.17). **Users are always mapped from the achieved rate** (`users` in the
+  table is `9.45 * achieved`), never from the VUs and never with 10.8 (the leaderboard's 10.8 includes the bench's ramps).
+- With the think time scaled by `s`, a few thousand VUs make the rate of the bench's many more. The price: latency weighs
+  `1 / s` times more in a VU's loop (a request that takes 10 ms stretches a loop of 0.6 s by 3 %, not a loop of 20 s by 0.1 %).
+
+### A step passes, or fails with its reason
+
+A step is judged **on its plateau only**. It passes when **p95 < 500 ms, p99 < 1 s, errors < 1 % and achieved >= 97 % of offered**
+(offered = VUs times the per-VU rate; achieved = the requests of the plateau over its seconds). The 97 % rule is there because
+the bench's own thresholds are not enough once think time is scaled: a VU that waits longer for a response offers less load, so
+the latency thresholds alone pass loads far past saturation (at `s = 0.02`, 3.6 times the VUs of the knee). A failing step prints
+its reasons (`achieved below 97 % of offered` comes first when it is one) and **the staircase stops there**: the aggregator judges
+each step as it ends and the harness stops k6. A failing step is a result, not an error: the exit code stays 0.
+
+The pass rule spends 3 % of the offered rate, which is about `0.29 * s` seconds of mean latency per request (a request that
+takes longer than that makes the VU's loop long enough to fall under 97 %).
+
+### Layout and the live stream
+
+| Container            | What                                                                                           | CPUs   |
+|----------------------|------------------------------------------------------------------------------------------------|--------|
+| `lab-realistic-server` | `php-lab:<image>` running the app, 1 CPU, 2 GiB                                              | `2`    |
+| `lab-realistic-k6`   | the pinned k6, `--memory` at the budget below, `--local-ips` 127.0.1.1-4, CSV out to a FIFO    | `4-11` |
+| `lab-realistic-agg`  | `lab/macro/aggregate.php` (PHP): reads the FIFO, judges steps, reads the cgroups every second  | `4-11` |
+| `lab-realistic-probe`| memory and `/proc` from outside, the aggregator's status once a second                         | `0-1`  |
+
+A named volume (`lab-realistic-run`) holds the FIFO, the aggregator's status and its result: removed at the end, like the
+containers, whatever happens (a `trap`). **Nothing raw goes to disk**: k6's CSV (about 12 rows per request) goes into the FIFO and
+the aggregator keeps, per second and per endpoint (the `name` tag), a latency histogram with log buckets (1.5 % wide, a latency is
+read back within 0.75 %), the counts and the errors. A step's p95 and p99 are the merge of its seconds' histograms. It parses only
+the `http_req_duration` rows (one per request: latency, second, name, `expected_response`) and the `vus` rows; a duration row it
+cannot parse is counted (`unparsed`) and makes the run invalid. The request count is the number of duration rows, the same as
+k6's `http_reqs` (checked against k6's own summary in `check_realistic_staircase_passes`: the same count, p95 within 3 %).
+
+- **The plateau** comes from k6's `vus` gauge (a row each second): the seconds where it reads the step's VUs, without the first and
+  the last (the ramp may have ended, or the next one started, inside them). A step is judged once a sample of the next second
+  arrived.
+- **The server's CPU per request** is read by the aggregator from the server's `cpu.stat` on every whole second (the aggregator
+  has `--cgroupns host`, like the probe), so a window's CPU is the difference between two readings on the plateau's edges, scaled
+  by the time between them, over the requests of the same whole seconds. No `docker exec` sits on the measuring path.
+- **k6's ports:** k6 binds its own source addresses (`--local-ips 127.0.1.1-127.0.1.4`, recorded in the JSON as `k6.local_ips`, with
+  the addresses the server saw in `k6.client_ips_seen`): the next measurement holds 60,000 idle connections from a client that
+  `bind()`s its ports, and a port that is bound is skipped by any `connect()` that is not, so k6 on one address would run out.
+  k6 1.8.3 accepts loopback addresses.
+
+### The guard: lag and memory
+
+k6 does not slow down when its CSV reader falls behind: it buffers the samples in its own memory. So:
+
+- **The aggregator's lag** is the clock against the newest sample's second, written to the status every second. A run whose lag
+  passes the gate (`--lag-gate`, default 6 s) is **invalid** with that reason, and k6 is stopped. The lag at low load is about
+  1.0 to 1.8 s: the CSV's timestamps are whole seconds, k6 flushes every 250 ms (`K6_CSV_SAVE_INTERVAL`, the default is 1 s), and
+  the aggregator reads the clock on whole seconds. The gate is the lag measured in calibration plus 2 s.
+- **k6's memory** has a budget: the VM's memory minus 2 GiB (the server), 512 MiB (the client that holds the idle connections:
+  257 MiB measured with 60,000 of them, so a margin of 2 times) and 1 GiB of margin, set as the container's `--memory`
+  (`--k6-memory <MiB>` sets it by hand, a test hook). A run whose k6 reaches 95 % of it, or is killed for it, is **invalid**.
+- **k6's memory also grows with the request count:** about 190 bytes a request on top of 0.34 MiB a VU (k6 keeps every sample of its
+  trend metrics for the end-of-run percentiles). A run of about 12 million requests with 5,134 VUs reached the budget at 4.1 GiB and was
+  killed (`INVALID`): at 18,000 req/s that is 11 minutes. A long staircase is cut into runs, each started from a rate it does not need
+  to climb to; a 5-minute hold at 24,000 req/s (7.3 million requests, 4,535 VUs) peaked at 2.8 GiB.
+- **The lag printed at the end can pass the gate in a valid run:** the gate is judged every second while k6 runs; after k6 stops, the
+  newest sample's second stops advancing and the lag grows until the aggregator is told to end, and `max_lag_s` keeps that tail.
+- **The replay case** (`check_replay_keeps_up`): `lab/macro/replay.php` feeds a recorded CSV (`lab/check/fixtures/k6-rows.csv`,
+  real k6 rows) to the aggregator at 480,000 rows a second (40,000 req/s at 12 rows a request) for 10 s. The aggregator reads
+  every row and request, none unparsed, with a lag of 1.0 s; the feeder was never more than 0.1 s late. At 1,500,000 rows a second
+  the lag stayed at 1.0 s too. The first reader keeps only two kinds of rows, as above; it did not need to be faster.
+
+### The calibration
+
+`--calibrate` runs 50 VUs for 60 s, then 300 VUs for 60 s (`--calibrate-vus`, `--calibrate-seconds`), each with the stream
+running, and prints k6's memory per VU (the difference between the two plateaus), the **VU cap** and the **scale**:
+
+- the cap is the smaller of `(the VM's memory - 2 GiB - 512 MiB - 1 GiB) / MiB per VU` and the server's free file descriptors
+  (65,535 - 60,000 idle connections - a margin for the server's own, **5,400**); a per-VU cost under the noise of two readings
+  bounds nothing;
+- the scale is the `s` that puts 20,000 req/s under the cap: `cap * 2.17 / (20,000 * 20.5)`, with the margin the 97 % rule leaves
+  (`0.29 * s` s of mean latency per request);
+- the harness **refuses more VUs than the cap** (`--vu-cap`, default 5,400): exit 2, before any container starts.
+
+Smoke runs on the Docker VM with 23 other projects' containers running (7,935 MiB, 12 vCPUs; not a measurement), the app on 8.5
+(the JSON files are in `lab/results/2026-11-22-realistic-calibration/`; this table is typed by hand from them: that folder has no `summarize.sh`, so the results check skips it):
+
+| Run                          | VUs  | k6 memory | achieved / offered | k6 CPU                    | aggregator lag |
+|------------------------------|------|-----------|--------------------|---------------------------|----------------|
+| `--think-scale 0.03`, 60 s   | 50   | 72.1 MiB  | 0.995              | 13.3 % of a CPU, 759 us/req | 1.31 s         |
+|                              | 300  | 143.9 MiB | 0.995              | 41.0 %, 389 us/req        | 1.25 s         |
+| `--think-scale 0.1`, 30 s    | 300  | 138.9 MiB | 0.996              | 20.4 %, 646 us/req        | 1.21 s         |
+|                              | 2000 | 678.1 MiB | 0.998              | 62.8 %, 297 us/req        | 1.90 s         |
+
+- **k6 costs about 0.3 MiB per VU** (0.287 from 50 to 300, 0.317 from 300 to 2,000) **and 44 to 58 MiB at rest**: 5,400 VUs are
+  about 1.8 GiB, inside the 3.75 GiB budget. The memory cap is 12,100 to 13,400 VUs, so **the cap is the file descriptors: 5,400**.
+- **The scale is 0.02858** (`--think-scale 0.0285` to stay under it): 5,400 VUs offer 20,000 req/s, and the 97 % rule leaves 8.35 ms
+  of mean latency per request.
+- **At low load achieved / offered is 0.995 to 0.998:** k6's own loop overhead already takes 0.2 to 0.5 % of the 3 % margin.
+- **k6 costs 300 to 650 us of CPU per request** with the stream on (it falls as the rate rises: 759, 389, 297 us). At that scale
+  20,000 req/s is about 6 CPUs of k6 on the 8 it shares with the aggregator: read `k6_cpu_percent_of_one_cpu` on the high steps.
+- The gate to use is the largest lag plus 2 s: 3.3 to 3.9 s in the smoke runs below. At the rates of the baseline (18,000 to 24,000 req/s, 60,000 idle
+  connections) the lag reached 3.1 to 5.5 s while k6 ran, so the default is **6 s** (`--lag-gate` still overrides it).
+
+### Output and exit codes
+
+A table with one row per step (VUs, offered and achieved req/s, mapped users, CPU us per request, p95 and p99 overall, errors,
+`pass` or `FAIL: <reasons>`), a line per endpoint under it, and a JSON (`results/realistic-<mode>-<server>-<image>-<UTC>.json`):
+every step (window, requests, percentiles per endpoint, errors, CPU, k6's CPU), the think scale and the per-VU rate, the VU cap, k6's
+local IPs, its peak memory and CPU, the aggregator's max lag and the gate, the server's peak `Pss_Anon` and `memory.current`,
+`other_containers`, the exact command, the aggregator's per-second rows (`results.per_second`: requests, errors, p95, p99 and the
+endpoints' count, p50, p99 and max of each second), the per-second series (`results.series`, see below), `idle`, `cold`,
+`k6_connection_errors`, `results.run_total` and k6's own summary. Exit **0**: a valid run (a failing step included); **3**: printed but
+invalid (lag, k6's memory, unparsed rows); **2**: usage, or VUs above the cap; **1**: any other failure (the server died, k6 failed).
+`--warmup <rate>,<s>` runs the same journey first (not scored), `--ramp <s>` sets the ramp of each step (default a quarter of the
+plateau, 2 to 10 s), `--server`, `--ext` (default `sockets` and `event`), `--env` and `--label` are as in the other harnesses.
+
+### Traps
+
+- **The plateau is a few seconds shorter than the step**: the ramp is not scored, and the first and last second of the plateau are
+  left out. At 20 s plateaus a step has about 18 seconds of data.
+- **A new VU sleeps `between(0, 5) * s` before its first request** (the bench's own spread), so a ramp is not a step in rate:
+  the plateau starts after it.
+- **k6's CPU is what the stream costs too:** about 12 CSV rows a request. Read `k6.cpu_percent_of_one_cpu` and each step's
+  `k6_cpu_percent_of_one_cpu` before trusting a high step: k6 and the aggregator share CPUs 4 to 11.
+- **A run on the Docker VM next to other projects' containers is a smoke run:** `other_containers` and the `WARNING` line say
+  how many.
+
+### Idle connections, the per-second series, telemetry and a cold start
+
+```bash
+bash lab/realistic.sh --image 8.5 --think-scale 0.0286 --idle 60000 --staircase 2000,2000,18000,20
+bash lab/realistic.sh --image 8.5 --think-scale 0.0286 --idle 60000 --cold --hold 19900,25
+```
+
+**`--idle <n>`** holds `<n>` idle keep-alive connections from before the first request to the end of the run: the bench's thousands of
+users who sit on a connection (the run is the same with none). One client (`lab/conns/client.php` in its **hold mode**, in its own
+container `lab-realistic-idle` on the load CPUs, `nofile` 200,000) opens them **one at a time** (one `GET /health` each, a 200 whose body
+matches `{"status":"ok",...}`: the hold mode takes a path and a body pattern; `/noop` and its exact body stay the default for
+`lab/conns.sh`), from rotating 127.0.0.x source addresses as in the connection test, **before the warm-up**. It sweeps them once
+(`held` event) and holds them until the harness creates a file, then sweeps again (`ended` event): **a connection the server closed is
+the run's failure**, whatever the reason (`INVALID: the server closed 200 of the 200 idle connections during the run: 0 held at the end`,
+exit 3). A client that cannot open them all (`held` below `<n>` with a failure) stops the run with that reason, exit 1.
+
+- **The count held at the start and at the end** is in the table and in `idle` (`held_at_start`, `held_at_end`, `closed_by_server_*`),
+  next to what the **server** counts (`server_established_at_start` and `_at_end`, from `/proc/net/tcp`, and the file descriptors it has open).
+- **The client's memory is measured:** with 60,000 connections, 257 MiB of `memory.current` (peak 258): 44 MiB of heap, 213 MiB of kernel
+  memory for its sockets (`kernel` in `memory.stat`; the PHP process's RSS is 56 MiB, so `docker stats` and `ps` miss four fifths), about
+  4.4 KiB per connection. The budget for it in the k6 memory is 512 MiB (`LAB_IDLE_CLIENT_MIB`). Opening 60,000 one at a time takes
+  about 10 s, from 6 source addresses.
+- **Sockets stay under the server's 65,535 file descriptors:** the server has about 12 of its own, the VU cap leaves 5,400 for k6. A run
+  at 19,565 req/s with 5,377 VUs and 60,000 idle ones peaked at 65,389 open file descriptors (`server.fds` in the series), with no k6
+  connection error. k6's own source addresses (127.0.1.1-4) were enough: the fallback `IP_BIND_ADDRESS_NO_PORT` was not needed.
+- **`k6_connection_errors`** counts the k6 rows whose error code is 12xx (dial, reset by the peer, broken pipe), with `k6_error_codes`
+  for every code. It is reported, not a validity rule: a server out of file descriptors shows as failed requests in the step anyway.
+
+**The per-second series** (`results.series` in the JSON, a table at the end of the output): one row per second of the measured run
+(`k6` starts a moment after the sampler, so the first row is a partial second), with:
+
+| Column (JSON)                             | From                                                                                           |
+|-------------------------------------------|------------------------------------------------------------------------------------------------|
+| `endpoints.<name>`: `count`, `p50`, `p99`, `max` | the aggregator's histograms (p50, p99: within 0.75 %); `max` is exact                          |
+| `server.cpu_usec`                         | the sampler: `usage_usec` of the server's cgroup, in us per second                              |
+| `server.pss_anon_kb`, `memory_current`    | the sampler, at the end of the second (`Pss_Anon` summed over the server's processes)           |
+| `server.wal_bytes`, `server.wal_frames`   | the sampler: the `-wal` file's size, and `mxFrame` from the `-shm` header                      |
+| `server.fds`, `server.minflt`, `majflt`   | the sampler: open file descriptors; page faults of the second (`/proc/<pid>/stat`)             |
+| `telemetry`                               | the server's own line for that second (below), `null` when it printed none                      |
+
+- **One sampler loop** (`lab/macro/sampler.php`) runs inside the probe container (CPUs 0-1) and appends a line a second to a file there;
+  never one `docker exec` a second (runc and dockerd work is not pinned off the server's CPU). It reads at whole seconds (a few ms
+  after), and a row needs the readings at both ends of its second: a missed one leaves `server: null` in that row and its neighbour,
+  never a delta over two seconds. The table and the JSON are made by `lab/macro/series.php` from the aggregator's rows, the sampler's lines
+  and the server's log (`lab/macro/series-lib.php`, tested by `lab/check/series-test.php`).
+- **The WAL's frames, not its size:** SQLite starts the WAL over from its first frame after a checkpoint **without truncating the file**,
+  so the file's size only grows (4.1 MB in a run that checkpointed many times) and only `mxFrame` shows the checkpoints (960 frames, then 608).
+  `mxFrame` is the 32-bit integer at offset 16 of the `-shm` file, **in the byte order of the machine** (little-endian on arm64 and x86; the
+  wal-index is shared memory, so it is native, not big-endian), written twice (offset 16 and 64): the reader re-reads when the two copies
+  differ. The test writes rows into a real WAL, checkpoints, writes again, and compares with the frames the `-wal` file's size gives.
+- **`/proc/<pid>/root` is read with `head`, not with PHP:** PHP resolves that link to `/` before it opens a file, and opens the probe's own `/tmp`.
+- **SQLite's own page cache counters** (`sqlite3_db_status`: hits, misses) are not read: `pdo_sqlite` does not expose them and the handle is
+  not reachable from PHP. The page faults stand for it (the database is mapped: a page that is not in the page cache is a major fault,
+  one that is but not yet mapped is a minor one).
+
+**Telemetry, `APP_TELEMETRY=1`:** off by default in the app. `lab/realistic.sh` and `lab/macro.sh --fresh-db` turn it on unless `--env
+APP_TELEMETRY=...` is given (a later measurement compares on against off). One line a second on stdout, from `lab/servers/diy-telemetry.php`:
+
+```text
+telemetry {"second":1795370018,"requests":{"GET /feed":8253,"GET /posts/:id":7948},"wal_bytes":4161232,"longest_callback_ms":9.815,"gc_runs":0,"gc_collected":0,"minflt":28,"majflt":0}
+```
+
+`second` is the one that just ended (the timer is set for 2 ms after the whole second, and a line takes the second it was set for, never
+the clock's: a timer that fires early must not repeat the second before). Requests are counted per endpoint by the app (`app_count`,
+one call per request), `longest_callback_ms` is the longest callback of the event loop that second (two `hrtime` calls around each
+callback, `accept`, read and write alike), `gc_*` are the deltas of `gc_status()`, `minflt` and `majflt` the process's own. When the
+event loop stalls for 5 ms, this is the line that says whether it was one callback (and the sampler's `majflt` whether it waited
+on the disk). The cost of having it on is not measured here.
+
+**`--cold`:** the server starts on a copy of the seed whose pages were evicted from the page cache. `lab_start_app` copies the seed with
+`cp` (inside the server container, so the page cache is charged to its cgroup), `sync`s it (a dirty page is not evicted), then
+`dd iflag=nocache count=0` (a `posix_fadvise(DONTNEED)` on **that file only**: never a VM-wide `drop_caches`), and
+`lab/macro/fincore.php` reads how much of the copy the page cache holds **just before the app opens it**. That is `cold` in the JSON
+(`resident_bytes`, `size_bytes`, `resident_share`) and a line of the output: 249,843,712 of 249,843,712 bytes without `--cold`, 0 with it.
+A `--cold` run whose copy is more than 5 % resident is invalid. It goes into `lab_start_app`, so every harness that starts the app gets
+it (`LAB_COLD=1`, and `lab_fincore_line <container>` reads the reading back). The images do not ship `fincore` (`util-linux-extra` on
+Ubuntu 24.04), so `fincore.php` is the same `mincore(2)` through FFI (`php -d ffi.enable=1`): it maps the file (which reads nothing) and counts the
+resident pages. A warm-up warms the copy again: a cold start has none (`--warmup 0` in `macro.sh`, whose default is 10 s; `realistic.sh` has none by default). The first requests then show as major faults in the
+series (20 to 27 a second at 400 req/s in the smoke run) and `memory.current` growing as the page cache refills.
+
+**`--no-series`** (`realistic.sh`): no sampler and no server reads while k6 runs, for a run whose p99 or stalls the probes might disturb
+(the sampler reads the server's `smaps_rollup` and lists its fds every second). The poll keeps only k6's memory and the aggregator's status;
+`results.series` is null, the server's memory peaks are null, `per_second_probes` is false and the table says the per-second part is off. The
+per-step results and `results.per_second` (the aggregator's latency, and the server's CPU from its cgroup) stay. The telemetry line stays too
+unless `--env APP_TELEMETRY=0` turns it off.
+
+### The challenge app on `macro.sh`
+
+`lab/macro.sh --fresh-db` starts its server the way `lab/realistic.sh` does: `lab_start_app` (a fresh copy of the seed, `SQLITE_PATH`,
+`JWT_SECRET`, `APP_TELEMETRY=1`, extensions `sockets event` unless `--ext` says otherwise) instead of a bake-off server that copies its own seed;
+without the switch nothing changes. `--cold` (needs `--fresh-db`) is as above. **`--per-second`** adds the series of the measured run
+(the warm-up is not in it): k6 writes its CSV into the aggregator (`lab/macro/aggregate.php` in `lab-macro-agg`, a FIFO in the volume
+`lab-macro-run`), which names an endpoint by the URL's path with its numbers as `:id` (`/posts/:id`, so `posts.js` is one endpoint),
+and the same sampler and series as above give the server's columns. The aggregator's request count must equal k6's own (checked in
+`check_macro_fresh_db_cold_per_second`), and a lag above 4 s or an unparsed row makes the run invalid. The CSV costs k6 about 300 us of CPU
+per request: the server's numbers do not change, k6's do.
+
+```bash
+bash lab/macro.sh --image 8.5 --server lab/app/server.php --fresh-db --cold --per-second --rate 2000 --duration 30 \
+  --script lab/macro/k6/posts.js --path /posts/1
+```
+
+## The profile
+
+`--profile <file>` on `lab/realistic.sh` and `lab/macro.sh --fresh-db` runs the challenge app under **Excimer** (PECL 1.2.6, a sampling
+profiler on the CPU time of the thread) and folds its samples into the steps of a request, to tell which step costs the most per
+request and per endpoint. Excimer is in the 8.3, 8.4 and 8.5 images, never enabled globally (`--ext excimer`, which `--profile` adds), and
+`php-info` prints `excimer: 1.2.6`. **It does not build on PHP 8.6** (`results/excimer-on-php-8.6.md`: `XtOffsetOf` and `INI_INT` are gone):
+the 8.6 image is built with `WITH_EXCIMER=0` (`excimer: not built`) and `--profile` on it stops before anything starts.
+
+```bash
+bash lab/realistic.sh --image 8.5 --think-scale 0.1 --warmup 100,5 --hold 300,20 --profile /tmp/profile.collapsed
+php lab/profile/fold.php /tmp/profile.collapsed --us-per-req 240    # in a lab container: bash lab/run.sh 8.5 php /lab/profile/fold.php ...
+```
+
+### In the server
+
+`APP_PROFILE=<path in the container>` (and `APP_PROFILE_PERIOD`, seconds of CPU time between two samples, default 0.001) starts an
+`ExcimerProfiler` on `EXCIMER_CPU` before the first request (`lab/servers/diy-profile.php`, started by `DiyServer::run`). The servers have no
+signal handling and are removed with `docker rm -f`, and `/lab` is read-only, so a timer of the event loop writes the **collapsed stacks**
+(`frame;frame;frame <count>`, one line per distinct stack) to the container's own disk every 2 s, through a temporary file and a rename.
+The harness waits for the next write after the load, reads the cgroup, and copies the file out with `docker exec cat`. The profiler is
+stopped while the timer writes, so a profile never holds its own flush. With `--profile` the telemetry is off unless `--env APP_TELEMETRY=..`
+says otherwise (a profile of the server, not of the telemetry's timers). The loop's three callbacks are now named methods
+(`[$this, 'onReadable']`), not first-class closures: a profile names a first-class callable `{closure:file(line)}`, whose line moves with
+every edit, and the rules need a name.
+
+**The window** is the whole life of the server after its first answer: the idle connections, the warm-up, the ramps and the plateau, and an
+idle second or two. The JSON's `profile` key holds the samples, the cgroup's `user_usec` and `system_usec` over that window, the share
+of the CPU the samples cover (`samples_over_cgroup_cpu`, 0.97 to 1.0 in the smokes: the CPU timer counts the kernel's time too) and
+the fold. The `us/req` printed for a profiled run is the profiled server's: **Excimer costs CPU, so it is never a baseline**; it comes from the
+cgroup's CPU over the window divided by the requests of the window (the warm-up's, the run's and one `GET /health` per idle connection).
+
+### The fold and its rules
+
+`lab/profile/fold.php <collapsed file or -> [--rules <file>] [--us-per-req <n>]` prints one table: the rows are the steps S1 to S9, the
+event loop and unclassified, the columns are the five endpoints, `shared` and `all`. A sample takes the step of its **leaf frame** (the
+innermost one), if `lab/profile/steps.rules` names it (a frame name, or a prefix ending in `*`), and the endpoint of the route function
+found anywhere on its stack; a sample with no route function (reading, parsing, writing, the loop: the work done before the route is known) is
+`shared`. Every cell is a share of **all** the samples (the table sums to 100 %, a column's total is its weight in the run), and with
+`--us-per-req` the microseconds it adds to the average request. A second block gives each endpoint column as a share of its own samples,
+which is the one that answers "which step costs the most for `GET /feed`". A leaf that no rule names makes the sample `unclassified`, whatever its
+callers are (Excimer never shows an internal function as a frame, so the leaf is always one of our PHP functions), and those leaves are
+listed under the table: a rename in the app shows up there, not as a wrong step. The profiler's own flush (`DiyProfile::write`) goes to the
+event loop: it is not a step of a request. `lab/check/fold-test.php`
+tests the fold on a hand-written profile of 1,000 samples with known shares.
+
+| Step | Frames of `steps.rules` | What is in it |
+| --- | --- | --- |
+| S1 accept | `DiyServer::onAccept`, `DiyConnection::close` | `stream_socket_accept` and the new socket's setup, and `fclose` |
+| S2 read and parse | `DiyConnection::onReadable`, `::parse`, `::parseHead` | `fread` (the kernel's receive path), the header parse; `parse` also holds the response head's concatenation (S8 work, too small to split without a function of its own) |
+| S3 route | `handler_handle`, `app_count`, the `route_*` functions | the match on method and path |
+| S4 JWT, S5 validate | `jwt_verify` and its decoder, `id_validate`, `body_validate` | |
+| S6 query | `feed_query`, `post_query`, `post_insert`, `post_exists`, `like_insert`, `route_health` | `PDOStatement::execute` and the fetch; `route_health` runs its query inline |
+| S7 JSON | the `*_json` functions | `json_encode` |
+| S8 write | `response_json`, `response_error`, `DiyConnection::advance`, `::onWritable` | `fwrite` (the kernel's send path) |
+| S9 durability | none | SQLite commits inside `PDOStatement::execute` (autocommit), so a write's commit and its WAL checkpoint are in S6. The row stays at 0 to say so |
+| event loop | `DiyServer::run`, `::onReadable`, `::onWritable`, `::settle`, `DiyProfile::write` | libevent's dispatch and `epoll_wait` (see the calibration), the events added and removed, the profiler's own flush |
+
+### Where Excimer's samples land (the calibration)
+
+Excimer takes a sample at the next VM interrupt check, so the rules rest on a measurement: `lab/profile/calibrate.php`, run by
+`check_excimer_calibration` with the JIT on (`tracing`) and off.
+
+- **An internal function's time is its calling PHP function's.** The `hash` mode has one PHP function (`calib_hash_step`) whose time is
+  all in `hash('sha256')`, and one (`calib_loop_step`) of plain PHP. Timed with `hrtime` and no profiler, the hash is 28.3 % of the CPU with
+  the JIT on and 33.4 % with it off. Profiled for 6 s (CPU time, 1 ms), `calib_hash_step` holds **28.2 % and 33.8 %** of the samples (0.1 and
+  0.4 points off; the check allows 5), and no frame is named `hash`: internal functions never appear in a profile. The kernel's time inside
+  `fread`, `fwrite` and `stream_socket_accept` is therefore in the PHP function that called them, which is why each step has its own function.
+- **libevent's and `epoll_wait`'s time lands on the next callback's own frame.** Nothing in them can take a sample, so it is taken when the
+  callback's PHP starts. A persistent 0 s timer around an empty callback (libevent spinning, `epoll_wait(0)` each time) puts **97.9 %** of the
+  samples on the callback's frame and 2.1 % on the function that called `dispatch()`; a socket pair ping-pong (one `fread` and one `fwrite` per
+  callback) puts 66 % on the callback function that does them and 32 % on the closure that libevent calls (JIT off: 61 % and 37 %). In the
+  app that is `DiyServer::onReadable`'s own frame, which holds almost no PHP, so its own samples are the loop's.
+- **The kernel's time is counted.** The samples add up to the CPU the process used (`getrusage`, user and system): 3,969 samples against
+  3,985 ms of CPU for the spinning loop (43 % of it in the kernel), 3,974 against 3,978 for the ping-pong (70 % in the kernel). What
+  a sample cannot say is which syscall: `read` and `epoll_wait` share the frame they land on.
+
+### Reading the table
+
+The cgroup's user and system CPU of the window is printed under it. The system share is the kernel's work for the whole server (the
+sockets, the page faults, SQLite's `pwrite` and `fsync`), and it is inside the PHP frames above. A sample in `GET /feed` S6 is the
+statement's execution and the row fetch (`PDOStatement::execute`, `fetchAll`), SQLite's own C code. The `GET /health` column holds only
+the harness's own polls, because the bench's journey never asks for it.
+
+**Traps:** a profile from `macro.sh` is the app on one URL, so only that endpoint has samples; the telemetry's timers are not in the profile unless
+asked for; the 8.6 image has no Excimer; and the CPU of a profiled run is higher than an unprofiled one's (the cost is measured, not assumed:
+run the same load with and without `--profile` and compare the `us/req` of the plateau).
+
 ## Connection test
 
 `lab/conns.sh` measures how many idle keep-alive connections one server process holds, and what each one costs in memory:
@@ -557,6 +931,14 @@ more containers join it: the probe of `macro.sh` (`lab/macro/probe.sh`, from out
   `results.ceiling` and `results.memory_per_connection`. The three containers (`lab-conns-server`, `-client`, `-probe`) are
   removed at the end whatever happens, and the run refuses to start when one of them exists.
 
+### The client's hold mode
+
+`php lab/conns/client.php <port> --hold <n> [--path <path>] [--body-regex <pcre>] --end-file <file>` is what `lab/realistic.sh --idle` uses:
+no commands, no baseline. It opens `<n>` connections the same way (one at a time, rotating source addresses), sweeps them, prints a `held`
+event (`held`, `closed_by_server`, `failure`, `seconds`, the client's `rss_kb`), waits for the file, sweeps again and prints `ended`. A body
+that does not match the pattern is `bad answer`. `check_idle_client_hold_mode` runs it against `lab/check/fixtures/idle-timeout-app.php` (a server
+that closes every connection idle for 2 s): ended at once, all 50 held; ended 4 s later, all 50 closed by the server; a wrong pattern, a failure.
+
 ### Traps of the connection test
 
 - **The ephemeral port range of the VM is not Linux's default** (55000-65535 here): never hard-code 28,232.
@@ -577,3 +959,13 @@ bash lab/check.sh
 
 One line per check, `ok` or `FAIL`, non-zero exit if any fails. To add one, write a `check_<name>` function in the
 script and list it in `CHECKS`.
+
+`check_results_regenerate` keeps the results folders honest: it runs every `lab/results/*/summarize.sh` (from its
+folder, reading only the raw files next to it) and checks the folder's `README.md` against it, byte for byte, so a
+README cannot drift from its raw files. A README with `<!-- BEGIN summarize -->` and `<!-- END summarize -->` lines
+must hold exactly the output between them (a stale extra line fails too); one without them must hold every non-empty
+line, anywhere. It prints `ok` per folder, or the first difference. A folder without a `summarize.sh` is named as skipped, not failed. A table is regenerated
+with `bash lab/results/<folder>/summarize.sh`, pasted into the README with the prose around it kept. The baseline's
+summary runs `lab/run.sh`, so this check needs Docker and the `php-lab:8.5` image. `check_results_check_catches_drift`
+proves the check can fail, on `lab/check/fixtures/results-drift/` (a README that holds a near copy of one line, and
+one whose block holds a stale line).
