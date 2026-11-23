@@ -1,8 +1,9 @@
 # $12 server challenge in PHP
 
-**Status:** 🏁 Phase 4 delivered and merged · 1 question open (not blocking) · approved on 2026-11-21 · snapshot
+**Status:** 🏁 Phase 4 delivered and merged · no question open · phase 5 waits for your go · approved on 2026-11-21 · snapshot
 2026-11-21-0920 · **Round:** 3
-**Since your last read:** phase 4 is delivered (🏁 in 👉). The skeleton holds **at least 23,386 req/s, about
+**Since your last read:** Q11 is answered (A, D49): CPU per request and the profile judge phase 5's steps. Phase 4
+is delivered and merged. The skeleton holds **at least 23,386 req/s, about
 221,000 users at 9.45**, with 60,000 idle connections, at **27.15 µs of CPU per request** (median of 3 five-minute
 holds, p99 28 ms, arm64, not a score). The rate is a floor set by the harness (D47), and one process caps the real
 bench near 71,000 users whatever the CPU, so S1's fd wall comes first in phase 5. The blind review found your
@@ -16,110 +17,9 @@ and the branch is merged. Progress in [run.md](run.md).
 > **Answer freely:** a letter or `ok`, your own choice (`other: …`), `?` if it's unclear, or
 > `badly framed: …` if an option is missing or the question doesn't hold.
 
-### ✅ Q12/12 [run, public-history] : your 23 container names are in the branch's pushed history: rewrite it?
-
-**Blocking the delivery** (not the fixes, which go on). The blind-reviewer found that 2 calibration JSON files of scope
-2 (`lab/results/2026-11-22-realistic-calibration/scale-0.03-*.json` and `scale-0.1-*.json`, key
-`other_containers.names`) list the names of your 23 other Docker containers. They ran on the busy VM, and the harness
-recorded the names. They are on the public branch `phase-4-claude` since commit `07808e7`, pushed at about 12:28.
-`main` and its history are clean. A fix-forward commit removes them from the files and makes the harness record only
-the count, but the old commit keeps them, and the rules forbid me to rewrite pushed history or force-push.
-
-**Question:** what do we do with the branch's history?
-
-- **A.** Rewrite the branch so `07808e7` never held the names (a rebase that scrubs the two files), then force-push
-  `phase-4-claude`, with your explicit OK for that one force push (or you run it).
-  **Aims at:** names gone from every ref, per-scope commits kept for your review and the merge.
-  **For:** the branch is yours alone, nobody builds on it; the SHAs in `run.md` get rewritten once.
-  **Against:** a force push, against the usual rule; GitHub may still serve the old commits by SHA until its garbage
-  collection (GitHub support can purge them on request).
-- **B.** Keep the history, squash-merge the branch into `main`, then delete the remote branch.
-  **Aims at:** no force push.
-  **For:** `main` never holds the names.
-  **Against:** `main` loses the per-scope commits; the old commits stay reachable by SHA for a while, like A.
-- **C.** Fix forward only.
-  **Aims at:** no history work.
-  **For:** nothing to rewrite.
-  **Against:** the names stay in the public history for good, and in `main` after a normal merge.
-
-**Confidence:** A 70 % · B 25 % · C 5 %
-
-**Recommendation:** A: it keeps the review history and removes the names from every branch, for one force push on a
-branch only this run uses.
-
-**Flips if:** you'd rather not make an exception to "never force-push": then B.
-
-**Stopgap, if you want them off GitHub right now:** delete the remote branch (`git push origin --delete
-phase-4-claude`); I push it again, cleaned, after your answer.
-
-**Answer:** A, through the planning session at 18:25: "Please, fix the leak by yourself". The planning session
-deleted the remote branch; the project manager rewrites the branch locally (no commit holds the names, `07808e7`
-included), checks every commit with `git log -S`, and pushes the clean branch again (no force needed: the remote
-branch is gone).
-
-### 🏁 Phase 4 delivered at 19:05 (run)
-
-**What's established:**
-
-- 20 commits on `phase-4-claude`, pushed clean: the app on the DIY loop (42/42 of the challenge's tests), the
-  realistic mode (60,000 idle, per-second series, cold, telemetry, `--no-series`), Excimer folded into S1 to S9, the
-  results check, and the baseline in `lab/results/2026-11-22-realistic-baseline/`. `lab/check.sh` 61/61.
-- **The baseline:** at least 23,386 req/s at `s = 0.02` (221,002 users at 9.45, CPU-equivalent: one process caps the
-  real bench near 71,000), 27.15 µs of CPU per request, p99 28 ms with the probes on. SQLite 52 % of the CPU, the
-  write 20 %, JSON 10 %. 6 of 12 predictions held.
-- Both final reviews OK (`blind-reviewer` at pass 2). The history is cleaned of the container names.
-
-**What I need from you:**
-
-- [x] 🔴 **Force-push the cleaned `main`** (W3): done by you at 20:22. No old commit is on a GitHub branch.
-- [x] **Review and merge `phase-4-claude`:** merged in `03552e4`.
-- [ ] **Q11** below, before phase 5's plan.
-
-### Q11/12 [run, step-lab-metric] : the held rate is the harness's floor: is CPU per request enough to judge phase 5?
-
-Not blocking: phase 4 delivers either way, and the answer shapes phase 5's plan. At `s = 0.02` the skeleton holds
-at least 23,386 req/s with its CPU only 63 % busy: the 97 % rule fails on k6's own loop overhead, not on the server
-(D47). So in phase 5, a step variant that saves CPU won't move the held rate: only µs of CPU per request (and the
-profile) can tell variants apart. The rule also sits on its edge at 24,000 (4 runs of 17 failed at 96.7 to 97.0 %).
-And with one process, the fd wall caps the real bench near 71,000 users whatever the CPU (the baseline README's
-step order puts S1-d or S1-b first). Raised by the final `pr-reviewer`
-([PR-2026-11-22-1755](reviews/PR-2026-11-22-1755.md), "Plan à revoir").
-
-**Question:** what does the step lab judge a variant on?
-
-- **A.** µs of CPU per request (median of runs) and the profile; the held rate is measured again only at the end of
-  phase 5, on the chosen variants together.
-  **Aims at:** a sharp, reproducible number per variant, as phase 2's micro benches did.
-  **For:** no new tooling; CPU per request is what the server controls; the fd wall makes the one-process rate moot
-  past about 7,500 req/s anyway.
-  **Against:** latency effects (stalls, queueing) don't show in µs/req; they need the per-second series beside it.
-- **B.** Add a second load generator (another machine) first, so the staircase finds the server's own knee.
-  **Aims at:** a held rate that is the server's, not k6's.
-  **For:** the bench's real pass rule then judges each variant.
-  **Against:** new hardware and setup before any step is measured; the Mac's numbers still aren't the x86 score.
-- **C.** Change the pass rule for the lab (for example 95 % achieved, or judge on the server's CPU at a fixed rate).
-  **Aims at:** a held rate the current harness can reach.
-  **For:** no new machine.
-  **Against:** moves away from what the bench judges; the knee would still depend on `s`.
-
-**Confidence:** A 75 % · B 15 % · C 10 %
-
-**Recommendation:** A: the server's CPU per request is the lever the step lab pulls, and the score on the real bench
-is set by the fd wall first, then by CPU.
-
-**Flips if:** a variant changes latency without changing µs/req (for example group commit): then its per-second
-p99 joins the judgment, still without B.
-
-**Answer:** I don't know, should we continue the lab on my ryzen 9 pc tower? It has 64 go RAM DDR5 + RTX4700, we could maybe try to create a VM or something. It is on Windows though
-
-### ✅ Quiet Docker VM for scope 5 (run, answered 13:27)
-
-- [x] **Stop your 23 other containers, then say "go"** (D15). They came back when Docker's VM restarted at 11:18
-  (restart policy `always`). Scopes 1 to 4 are code and smoke runs; scope 5 measures the baseline (about 1.5 to 2 hours
-  of runs) and can't start while they run. Stopping them earlier is fine: scope 4 doesn't need them.
-
-  **Answer:** done at 13:27: Jacob asked the planning session to stop them for the weekend; their restart policy is now
-  `unless-stopped`, so a VM reboot won't bring them back. "Go" for scope 5.
+Nothing for you right now. Phase 5 (the step lab) waits for your go; its plan starts from D47 to D49 and
+[notes.md](notes.md) (20:39: the x86 calibration on your AWS account). Answered questions:
+[questions/](questions/), the latest in [2026-11-22-2042.ronde-3.md](questions/2026-11-22-2042.ronde-3.md).
 
 ## 🤝 Essentials
 
@@ -149,10 +49,10 @@ step's choice backed by a measurement.
 | 7 | Score           | `bench/load.js` ramps, x86 calibration                      | More than 71,000 held for 5 minutes                     |
 | 8 | Submit          | The PR to the challenge repo                                | CI green                                                |
 
-**Decisions:** 48 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
+**Decisions:** 49 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
 is a prediction we re-measure, not an answer.
 
-### Phase 4 scopes (running)
+### Phase 4 scopes (delivered)
 
 Detail, seams, cases and the predictions in [details/phase-4.md](details/phase-4.md). One commit each, on branch
 `phase-4-claude` (D14). Scope 5 measures, so it needs a quiet Docker VM (D15).

@@ -190,6 +190,12 @@
   and in `lab/check.sh`) refuses e-mail addresses, home paths and the denylist's words. Changes D11; the earlier
   versions of the moved files stay in this repo's history (Jacob, 2026-11-22 18:31 and 18:35,
   [notes.md](notes.md)).
+- **D49:** the step lab (phase 5) judges each variant on its **µs of CPU per request** (the median of its runs) and
+  its profile, with the per-second p99 beside it when a variant changes latency without changing µs/req (group commit,
+  for example). The held rate is measured again only at the end of phase 5, on the chosen variants together: at
+  `s = 0.02` it is k6's floor, not the server's (D47), and one process caps the real bench near 71,000 users whatever
+  the CPU. No second load generator and no change to the pass rule (Jacob, 2026-11-22 20:42,
+  [Q11](questions/2026-11-22-2042.ronde-3.md)).
 
 ## History
 
