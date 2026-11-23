@@ -209,6 +209,19 @@ other_containers_jq() {
 
 # Other projects' container names must not reach a committed result: a run JSON holds only the count, and the results already
 # committed list no name (an empty `names` from the first phases is fine).
+check_public_guard() {
+  local out
+  # Why: the repo is public; the guard refuses e-mail addresses, home paths and the private denylist (tools/public-guard.sh).
+  out="$(bash "$REPO/tools/public-guard.sh" tree 2>&1)" || { echo "${out//$'\n'/ | }"; return 1; }
+}
+
+check_public_guard_catches_leak() {
+  # Why: the sample is built at run time, or the tree scan would flag this very line.
+  if printf 'write to %s@%s from /%s/someone/x\n' someone realmail.io Users | bash "$REPO/tools/public-guard.sh" stdin >/dev/null 2>&1; then
+    echo "the guard let an e-mail address and a home path through"; return 1
+  fi
+}
+
 check_results_hold_no_container_names() {
   local json named=""
   while IFS= read -r json; do
@@ -1214,6 +1227,8 @@ CHECKS=(
   check_shellcheck_catches_warning
   check_results_check_catches_drift
   check_results_regenerate
+  check_public_guard
+  check_public_guard_catches_leak
 )
 
 # Names given as arguments: only those checks (`bash lab/check.sh check_replay_keeps_up`).
