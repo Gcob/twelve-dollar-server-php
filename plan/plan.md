@@ -15,9 +15,17 @@ setting would have closed the idle connections; settled as D51, D53, D56 to D59.
 > **Answer freely:** a letter or `ok`, your own choice (`other: …`), `?` if it's unclear, or
 > `badly framed: …` if an option is missing or the question doesn't hold.
 
-Nothing for you right now. Q13 to Q15 are answered (A, A, A) and moved to
-[2026-11-22-2145.ronde-4.md](questions/2026-11-22-2145.ronde-4.md); your fail-fast principle is D60. At scope 12 (the
-last) I'll put a 🔴 item here for your AWS access, with the policy ready in the factory.
+- 🔴 **Scope 12 waits for your AWS go:** attach the temporary policy (in the factory,
+  `aws/phase-5-x86-calibration-policy.json`: `ca-central-1`, one `c5.2xlarge`, everything tagged, deleted at the end)
+  to your personal CLI user, and tell me the CLI profile's name. Scopes 1 to 11 are done and pushed; their reviews
+  run while I wait.
+- ⚪ **Not blocking, scope 11:** the variants together held 22,000 req/s against the baseline's 24,000, with the
+  same cost per request (27.58 µs against 27.15, inside the noise). I read the lower rate as the harness (D47), not
+  S1-d: its limit never fired. A 12-minute control of the skeleton alone would settle it. Answer `control` to run it;
+  otherwise it goes to phase 5b's notes.
+
+Q13 to Q15 are answered (A, A, A) and moved to
+[2026-11-22-2145.ronde-4.md](questions/2026-11-22-2145.ronde-4.md); your fail-fast principle is D60.
 
 Answered questions: [questions/](questions/), the latest in
 [2026-11-22-2145.ronde-4.md](questions/2026-11-22-2145.ronde-4.md).
