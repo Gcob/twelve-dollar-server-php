@@ -208,7 +208,8 @@
   largest absolute paired difference of its 5 pairs. A variant gets 3 pairs (5 for S9's). A variant's number is the median µs/req of its runs; the verdict reads the
   paired differences (each run against the reference's run of the same round): "beyond the noise" when every pair has
   the same sign and the median difference passes the floor. A variant predicted under the floor is judged on its micro
-  bench or its syscall count, the macro only checking that it costs nothing. Why: with the baseline's noise (σ about
+  bench or its syscall count, the macro only checking that it costs nothing. D60 screens each variant with one pair
+  first. Why: with the baseline's noise (σ about
   0.5 µs a run), "the median difference against the reference's spread" called identical variants different 17 % of
   the time at 3 runs and caught a real 1 µs only 61 % of the time; with the largest A/A difference as the floor and
   every pair agreeing in sign, about 3 % (project manager, phase 5, 2026-11-22, revised after the plan review and its
@@ -258,6 +259,17 @@
   nothing (plan review, settled by the project manager, phase 5, 2026-11-22,
   [PLAN-2026-11-22-2110](reviews/PLAN-2026-11-22-2110.md) item 6, and
   [PLAN-2026-11-22-2116-delta](reviews/PLAN-2026-11-22-2116-delta.md) item 2).
+- **D60:** fail fast, for the whole run: no time on margins the measurement can't see. (1) **Screening:** a variant
+  first gets one pair against the reference; if that pair doesn't beat it by more than the A/A floor, it stops there
+  ("not better in one pair"), and only a variant that does gets its remaining pairs (3 in all, 5 for S9) to confirm.
+  The A/A calibration keeps its 5 pairs: it is the instrument. (2) **Spike gates:** a spike step that fails its gate
+  stops the spike, and that is its result. (3) **S1-b is conditional:** scope 3 is built only if scope 6 finds that
+  S1-d adds more than 15 % to the µs per request at 150,000 users (where 2 processes, predicted at +5 to +20 %, could
+  win); otherwise S1-b stays a prediction, not measured. (4) **Small steps:** a variant predicted under the floor
+  gets no macro screening beyond one pair, and in 5b the steps under about 2 % of the profile (S4 1.7 %, S3 0.4 %, S5
+  0.1 %) are skipped unless nearly free to test. Changes D51's pairs per variant (Jacob, 2026-11-22 21:45, through the
+  planning session: "avoid losing time, and avoid optimizing tiny, almost insignificant margins";
+  [round 4](questions/2026-11-22-2145.ronde-4.md)).
 
 ## History
 

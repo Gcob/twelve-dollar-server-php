@@ -28,7 +28,7 @@ and the PHP version are phase 5b.
 
 ## Decisions of this phase
 
-From Jacob (D47 to D49) and the project manager (D50 to D59), in [decisions.md](../decisions.md):
+From Jacob (D47 to D49, D60) and the project manager (D50 to D59), in [decisions.md](../decisions.md):
 
 - **D49, how a variant is judged:** µs of CPU per request (median of its runs) and its profile; the per-second p99
   beside it when a variant moves latency without moving CPU (S9). The held rate only at the end, on the chosen
@@ -58,6 +58,9 @@ From Jacob (D47 to D49) and the project manager (D50 to D59), in [decisions.md](
   and flushes after each call; unset, `dispatch()` as today.
 - **D59, pipelining behind a queued write:** a connection with a write waiting for the flush stops parsing until its
   response is in `wbuf`; responses stay in request order.
+- **D60, fail fast (Jacob):** each variant is screened with one pair and stops there unless it beats the floor; a
+  spike step that fails its gate ends the spike; S1-b (scope 3) is built only if S1-d adds more than 15 % at 150,000
+  users; variants under the floor get one macro pair at most.
 - **D55, the x86 calibration:** one `c5.2xlarge` on Jacob's AWS account running the lab as the Mac does, only after
   his go; the policy waits in the factory.
 
@@ -67,7 +70,7 @@ From Jacob (D47 to D49) and the project manager (D50 to D59), in [decisions.md](
 |-----|-----------------------------------------------------------------------------|-----------|
 | 1   | `feat(lab): the step lab's A/B runner and a syscall count`                  | `bash lab/steplab.sh` prints one row per run (interleaved order, valid, µs/req, p99), one per variant (median µs/req, min to max, median p99, paired differences) and a verdict per variant (D51); the verdict logic passes its fixture cases (identical, clearly beyond, mixed signs, under the floor) on recorded JSON files; one live pair at the real shape (60,000 idle, 24,000 req/s, 60 s) runs valid with the TIME_WAITs counted before each run; `bash lab/syscalls.sh` on the skeleton at 2,000 req/s prints syscalls per request by name and in total; `lab/check.sh` all `ok` |
 | 2   | `feat(app): Connection: close past a soft connection limit`                 | with `APP_SOFT_CONN_LIMIT=2`, a check opens 3 keep-alive connections: the third's response carries `Connection: close` and the server closes it after the write, the first two stay open; `challenge-test.sh --env APP_SOFT_CONN_LIMIT=0` prints `passed=42 failed=0`; a server with 256 fds and a soft limit of 200 holds 200 idle and serves 2,000 new connections one after the other with no error; at the hard limit accepts pause and resume (a check: the pauses counted in telemetry, no CPU spin); a 5-minute realistic smoke at the fd wall's shape (64,000 idle, `APP_SOFT_CONN_LIMIT=64000`, 12,000 req/s, `s = 0.04`) holds the 64,000 to the end, 0 k6 errors, 0 accept pauses, the close count within 1 % of k6's requests, the TIME_WAITs before and after recorded; `lab/check.sh` all `ok` |
-| 3   | `feat(app): several processes on SO_REUSEPORT`                              | with `APP_WORKERS=2`, `challenge-test.sh --env APP_WORKERS=2` prints `passed=42 failed=0`, a check shows both processes answered, and a realistic smoke is valid; with the variable unset the server is the one process of phase 4; `lab/check.sh` all `ok` |
+| 3   | `feat(app): several processes on SO_REUSEPORT` (only if scope 6 triggers it, D60) | with `APP_WORKERS=2`, `challenge-test.sh --env APP_WORKERS=2` prints `passed=42 failed=0`, a check shows both processes answered, and a realistic smoke is valid; with the variable unset the server is the one process of phase 4; `lab/check.sh` all `ok` |
 | 4   | `feat(lab): FFI micro benches for an io_uring loop`                         | `bash lab/micro.sh lab/micro/benches/ffi.php --images 8.5 --jit both` prints ns per op for every case of the list below, each case checked; a first reading (busy VM allowed, labelled so) against the stop rule of step 2, written in the scope's hand-back |
 | 5   | `feat(lab): a no-op server on an io_uring ring through FFI`                 | `conformance.sh` all `ok` on the ring server; the stress client sends 2 million requests with unique ids over 1,000 connections and finds 0 mismatches; `conns.sh` holds 60,000 connections on one ring with the server's own fds under 100 (stretch: 80,000 on 2 rings, D56); `macro.sh` gives its µs/req on `/noop` at 7,000 req/s; or, within the time box, a stop with the step that failed and why |
 | 6   | `docs(lab): S1 and the io_uring spike, measured`                            | `lab/results/<date>-s1-fd-wall/README.md` holds the predictions (copied unchanged), the syscall counts, S1-a against S1-d (every request reconnecting) against S1-b at 12,000 req/s, the cost of one reconnect, the fd-wall run with and without S1-d, the FFI micro and the ring's no-op against DIY, each prediction marked, the chosen S1 variant; every counted run `other_containers: 0`; `summarize.sh` regenerates its tables |
@@ -245,9 +248,12 @@ build during a measurement. New for phase 5:
 - **The A/A calibration (D51):** 5 pairs of the skeleton against itself at 24,000 req/s (telemetry off, like the CPU
   steps' runs), then 5 at 12,000 with telemetry on (like the S1 runs it judges): the noise per run, the paired
   differences, and the floor for each rate: the largest absolute paired difference of its 5 A/A pairs.
+- **S1-b only if needed (D60):** scope 6 measures S1-a against S1-d first. If S1-d adds more than 15 % to the µs per
+  request at 150,000 users, scope 3 is built and its S1-b runs join this folder; otherwise S1-b stays the prediction
+  below, unmeasured, and the README says why.
 - **S1 at 12,000 req/s** (`s = 0.02`, 60,000 idle, D51; 12,000 rather than the baseline's 24,000 so that every
   request reconnecting still fits in the CPU): the skeleton (S1-a), `APP_SOFT_CONN_LIMIT=60000` (S1-d: the 60,000
-  idle fill the limit, so every k6 request reconnects, D53), `APP_WORKERS=2` (S1-b), 5 runs each interleaved,
+  idle fill the limit, so every k6 request reconnects, D53), `APP_WORKERS=2` (S1-b, only if built), 5 runs each interleaved,
   telemetry on for all three (the close count is how S1-d proves it fired). The cost of one
   reconnect is S1-d's median minus S1-a's; S1-b's cost is its difference.
 - **The fd wall:** two realistic holds of 5 minutes at 12,000 req/s with 64,000 idle connections and k6's VUs on top,
@@ -323,8 +329,9 @@ build during a measurement. New for phase 5:
 ## Scope 10: S6, S8 and S9, measured
 
 - **Before any run:** the predictions copied unchanged into `lab/results/<date>-cpu-steps/README.md`; quiet VM.
-- **Method (D51):** `steplab.sh` at 24,000 req/s (`s = 0.02`, 60,000 idle, the baseline's rate), 3 pairs per variant
-  (5 for S9's), interleaved with the reference, judged with scope 6's floor for 24,000: "beyond" when every pair has
+- **Method (D51, D60):** `steplab.sh` at 24,000 req/s (`s = 0.02`, 60,000 idle, the baseline's rate). Each variant is
+  screened with one pair first; only a variant whose pair beats the reference by more than the floor gets its other
+  pairs (3 in all, 5 for S9's), interleaved with the reference, judged with scope 6's floor for 24,000: "beyond" when every pair has
   the same sign and the median paired difference is at least the floor. The micro numbers of
   scope 7 beside the macro ones.
 - **S6:** the feed SQL variants, then the best with `APP_FETCH=num`, then the pragma presets on the best so far.
