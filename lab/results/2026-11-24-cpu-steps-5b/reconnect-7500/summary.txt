@@ -1,0 +1,13 @@
+runs, in the order they ran (one round runs every variant once, the first variant is the reference; the order alternates: odd rounds run it last, even rounds first)
+round  variant        valid      req/s    us/req   p95 ms   p99 ms   tw/addr  load1 fsync ms  result
+    1  s1d-every      yes       7450.5      38.5      1.1     3.74         0   3.24     0.37  pass
+    1  skeleton       yes       7453.5      32.6     0.84     3.74      9820   3.12     0.31  pass
+tw/addr: the most TIME_WAIT sockets on any one address, k6's or the idle client's, when the run started (- when the runner did not count)
+load1: the VM's 1-minute load average in the middle of the plateau; fsync ms: the median fdatasync of a 4 KiB write before the warm-up (- when a run has no host reading)
+
+variants (us is the server's CPU per request over the plateau)
+variant         valid failed median us        min to max   p99 ms  paired differences us     median  verdict
+skeleton          1/1      0      32.6      32.6 to 32.6     3.74  reference                      -  reference
+s1d-every         1/1      0      38.5      38.5 to 38.5     3.74  +5.9                        +5.9  no floor: not judged: run with --floor <µs> from an A/A calibration
+
+Rule: a variant is beyond the noise when it has at least 2 pairs, every paired difference (its µs CPU/req minus the reference's in the same round) has the same sign and the median paired difference is at least the floor in absolute value; otherwise it is within the noise. A round where either run is invalid has no pair. One pair with a floor: a screen (beats the floor when lower by at least the floor, else not better), never a verdict. No pair: no verdict. No floor: not judged (the floor comes from an A/A calibration).

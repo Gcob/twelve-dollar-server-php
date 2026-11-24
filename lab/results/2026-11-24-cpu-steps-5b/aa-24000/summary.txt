@@ -1,0 +1,21 @@
+runs, in the order they ran (one round runs every variant once, the first variant is the reference; the order alternates: odd rounds run it last, even rounds first)
+round  variant        valid      req/s    us/req   p95 ms   p99 ms   tw/addr  load1 fsync ms  result
+    1  b              yes      23498.9      23.9     7.98    20.69         0   4.79      0.3  pass
+    1  a              yes      23512.5      23.3      7.3     18.1      9964   5.06      0.3  pass
+    2  a              yes      23473.2      23.7      8.6    21.96      7054    4.5     0.26  pass
+    2  b              yes      23493.3      23.7     8.86    20.09      7182   3.94     0.56  pass
+    3  b              yes      23521.7      23.9     7.75    18.93      7183   4.86     0.37  pass
+    3  a              yes      23570.6      23.2     7.19    16.07      7171   4.49     0.33  pass
+    4  a              yes      23549.8      23.4     7.08    17.31      7164   3.78     0.39  pass
+    4  b              yes      23551.8      23.2     7.08    16.07      7154    5.6      0.3  pass
+    5  b              yes      23541.2      23.3     7.08    17.83      7155    4.3     0.25  pass
+    5  a              yes      23553.5      23.7     7.19     16.8      7181   5.07     0.29  pass
+tw/addr: the most TIME_WAIT sockets on any one address, k6's or the idle client's, when the run started (- when the runner did not count)
+load1: the VM's 1-minute load average in the middle of the plateau; fsync ms: the median fdatasync of a 4 KiB write before the warm-up (- when a run has no host reading)
+
+variants (us is the server's CPU per request over the plateau)
+variant         valid failed median us        min to max   p99 ms  paired differences us     median  verdict
+a                 5/5      0      23.4      23.2 to 23.7    17.31  reference                      -  reference
+b                 5/5      0      23.7      23.2 to 23.9    18.93  +0.6 +0.1 +0.6 -0.2 -0.4      +0.1  no floor: not judged: run with --floor <µs> from an A/A calibration
+
+Rule: a variant is beyond the noise when it has at least 2 pairs, every paired difference (its µs CPU/req minus the reference's in the same round) has the same sign and the median paired difference is at least the floor in absolute value; otherwise it is within the noise. A round where either run is invalid has no pair. One pair with a floor: a screen (beats the floor when lower by at least the floor, else not better), never a verdict. No pair: no verdict. No floor: not judged (the floor comes from an A/A calibration).

@@ -1,0 +1,103 @@
+{
+  "floor_us": 0.864,
+  "floor_from": "lab/results/2026-11-24-cpu-steps-5b/aa-24000",
+  "floor_rule": "|median of the paired differences| + their interquartile range (quartiles by linear interpolation, inclusive), of the second variant of an A/A folder against its reference, every valid run counted, whether its step passed the 97 % rule or not",
+  "floor_detail": {
+    "pairs": 5,
+    "differences_us": [
+      0.555,
+      0.083,
+      0.636,
+      -0.225,
+      -0.405
+    ],
+    "median_difference_us": 0.083,
+    "q1_us": -0.225,
+    "q3_us": 0.555,
+    "iqr_us": 0.78,
+    "floor_us": 0.864,
+    "from": "lab/results/2026-11-24-cpu-steps-5b/aa-24000"
+  },
+  "order": "alternate",
+  "rule": "a variant is beyond the noise when it has at least 2 pairs, every paired difference (its µs CPU/req minus the reference's in the same round) has the same sign and the median paired difference is at least 0.864 µs in absolute value; otherwise it is within the noise. A round where either run is invalid has no pair. One pair with a floor: a screen (beats the floor when lower by at least the floor, else not better), never a verdict. No pair: no verdict. No floor: not judged (the floor comes from an A/A calibration).",
+  "reference": "ref",
+  "runs": [
+    {
+      "variant": "php86",
+      "index": 1,
+      "round": 1,
+      "position": 0,
+      "order": "alternate",
+      "valid": true,
+      "counted": true,
+      "failed_rule": false,
+      "achieved_rps": 23583.44827586207,
+      "us_per_request": 23.14050487435835,
+      "p95_ms": 6.576,
+      "p99_ms": 15.137,
+      "result": "pass",
+      "time_wait_before_max": 10036,
+      "other_containers": 0
+    },
+    {
+      "variant": "ref",
+      "index": 0,
+      "round": 1,
+      "position": 1,
+      "order": "alternate",
+      "valid": true,
+      "counted": true,
+      "failed_rule": false,
+      "achieved_rps": 23578.672413793105,
+      "us_per_request": 23.16458212626808,
+      "p95_ms": 6.675,
+      "p99_ms": 15.137,
+      "result": "pass",
+      "time_wait_before_max": 9936,
+      "other_containers": 0
+    }
+  ],
+  "variants": [
+    {
+      "variant": "ref",
+      "index": 0,
+      "reference": true,
+      "runs": 1,
+      "valid_runs": 1,
+      "failed_rule": 0,
+      "median_us": 23.16458212626808,
+      "min_us": 23.16458212626808,
+      "max_us": 23.16458212626808,
+      "median_p99_ms": 15.137,
+      "pairs": [],
+      "median_difference_us": null,
+      "same_sign": false,
+      "verdict": "reference",
+      "reason": "the others are judged against it"
+    },
+    {
+      "variant": "php86",
+      "index": 1,
+      "reference": false,
+      "runs": 1,
+      "valid_runs": 1,
+      "failed_rule": 0,
+      "median_us": 23.14050487435835,
+      "min_us": 23.14050487435835,
+      "max_us": 23.14050487435835,
+      "median_p99_ms": 15.137,
+      "pairs": [
+        {
+          "round": 1,
+          "us_per_request": 23.14050487435835,
+          "reference_us": 23.16458212626808,
+          "difference_us": -0.024077251909730535
+        }
+      ],
+      "median_difference_us": -0.024077251909730535,
+      "same_sign": true,
+      "verdict": "screen: not better in one pair",
+      "reason": "one pair, not lower by 0.864 µs"
+    }
+  ]
+}

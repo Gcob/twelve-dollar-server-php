@@ -1,0 +1,6 @@
+# The series of this folder, run in this order by `bash lab/stages.sh lab/results/2026-11-24-cpu-steps-5b/series.txt --out lab/results/2026-11-24-cpu-steps-5b`.
+# Every series: PHP 8.5, think scale 0.02, 60,000 idle connections, a 60 s plateau, the alternating order (round 1 runs the reference last).
+aa-24000 --image 8.5 --think-scale 0.02 --idle 60000 --seconds 60 --rate 24000 --pairs 5 --variant a=APP_PRAGMAS=mmap-off --variant b=APP_PRAGMAS=mmap-off
+reconnect-7500 --image 8.5 --think-scale 0.02 --idle 60000 --seconds 60 --rate 7500 --pairs 1 --vu-cap 5400 --variant skeleton=APP_TELEMETRY=1 --variant s1d-every=APP_TELEMETRY=1,APP_SOFT_CONN_LIMIT=60000
+php-8.6 --image 8.5 --think-scale 0.02 --idle 60000 --seconds 60 --rate 24000 --pairs 1 --floor-from lab/results/2026-11-24-cpu-steps-5b/aa-24000 --variant ref=APP_PRAGMAS=mmap-off --variant php86=APP_PRAGMAS=mmap-off --variant-args "php86=--image 8.6"
+php-8.4 --image 8.5 --think-scale 0.02 --idle 60000 --seconds 60 --rate 24000 --pairs 1 --floor-from lab/results/2026-11-24-cpu-steps-5b/aa-24000 --variant ref=APP_PRAGMAS=mmap-off --variant php84=APP_PRAGMAS=mmap-off --variant-args "php84=--image 8.4"
