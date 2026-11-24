@@ -1,0 +1,19 @@
+
+image 8.5 (PHP 8.5.13), server.php, k6 v1.8.3 (commit/58bbfd8e48, go1.26.4, linux/amd64), k6 from 127.0.1.1-127.0.1.4
+think scale 0.02: one VU offers 5.292683 req/s, 9.45 users per req/s, ramp 10 s, plateau 60 s, VU cap 5400 (bound by --vu-cap)
+step    VUs   offered  achieved   users    us/req   p95 ms   p99 ms  errors  result
+   1   1418      7505    7389.8   69834      57.9      8.1   20.388      0%  pass
+  step 1 per endpoint (p95 / p99 ms, requests): GET /feed 8.345 / 20.694 (197544), GET /posts/:id 7.632 / 20.087 (197582), POST /posts 7.084 / 19.209 (3965), POST /posts/:id/like 8.99 / 21.639 (29517)
+no step failed
+k6 connection errors: 0
+database copy in the page cache when the server opened it (fincore): 249192448 of 249192448 bytes, 100 %, --cold off
+server connections: soft limit off, 0 Connection: close responses, 0 accept pauses, 61418 open at most (sum of the peak of each process, 2 processes), file descriptors peak not read: --no-series runs no sampler
+idle connections: 60000 requested, 60000 held at the start and 60000 at the end, 0 closed by the server; the server counted 60000 and 60000 established, 60035 file descriptors open with them
+idle client memory: 275.39 MiB memory.current at the end (peak 277.79, anon 55.77, kernel 219.62, socket buffers 0), the process RSS 68.83 MiB after opening them, opened in 21.92 s from 3 source addresses
+host: load1 3.10 before the warm-up and 2.43 on the plateau (load5 2.08 and 1.85), CPU busy 0.27 % and 37.46 %, steal 0.00 % and 0.00 %, fsync 1.049 ms, 0 other containers
+k6 peak memory 596.42 MiB of its 12030 MiB budget, k6 CPU 215.82 % of one CPU, aggregator max lag 1.932 s (gate 6 s), server Pss_Anon peak not read (--no-series), memory.current peak not read
+
+per second: off (--no-series: no sampler, the poll read only k6's memory and the aggregator's status; the latency of each second is in results.per_second)
+
+VALID
+wrote <tmp>/s1b-3.json
