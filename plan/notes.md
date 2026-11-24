@@ -518,6 +518,34 @@ is 85,000 to 90,000. The feed is about half the CPU and about 80 % of a feed is 
 **Verdict:** ❌ D2, and D60 (about 1 % at best). The PHP-side levers are the FFI SQLite driver (phase 5b) and removing
 the reconnect cost (Q17).
 
+### 2026-11-24 08:56 · ❓ Question: why do the top entries reach 300,000 with the same SQLite?
+
+**Jacob:** "why is like Rust having like 310,000 users if it uses the same SQL engine as we do?"
+
+**Answer (from rust-iouring-kensac, c-iouring-jowinjestine, ruby-cring-cicloid and our baseline profile):**
+
+- **The gap is per request:** the top entries cost about 25 to 30 µs per request on the bench (HolyPHP: 29), we cost
+  about 84. Users follow `1 / µs`, so 3 times cheaper is 3 times more users.
+- **Same storage engine, not the same path through it:** they read the feed with SQLite's B-tree cursors (walk the
+  `created_at` index, look up 20 posts, one range walk for the like counts) and decode the record bytes straight into
+  the JSON. That skips SQLite's SQL layer (the bytecode program, the correlated `count(*)` per post,
+  `sqlite3_column_*`) and our PDO rows turned into PHP arrays. Those cursor functions are internal to the amalgamation:
+  using them takes our own C shim, which D2 rules out.
+- **One transaction per loop pass:** reads share one snapshot and writes one commit, so the per-statement lock and WAL
+  checks are paid once per batch.
+- **io_uring:** multishot receives and batched sends cut the kernel's share (25 to 40 % of our CPU), and direct
+  descriptors remove the fd wall at no reconnect cost. The ~20 entries stuck at exactly 71,000 in very different
+  languages are the fd wall, not language speed.
+- **No interpreter between the steps:** parsing, routing, JWT and JSON are byte work in native code; in PHP each step
+  builds strings and arrays. HolyPHP (PHP syntax compiled to C, 270,000) shows the gap is native code, not syntax.
+- **The ladder, roughly:** epoll and file descriptors cap at 71,000 · io_uring with C glue and plain SQL about 155,000
+  (the Brainfuck entry, whose C runtime does the I/O and the SQL) · plus B-tree reads, batching and a tuned SQLite
+  build about 300,000.
+
+**Verdict:** 👀 an explanation, not a decision. Of the three levers, PHP keeps only io_uring through FFI (the ring,
+kept for later: CPU even in the 5a spike, so its gain is the wall, about +8 to 10 % users). B-tree reads and native
+glue mean our own C (D2). The realistic target stays 85,000 to 90,000, to check in phase 7.
+
 ### 2026-11-22 18:08 · 💡 Idea: try io_uring anyway, something nobody tried in PHP
 
 **Jacob:** "do you think we could still even try it? […] to be at the top, we need to do some, let's say, gray hat
