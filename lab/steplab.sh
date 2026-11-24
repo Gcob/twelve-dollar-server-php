@@ -254,14 +254,20 @@ for round in $(seq "$first_round" "$last_round"); do
     [ -s "$tmp/$id.json" ] || fail "the run $id left no JSON"
     tw_after="$(time_wait_json)" || fail "cannot count the TIME_WAIT sockets"
 
-    # The run's own JSON stays as it is; the runner adds one object.
-    jq --arg variant "$name" --argjson index "$i" --argjson round "$round" --argjson rounds "$last_round" --arg reference "${v_names[0]}" \
+    # The run's own JSON stays as it is, but for the runner's temp folder (a per-user path on the Mac, in the run's `command`): the
+    # results are committed to a public repository, so `<tmp>` takes its place. The runner adds one object.
+    jq --arg tmp "$tmp" --arg variant "$name" --argjson index "$i" --argjson round "$round" --argjson rounds "$last_round" --arg reference "${v_names[0]}" \
       --argjson env "$(jq -Rnc '[inputs | select(length > 0)]' <<<"${v_env[$i]}")" --arg server "${v_server[$i]:+${v_server[$i]#"$LAB"/}}" \
       --argjson rate "$rate" --arg warmup "$warmup" --argjson before "$TW_BEFORE" --argjson after "$tw_after" --arg command "$command_line" '
       . + {steplab: {variant: $variant, variant_index: $index, round: $round, rounds: $rounds, reference: $reference, variant_env: $env,
                      variant_server_file: (if $server == "" then null else $server end), rate: $rate, warmup: $warmup,
-                     time_wait: {before: $before, after: $after}, command: $command}}' "$tmp/$id.json" >"$out/$id.json"
-    cp "$tmp/$id.stdout" "$out/$id.txt"
+                     time_wait: {before: $before, after: $after}, command: $command}}
+      | walk(if type == "string" then (split("/private" + $tmp) | join("<tmp>") | split($tmp) | join("<tmp>")) else . end)' "$tmp/$id.json" >"$out/$id.json"
+    : >"$out/$id.txt"
+    while IFS= read -r line || [ -n "$line" ]; do
+      line="${line//"/private$tmp"/<tmp>}"
+      printf '%s\n' "${line//"$tmp"/<tmp>}" >>"$out/$id.txt"
+    done <"$tmp/$id.stdout"
     echo "  $(jq -r '.results.steps[0] as $s | if .valid then "valid, \($s.achieved_rps | . * 10 | round / 10) req/s, \($s.cpu_usec_per_request | . * 10 | round / 10) us/req, p99 \($s.latency_ms.overall.p99) ms, \(if $s.pass then "pass" else "FAIL: " + ($s.reasons | join("; ")) end)" else "INVALID: " + (.invalid_reasons | join("; ")) end' "$out/$id.json"), TIME_WAIT after: $(jq -r '.max' <<<"$tw_after") on the busiest address"
   done
 done

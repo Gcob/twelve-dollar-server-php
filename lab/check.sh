@@ -234,6 +234,18 @@ check_public_guard_catches_leak() {
   fi
 }
 
+# The Mac's per-user temp folder is not a home path, but it is as private: the guard refuses it, with or without /private.
+check_public_guard_catches_temp_folder() {
+  # Why: the sample is built at run time, or the tree scan would flag this very line.
+  local dir v="var/fol"
+  v="${v}ders"
+  for dir in "/${v}/ab/xyz/T/tmp.1" "/private/${v}/ab/xyz/T/tmp.1"; do
+    if printf 'wrote %s/run.json\n' "$dir" | bash "$REPO/tools/public-guard.sh" stdin >/dev/null 2>&1; then
+      echo "the guard let $dir through"; return 1
+    fi
+  done
+}
+
 check_results_hold_no_container_names() {
   local json named=""
   while IFS= read -r json; do
@@ -498,7 +510,7 @@ check_app_cases() {
 }
 
 # The S6 variants (APP_FEED_SQL, APP_FETCH, APP_PRAGMAS) through the app's entry point on a small database: every combination answers the
-# same bytes as the unset one, and the literal answers, the refused values, the presets and the join's plan hold (55 cases).
+# same bytes as the unset one, and the literal answers, the refused values, the presets and the join's plan hold (65 cases).
 check_app_variants_cases() {
   local out ok rc=0
   out="$(bash "$LAB/run.sh" 8.5 php /lab/check/app-variants-test.php 2>&1)" || rc=$?
@@ -1583,6 +1595,17 @@ check_steplab_live() {
   jq -e '.steplab.variant_index == 1 and .steplab.round == 2 and .steplab.reference == "ref"' "$dir/twin-2.json" >/dev/null || { echo "the run's steplab object is wrong"; return 1; }
   pairs="$(jq -r '.variants[] | select(.variant == "twin") | .pairs | length' "$dir/summary.json")"
   [ "$pairs" = 2 ] || { echo "summary.json has $pairs pairs for twin, expected 2"; return 1; }
+  # Why: the runner's temp folder is a per-user path on the Mac; the files go to a public repository, so they hold <tmp> instead.
+  # The runner's folder is a sibling of this test's own (both come from mktemp -d); the steplab object's own `command` names the test's
+  # --out, which is the caller's choice, so only the run's `command` and the table's text are read.
+  local tmp_hits="" f
+  for f in ref-1 ref-2 twin-1 twin-2; do
+    jq -r '.command' "$dir/$f.json" | grep -q -F "$(dirname "$dir")" && tmp_hits="$tmp_hits $f.json"
+    grep -q -F "$(dirname "$dir")" "$dir/$f.txt" && tmp_hits="$tmp_hits $f.txt"
+  done
+  [ -z "$tmp_hits" ] || { echo "the runner's temp folder is in:$tmp_hits"; return 1; }
+  grep -q -F '<tmp>/ref-1.json' "$dir/ref-1.txt" && jq -e '.command | contains("<tmp>/ref-1.json")' "$dir/ref-1.json" >/dev/null \
+    || { echo "the run files do not name <tmp> where the runner's folder was"; return 1; }
   [ -z "$(lab_containers_left)" ] || { echo "left behind: $(lab_containers_left)"; return 1; }
 }
 
@@ -1853,6 +1876,7 @@ CHECKS=(
   check_results_regenerate
   check_public_guard
   check_public_guard_catches_leak
+  check_public_guard_catches_temp_folder
 )
 
 # Names given as arguments: only those checks (`bash lab/check.sh check_replay_keeps_up`).
