@@ -108,9 +108,10 @@ step's choice backed by a measurement.
 | 5 | Step lab        | Each step S1 to S9, its variants measured, in the profile's order (5a, 5b: D50) | Each step has a chosen variant and its numbers          |
 | 6 | Submission      | The chosen variants together                                | `test/run.sh` passes 42/42                              |
 | 7 | Score           | `bench/load.js` ramps, x86 calibration                      | More than 71,000 held for 5 minutes                     |
-| 8 | Submit          | The PR to the challenge repo                                | CI green                                                |
+| 8 | Ring (D76)      | An io_uring loop in pure PHP through FFI to `liburing-ffi`, a SQLite built with PGO, the single-post plan checked | Each lever's µs/req against phase 7's; a new score if they win |
+| 9 | Submit          | The PR to the challenge repo                                | CI green                                                |
 
-**Decisions:** 75 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
+**Decisions:** 76 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
 is a prediction we re-measure, not an answer.
 
 ### Phase 5b scopes (1 to 7 delivered, 9 waits for your go)

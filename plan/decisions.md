@@ -371,6 +371,16 @@
   pair (micro -1.3 % a feed), the FFI driver no faster than PDO (SQLite's own work is 98 % of a feed), the lean parse
   -18 % of a parse (about 0.05 µs a request), the loop presets nothing to remove, PHP 8.4 and 8.6 no better than 8.5
   (project manager, phase 5b, 2026-11-24 04:39).
+- **D76:** pure ring first. Phases 6 and 7 come first, for a real score with what the lab has chosen; then a new
+  phase 8, the ring: an io_uring loop in pure PHP through FFI to `liburing-ffi.so.2` (liburing's inline helpers
+  exported as real functions, so FFI can call them), plus two other pure levers: a SQLite built from the amalgamation
+  with PGO and `-march=native` under the PHP driver (building a library, not our code), and checking whether the
+  single-post query recompiles its plan on every request (the `p.id = +?` trick). Submitting becomes phase 9. Our own
+  C stays out (D2); a hybrid entry is a possible second, labelled entry, decided after the ring phase. Why: Ruby's
+  ladder, one author on one interpreter like ours, went from 71,000 users on epoll to 130,000 with io_uring through
+  FFI and no C of its own, and to 155,000 only with its own C reading the B-tree. It replaces 5b's rule that the ring
+  is a question only if S1-b costs too much (Jacob, 2026-11-24 09:14: "Pure ring first";
+  [notes.md](notes.md), 2026-11-24 09:09).
 
 ## History
 

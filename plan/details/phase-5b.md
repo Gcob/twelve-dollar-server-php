@@ -291,7 +291,7 @@ unless a line says otherwise.
 ## Out of scope
 
 - **S4 (JWT, 1.7 %), S3 (route, 0.4 %), S5 (validation, 0.1 %):** under D60's 2 %; skipped, not measured.
-- **The io_uring ring for the app:** not built in 5b; a question for Jacob only if S1-b costs too much (scope 9).
+- **The io_uring ring for the app:** not built in 5b; its own phase after phase 7 (D76, Jacob 2026-11-24 09:14).
 - **Group commit, the checkpointer, `exclusive`:** measured in 5a, not chosen; `exclusive` can't run with S1-b.
 - **Our own C:** ❌ (D2, notes 2026-11-23 19:28). SQLite's own JSON functions are SQLite's code, like its query
   engine: allowed.
