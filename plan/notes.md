@@ -546,6 +546,33 @@ the reconnect cost (Q17).
 kept for later: CPU even in the 5a spike, so its gain is the wall, about +8 to 10 % users). B-tree reads and native
 glue mean our own C (D2). The realistic target stays 85,000 to 90,000, to check in phase 7.
 
+### 2026-11-24 09:09 · 💡 Idea: batch SQL per loop pass, and a less pure PHP
+
+**Jacob:** "So doing sql batching wouldn't be pure php? And what if we stay php, without the purest way? It is a
+competition after all..."
+
+**Challenge:**
+
+- **Batching is pure PHP,** a `BEGIN` and a `COMMIT` around a loop pass through PDO. Phase 5a measured it (S9, group
+  commit): +1.18 µs, because a pass holds 1 to 3 requests at 24,000 req/s, so there's almost nothing to share. The top
+  entries wait up to 1 ms to gather up to 256 requests, and their gain comes mostly from skipping the SQL layer.
+- **Ruby's ladder, one author, one interpreter like ours** (leaderboard): async on epoll 71,000 (111 µs/req) ·
+  io_uring through **FFI** to `liburing-ffi.so.2` 130,000 (66 µs/req) · plus their own C reading the B-tree 155,000 ·
+  plus a C ring 160,000. The big jump needed no C of their own; their own C added about 20 %.
+- **A correction to the 2026-11-22 18:08 entry:** liburing ships `liburing-ffi.so.2`, which exports its inline
+  helpers as real functions, so FFI can call them. Our 5a spike did that work in PHP.
+- **Pure levers Ruby used that we haven't measured:** `liburing-ffi` for the ring; a SQLite built from the
+  amalgamation with PGO and `-march=native` under the PHP driver (building an off-the-shelf library, not our code);
+  `p.id = +?` in the single-post query (their SQLite recompiled the plain `?` plan on every request, 14 to 7 µs:
+  check whether ours does).
+- **A less pure PHP, in order of gain:** the feed read from the B-tree by our own C through FFI (S6 is 35 to 55 % of
+  our profile), then the connections in our own C, then everything in C (HolyPHP, no longer PHP). It would sit on the
+  PHP row with a footnote, like HolyPHP.
+
+**Verdict:** 🔶 open, Jacob's call. Claude's recommendation: the pure track has more room than thought (Ruby: 130,000
+with FFI and no C of its own). Finish phases 6 and 7 for a real score, then a ring phase on `liburing-ffi` with the
+three pure levers above. The hybrid stays a possible second, honestly labelled entry, decided after that.
+
 ### 2026-11-22 18:08 · 💡 Idea: try io_uring anyway, something nobody tried in PHP
 
 **Jacob:** "do you think we could still even try it? […] to be at the top, we need to do some, let's say, gray hat
