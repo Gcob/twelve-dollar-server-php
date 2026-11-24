@@ -1,16 +1,13 @@
 # $12 server challenge in PHP
 
-**Status:** 🏁 Phase 5b merged (the step lab, second run; merge `c19fb66`); phase 6 next, to plan with Jacob · approved on 2026-11-21 · snapshot 2026-11-21-0920 ·
+**Status:** ⏸️ Phase 6 paused on your stop (13:51), planned, plan review to redo · the submission, `submissions/php-Gcob/` · approved on 2026-11-21 · snapshot 2026-11-21-0920 ·
 **Round:** 6
-**Since your last read:** scope 9 ran on x86 (one `c5.2xlarge`, 43 minutes, everything tagged removed): **S1-b is
-chosen** (D77, 2 processes on `SO_REUSEPORT`, the soft limit in each). It costs +7.44 µs/req (+14.8 %) on the Xeon and adds
-10.90 µs at 150,000 users, against S1-d's 13.51 (26.9 %, over the 15 % line); at 100,000 users the two are 1.04 µs
-apart, a tie in practice. The second reconnect pair gave 23.44 µs (5a's 23.69). The bench estimate is 79.0 µs/req
-without S1's cost (5a: 83.9) and 96.1 at 150,000 users with S1-b. Results:
-`lab/results/2026-11-24-x86-s1b/`. Earlier: phase 5b's Mac work (scopes 1 to 7, D75) found no new CPU
-variant beyond the noise, and D76 put the pure ring phase after phase 7. Merged on Jacob's go (`c19fb66`). Delivery
-and headline numbers in [runs/phase-5b/run.md](runs/phase-5b/run.md) ("Delivery").
-**Project:** this repo, `plan/` · **Submission:** `submissions/php-<runtime>-Gcob/` · **Jira:** none
+**Since your last read:** phase 6 is planned in [details/phase-6.md](details/phase-6.md): 4 scopes (the clean copy, the
+install in a clean Ubuntu container, the README and its rules audit, one parity pair), your three choices recorded as
+D78 to D80, and D81 to D83 (the install's prefix and flags, how the container emulates the bench's `deploy`, the
+parity pair). Scope 4 needs a quiet Docker VM: a 🔴 item will ask for it. Earlier: phase 5b merged (`c19fb66`), S1-b
+chosen (D77); its delivery in [runs/phase-5b/run.md](runs/phase-5b/run.md) ("Delivery").
+**Project:** this repo, `plan/` · **Submission:** `submissions/php-Gcob/` (D80) · **Jira:** none
 
 ## 👉 Your turn
 
@@ -102,11 +99,23 @@ step's choice backed by a measurement.
 | 5 | Step lab        | Each step S1 to S9, its variants measured, in the profile's order (5a, 5b: D50) | Each step has a chosen variant and its numbers          |
 | 6 | Submission      | The chosen variants together                                | `test/run.sh` passes 42/42                              |
 | 7 | Score           | `bench/load.js` ramps, x86 calibration                      | More than 71,000 held for 5 minutes                     |
-| 8 | Ring (D76)      | An io_uring loop in pure PHP through FFI to `liburing-ffi`, a SQLite built with PGO, the single-post plan checked | Each lever's µs/req against phase 7's; a new score if they win |
+| 8 | Ring (D76, D84) | First a screen of off-the-shelf io_uring (Swoole's `uring_socket`, an audit of ext-mrloop); then, unless one wins, an io_uring loop in pure PHP through FFI to `liburing-ffi`; a SQLite built with PGO, the single-post plan checked | Each lever's µs/req against phase 7's; a new score if they win |
 | 9 | Submit          | The PR to the challenge repo                                | CI green                                                |
 
-**Decisions:** 77 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
+**Decisions:** 84 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
 is a prediction we re-measure, not an answer.
+
+### Phase 6 scopes (planned, paused)
+
+Detail, seams, cases and the predictions in [details/phase-6.md](details/phase-6.md). One commit each, on branch
+`phase-6-claude` (D14). Scope 4 measures, so it needs a quiet Docker VM (D15).
+
+| # | Commit                                                                   | Done when (short)                                                        |
+|---|--------------------------------------------------------------------------|--------------------------------------------------------------------------|
+| 1 | `feat(submission): php-Gcob, the chosen variants in a clean copy`         | 42/42 in the lab's image with no switch; 2 workers, soft limit 64,000, `mmap` off; `check_submission` green (D79) |
+| 2 | `feat(submission): install.sh builds PHP 8.5 and its extensions from pinned sources` | `lab/submission-test.sh`: clean `ubuntu:24.04`, `install.sh` as root, `test/run.sh` 42/42 as `deploy` on port 80, `nofile` 65535, healthy under 60 s (D78, D81, D82) |
+| 3 | `docs(submission): the README and the rules audit`                       | the table, direct, the optimizations with their numbers and links, rules 5, 6, 7, 10, 11 audited; links resolve; the guard passes |
+| 4 | `docs(lab): the submission against the lab, one pair`                    | one pair at 24,000 req/s within the floor (0.864 µs/req), or the reason found (D83) |
 
 ### Phase 5b scopes (merged, 8 skipped)
 
@@ -209,5 +218,6 @@ You don't need to read this part: it's the index of the execution details, in `d
 - [Phase 4](details/phase-4.md): the realistic baseline's scopes, their seams and cases, and the predictions.
 - [Phase 5](details/phase-5.md): the step lab's first run (5a): scopes, seams, cases and the predictions.
 - [Phase 5b](details/phase-5b.md): the step lab's second run: scopes, seams, cases and the predictions.
+- [Phase 6](details/phase-6.md): the submission: scopes, seams, cases and the predictions.
 - [Phase 2's run](runs/phase-2/run.md), [phase 3's](runs/phase-3/run.md), [phase 4's](runs/phase-4/run.md), [phase 5a's](runs/phase-5a/run.md) and [phase 5b's](runs/phase-5b/run.md): progress, reviews and retro, with
   their `state/`.

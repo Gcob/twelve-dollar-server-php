@@ -392,6 +392,44 @@
   x86 measures it. Its cost still exceeds 15 % at 150,000 users, which
   the ring phase (D76) targets (project manager, phase 5b, 2026-11-24 09:39,
   `lab/results/2026-11-24-x86-s1b/` on the branch `phase-5b-claude`).
+- **D78:** the submission's `install.sh` builds PHP 8.5 from source with the lab's configure flags (D13), plus ext-event
+  from PECL and the other extensions the server needs (`pcntl`, `sockets`), every download pinned by sha256. Not
+  Ubuntu's apt PHP 8.3: every number since phase 3 ran on 8.5 from source; the cost is 10 to 15 minutes of compiling on
+  the droplet (Jacob, 2026-11-24 13:38, [notes.md](notes.md)).
+- **D79:** the submission is a clean copy: `submissions/php-Gcob/` holds only the chosen variants, built in: S1-b
+  (2 processes on `SO_REUSEPORT`, the soft limit at 64,000 in each, D77), `mmap` off (D66), the rest as the lab's
+  reference (D70). No lab switch, no FFI driver, no profiler, no telemetry, no checkpointer; `start.sh` is configured
+  only by SPEC.md's variables. `lab/app` stays as it is, for phase 8, which ports its wins by hand. The risk, drift
+  between two copies, is checked by one pair (D83) (Jacob, 2026-11-24 13:38, [notes.md](notes.md)).
+- **D80:** the folder is `submissions/php-Gcob/`, Jacob's own answer (the options were `php-epoll-Gcob`,
+  `php-diy-Gcob` and `php-event-Gcob`). The challenge asks for `<language>-<framework>-<github-username>`; the name is
+  checked again at phase 9, before the PR, not renamed now (Jacob, 2026-11-24 13:38, [notes.md](notes.md)).
+- **D81:** the install's shape. PHP goes to its own prefix, `/opt/php-gcob`, and `start.sh` calls it by its full
+  path: the challenge's CI runner has its own PHP on the `PATH` and things in `/usr/local`, and a prefix of our own
+  touches neither. The libraries come from Ubuntu 24.04's apt with no version pin, as the merged PHP entries do (an
+  exact pin breaks on Ubuntu's next security update); the README states the versions the install printed. The
+  extensions are loaded by `start.sh` (`-d extension=`), never globally, and `start.sh` passes exactly the lab's PHP
+  flags (`LAB_SERVER_PHP_FLAGS`), so the bench runs what the lab measured. `HOST` and `PORT` default to SPEC.md's
+  direct values (`0.0.0.0`, `80`) (project manager, phase 6, 2026-11-24).
+- **D82:** phase 6 proves the bench's install with `lab/submission-test.sh`: a container from the lab's pinned
+  `ubuntu:24.04`, one CPU and 2 GiB like the droplet, `install.sh` as root, `build.sh` as `deploy`, the challenge's
+  `test/run.sh` as `deploy` on port 80 with `nofile` 65535. systemd's `CAP_NET_BIND_SERVICE` is emulated with
+  `setpriv` (an ambient capability, as `AmbientCapabilities=` gives) and the container's unprivileged port floor put
+  back at 1,024 (Docker sets it to 0, which would let any user bind 80 and hide a missing capability). The arm64
+  container is enough for phase 6; phase 7 installs natively on x86 (project manager, phase 6, 2026-11-24).
+- **D83:** the copy's parity is one `steplab.sh` pair at 24,000 req/s (`s = 0.02`, 60,000 idle, alternating order,
+  floor 0.864 µs/req from 5b's A/A): `lab/app/server.php` with `APP_WORKERS=2,APP_SOFT_CONN_LIMIT=64000,
+  APP_PRAGMAS=mmap-off` against the submission's server file, the same image and flags on both sides. Within the floor:
+  parity. Outside it, either way: the reason is found before delivery. 5b's A/A ran one process, this pair two: said in
+  the README, no new A/A (D60) (project manager, phase 6, 2026-11-24).
+
+- **D84:** phase 8's first scope screens off-the-shelf io_uring before we build our own ring on `liburing-ffi`:
+  (1) Swoole 6.2's coroutine HTTP server built with `--enable-uring_socket` (plus `--enable-iouring` or
+  `--with-liburing-dir`), one pair against phase 7's server, fail fast (D60); (2) an audit of ext-mrloop's code
+  (`ringPHP/php-mrloop`) before any run. If one of them wins, phase 8 may skip its own ring. OpenSwoole's POLL_ADD
+  reactor and php-uring stay out unless the audit finds a reason; a C glue of our own stays out (D2, D60). Phases 6
+  and 7 still come first (D76) (Jacob, 2026-11-24 14:12: "Let's go, on y va avec ta proposition. [...] Faudra tester
+  puis évaluer"; [notes.md](notes.md), 2026-11-24 14:05).
 
 ## History
 
