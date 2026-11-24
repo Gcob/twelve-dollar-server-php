@@ -1,20 +1,18 @@
 # $12 server challenge in PHP
 
-**Status:** 🏁 Phase 5a delivered, to review (the step lab, first run) · approved on 2026-11-21 · snapshot 2026-11-21-0920 ·
+**Status:** 🏁 Phase 5a merged (the step lab, first run; merge `a9ffb59`); phase 5b next · approved on 2026-11-21 · snapshot 2026-11-21-0920 ·
 **Round:** 6
 **Since your last read:** phase 5a delivered on 2026-11-23 at 21:11, both final reviews OK, branch
 `phase-5-claude` pushed, not merged. S1-d holds the fd wall; of S6, S8 and S9 only `mmap-off` is kept (about 2 µs of
 27, D66); on x86 a request costs 1.61 times the Mac at the same rate, and a reconnect 3.6 times (S1-b goes to 5b, D67).
-Delivery, headline numbers and the merge command in [run.md](run.md) ("Delivery").
+Merged on Jacob's go (`a9ffb59`). Delivery and headline numbers in
+[runs/phase-5a/run.md](runs/phase-5a/run.md) ("Delivery").
 **Project:** this repo, `plan/` · **Submission:** `submissions/php-<runtime>-Gcob/` · **Jira:** none
 
 ## 👉 Your turn
 
 > **Answer freely:** a letter or `ok`, your own choice (`other: …`), `?` if it's unclear, or
 > `badly framed: …` if an option is missing or the question doesn't hold.
-
-- ⚪ **Phase 5a is delivered:** review `phase-5-claude` and merge it, or tell me to. The command is in
-  [run.md](run.md) ("Delivery").
 
 ### Q18/19 [run, lab] : a series driver and a host-state line in the lab, first thing in 5b?
 
@@ -95,7 +93,7 @@ step's choice backed by a measurement.
 **Decisions:** 68 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
 is a prediction we re-measure, not an answer.
 
-### Phase 5a scopes (delivered)
+### Phase 5a scopes (merged)
 
 Detail, seams, cases and the predictions in [details/phase-5.md](details/phase-5.md). One commit each, on branch
 `phase-5-claude` (D14). Scopes 6, 10, 11 and 12 measure, so they need a quiet Docker VM (D15). Each variant is a
@@ -178,5 +176,5 @@ You don't need to read this part: it's the index of the execution details, in `d
 - [Phase 3](details/phase-3.md): the bake-off scopes, their seams and cases, and the predictions.
 - [Phase 4](details/phase-4.md): the realistic baseline's scopes, their seams and cases, and the predictions.
 - [Phase 5](details/phase-5.md): the step lab's first run (5a): scopes, seams, cases and the predictions.
-- [Phase 2's run](runs/phase-2/run.md), [phase 3's](runs/phase-3/run.md) and [phase 4's](runs/phase-4/run.md): progress, reviews and retro, with
+- [Phase 2's run](runs/phase-2/run.md), [phase 3's](runs/phase-3/run.md), [phase 4's](runs/phase-4/run.md) and [phase 5a's](runs/phase-5a/run.md): progress, reviews and retro, with
   their `state/`.
