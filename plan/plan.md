@@ -1,14 +1,14 @@
 # $12 server challenge in PHP
 
-**Status:** ⏸️ Phase 5b: scopes 1 to 7 delivered (both final reviews OK, branch `phase-5b-claude` pushed, not merged); scope 9 waits for your AWS go · approved on 2026-11-21 · snapshot 2026-11-21-0920 ·
+**Status:** ▶️ Phase 5b: scopes 1 to 7 and 9 done (branch `phase-5b-claude` pushed, not merged); the delta reviews of scope 9 running · approved on 2026-11-21 · snapshot 2026-11-21-0920 ·
 **Round:** 6
-**Since your last read:** phase 5b's Mac work is done (scopes 1 to 7, D75): no new CPU variant beats the noise (the
-FFI SQLite driver, SQLite-built JSON, a lean parser, the loop presets, PHP 8.4 and 8.6: SQLite's own work is 98 % of a
-feed), and S1-b costs +2.14 µs/req (+8.6 %) on the Mac. What's left is x86 (your go, 🔴 below), then the reviews.
-Before that: phase 5b started on 2026-11-23 at 23:19 on your "Yes, merge and go". Its plan is in
-[details/phase-5b.md](details/phase-5b.md): 9 scopes, the predictions written before any run. Two project-manager
-decisions: S1-b is built before the AWS session, so one session prices it with the reconnect (D69), and 5b's
-reference is `mmap-off` (D70). Q19 is coded as A until you answer. Progress in [run.md](run.md).
+**Since your last read:** scope 9 ran on x86 (one `c5.2xlarge`, 43 minutes, everything tagged removed): **S1-b is
+chosen** (D77, 2 processes on `SO_REUSEPORT`, the soft limit in each). It costs +7.44 µs/req (+14.8 %) on the Xeon and adds
+10.89 µs at 150,000 users, against S1-d's 13.51 (26.9 %, over the 15 % line); at 100,000 users the two are 1.05 µs
+apart, a tie in practice. The second reconnect pair gave 23.44 µs (5a's 23.69). The bench estimate is 79.0 µs/req
+without S1's cost (5a: 83.9) and 96.1 at 150,000 users with S1-b. Results:
+`lab/results/2026-11-24-x86-s1b/` on the branch. Earlier: phase 5b's Mac work (scopes 1 to 7, D75) found no new CPU
+variant beyond the noise, and D76 put the pure ring phase after phase 7. Progress in [run.md](run.md).
 **Project:** this repo, `plan/` · **Submission:** `submissions/php-<runtime>-Gcob/` · **Jira:** none
 
 ## 👉 Your turn
@@ -16,15 +16,8 @@ reference is `mmap-off` (D70). Q19 is coded as A until you answer. Progress in [
 > **Answer freely:** a letter or `ok`, your own choice (`other: …`), `?` if it's unclear, or
 > `badly framed: …` if an option is missing or the question doesn't hold.
 
-**🔴 Your go for one AWS session (scope 9), blocking only scope 9.** Same shape as 5a's calibration (one `c5.2xlarge`
-in `ca-central-1`, about 45 minutes, terminated after; 5a's lived 1 h 01): a second reconnect pair and S1-b against
-S1-a (3 pairs), at 7,500 req/s. (No CPU variant was chosen in 5b, so there is no new configuration to compare, D75.) Why it's worth it now: on the Mac S1-b
-costs **+2.14 µs/req (+8.6 %)**, a tie with S1-d near 100,000 users and cheaper at 150,000 (S1-d +3.4 to +3.8 µs);
-but a reconnect costs **4.0 times** more on the Xeon than on the Mac (23.69 against 5.91 µs, 7a), so the S1 choice is
-decided on x86. **What I need:** reattach the factory's `aws/phase-5-x86-calibration-policy.json` to your CLI user and
-say "go AWS"; I'll run it right away (scopes 1 to 7 are done, scope 8 is skipped, D75), then you delete the policy.
-Without your go, the run delivers scopes 1 to 7 and stops here (⏸️): S1 stays S1-d (5a's choice), and S1-b stays
-measured on the Mac only.
+**🟠 Delete the AWS policy `twelve-dollar-x86-calibration`** (detach it from your CLI user, then delete it): scope 9
+is done and `teardown.sh --verify` shows nothing tagged left (only the terminated instance).
 
 ### Q18/19 [run, lab] : a series driver and a host-state line in the lab, first thing in 5b?
 
@@ -111,10 +104,10 @@ step's choice backed by a measurement.
 | 8 | Ring (D76)      | An io_uring loop in pure PHP through FFI to `liburing-ffi`, a SQLite built with PGO, the single-post plan checked | Each lever's µs/req against phase 7's; a new score if they win |
 | 9 | Submit          | The PR to the challenge repo                                | CI green                                                |
 
-**Decisions:** 76 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
+**Decisions:** 77 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
 is a prediction we re-measure, not an answer.
 
-### Phase 5b scopes (1 to 7 delivered, 9 waits for your go)
+### Phase 5b scopes (1 to 7 and 9 done, 8 skipped)
 
 Detail, seams, cases and the predictions in [details/phase-5b.md](details/phase-5b.md). One commit each, on branch
 `phase-5b-claude` (D14). Scopes 7 and 8 measure, so they need a quiet Docker VM (D15); scope 9 needs your go for AWS.
@@ -129,7 +122,7 @@ Detail, seams, cases and the predictions in [details/phase-5b.md](details/phase-
 | 6 | `feat(app): an FFI driver to libsqlite3`                       | ns per feed for PDO and FFI; stops at the micro if FFI doesn't win       |
 | 7 | `docs(lab): the CPU steps of 5b and S1-b, measured on the Mac` | the A/A floor, each variant's pairs, S1-b's cost, a choice per step      |
 | 8 | `docs(lab): the chosen variants together, 5b`                  | **skipped (D75):** no CPU variant chosen, the same configuration as 5a's |
-| 9 | `docs(lab): S1-b and the reconnect on x86`                     | only with your go: the reconnect and S1-b on a Xeon                      |
+| 9 | `docs(lab): S1-b and the reconnect on x86`                     | done: a reconnect 23.44 µs, S1-b +7.44 µs/req, S1-b chosen               |
 
 ### Phase 5a scopes (merged)
 

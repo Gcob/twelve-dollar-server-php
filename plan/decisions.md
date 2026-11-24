@@ -381,6 +381,14 @@
   FFI and no C of its own, and to 155,000 only with its own C reading the B-tree. It replaces 5b's rule that the ring
   is a question only if S1-b costs too much (Jacob, 2026-11-24 09:14: "Pure ring first";
   [notes.md](notes.md), 2026-11-24 09:09).
+- **D77:** S1 is S1-b: 2 processes on `SO_REUSEPORT`, each with the soft limit at 64,000 (it replaces 5a's S1-d). By
+  the rule of 5b's scope 9 (S1-d stays if it adds 15 % or less at 150,000 users, else the variant that adds fewer µs
+  there): on the Xeon S1-d adds 13.51 µs (26.9 %) at 150,000 users, S1-b 10.89 (21.7 %); at 100,000 users 8.48 against
+  7.44, a tie in practice (1.05 µs apart). S1-b itself costs +7.44 µs/req (+14.8 %, 3 pairs, beyond the floor) and no
+  extra memory; a reconnect costs 23.56 µs (two pairs). Not measured: whether a reconnect costs the same with two
+  processes as with one (phase 7's full-size run will show it). Its cost still exceeds 15 % at 150,000 users, which
+  the ring phase (D76) targets (project manager, phase 5b, 2026-11-24 09:39,
+  `lab/results/2026-11-24-x86-s1b/` on the branch `phase-5b-claude`).
 
 ## History
 
