@@ -478,6 +478,29 @@ on some numbers on the Mac, shouldn't we beat them on any machine?
 **Verdict:** ✅ a scope in 5a, before the x86 calibration, since it sharpens what scope 12 checks. Jacob, 22:10:
 "Yes, add it." Sent to the project manager.
 
+### 2026-11-23 19:25 · ❓ Question: can we beat 100k, 120k, 150k, 200k users?
+
+**Jacob:** "do you think we could beat the 100k+, the 120k+, the 150k+, the 200k+?"
+
+**Context (phase 5a, scope 12):** the skeleton costs about 84 µs per request on the bench (53.6 µs on a c5 Xeon
+times 1.57; 88 through the Swoole entries). `users ≈ 8.0 million / µs` at 85 % CPU gives about 95,000. Past 64,000
+connections, S1-d's reconnect costs 23.7 µs on x86, about +8.5 µs per request at 100,000 users: today's projection
+is 85,000 to 90,000. The feed is about half the CPU and about 80 % of a feed is SQLite running the query, a cost rule
+5 keeps per request.
+
+**Forecast (Claude, to check against phase 7's score):**
+
+| Target | Odds | What it takes |
+|---|---|---|
+| > 71,000 | ~85 % | the skeleton with S1-d |
+| 100,000 | ~60 % | about 15 % less CPU, or no reconnect cost (S1-b or the io_uring rings) |
+| 120,000 | ~30 % | 25 to 30 % less CPU and no reconnect cost |
+| 150,000 | ~10 % | about 45 % less: around SQLite itself |
+| 200,000 | < 5 % | half today's cost; the 230,000+ entries read SQLite's B-tree in native code |
+
+**Verdict:** 👀 a forecast, not a decision. Phase 5b aims at 100,000 (no reconnect cost, the FFI SQLite driver),
+120,000 is the stretch. Compare with the real score in phase 7.
+
 ### 2026-11-22 18:08 · 💡 Idea: try io_uring anyway, something nobody tried in PHP
 
 **Jacob:** "do you think we could still even try it? […] to be at the top, we need to do some, let's say, gray hat
