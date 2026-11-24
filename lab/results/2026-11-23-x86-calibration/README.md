@@ -142,7 +142,7 @@ Added on 2026-11-23 at 04:34 from scope 13's factors (3.22 and 3.08), before any
 <!-- BEGIN summarize -->
 ### The staircases: the skeleton (PHP 8.5, telemetry on, probes on), `s = 0.02`, 60,000 idle, 60 s steps, the 97 % rule
 
-**coarse** (valid: true, other containers: 0, k6 connection errors: 0, CPU model and layout: x86-8, server cpuset 1, idle sibling 5, k6 cpuset 0,2,3,4,6,7, probe cpuset 0,4)
+**coarse** (valid: true, other containers: 0, k6 connection errors: 0, CPU layout: x86-8, server cpuset 1, idle sibling 5, k6 cpuset 0,2,3,4,6,7, probe cpuset 0,4)
 
 | Offered req/s | VUs | achieved req/s | achieved / offered | µs CPU/req | p95 ms | p99 ms | result |
 |---|---|---|---|---|---|---|---|
@@ -151,7 +151,7 @@ Added on 2026-11-23 at 04:34 from scope 13's factors (3.22 and 3.08), before any
 | 8003 | 1512 | 7780.9 | 97.2 % | 54.49 | 19.209 | 38.673 | pass |
 | 10003 | 1890 | 9487.3 | 94.8 % | 53.97 | 36.984 | 73.359 | FAIL: achieved below 97 % of offered |
 
-**fine** (valid: true, other containers: 0, k6 connection errors: 0, CPU model and layout: x86-8, server cpuset 1, idle sibling 5, k6 cpuset 0,2,3,4,6,7, probe cpuset 0,4)
+**fine** (valid: true, other containers: 0, k6 connection errors: 0, CPU layout: x86-8, server cpuset 1, idle sibling 5, k6 cpuset 0,2,3,4,6,7, probe cpuset 0,4)
 
 | Offered req/s | VUs | achieved req/s | achieved / offered | µs CPU/req | p95 ms | p99 ms | result |
 |---|---|---|---|---|---|---|---|
@@ -180,7 +180,7 @@ round  variant        valid      req/s    us/req   p95 ms   p99 ms   tw/addr  re
     2  s1d            yes       7382.2      53.7    10.43    20.69     26861  pass
     3  skeleton       yes       7395.3      53.2     9.98    20.69     26867  pass
     3  s1d            yes         7392      53.5     9.98    21.32     26878  pass
-tw/addr: the most TIME_WAIT sockets on one of k6's source addresses when the run started (0 when the runner did not count)
+tw/addr: the most TIME_WAIT sockets on any one address, k6's or the idle client's, when the run started (- when the runner did not count)
 
 variants (us is the server's CPU per request over the plateau)
 variant         valid median us        min to max   p99 ms  paired differences us     median  verdict
@@ -202,7 +202,7 @@ runs, in the order they ran (one round runs every variant once, the first varian
 round  variant        valid      req/s    us/req   p95 ms   p99 ms   tw/addr  result
     1  skeleton       yes       7390.9      53.5     9.26    20.09     26870  pass
     1  s1d-every      yes       7373.6      77.2    10.59    21.32     27732  pass
-tw/addr: the most TIME_WAIT sockets on one of k6's source addresses when the run started (0 when the runner did not count)
+tw/addr: the most TIME_WAIT sockets on any one address, k6's or the idle client's, when the run started (- when the runner did not count)
 
 variants (us is the server's CPU per request over the plateau)
 variant         valid median us        min to max   p99 ms  paired differences us     median  verdict
@@ -224,7 +224,7 @@ runs, in the order they ran (one round runs every variant once, the first varian
 round  variant        valid      req/s    us/req   p95 ms   p99 ms   tw/addr  result
     1  skeleton       yes       7394.2      54.4     9.54    19.79         0  pass
     1  php-swoole-mattsplat yes       7384.7      57.7    11.41    21.64     27732  pass
-tw/addr: the most TIME_WAIT sockets on one of k6's source addresses when the run started (0 when the runner did not count)
+tw/addr: the most TIME_WAIT sockets on any one address, k6's or the idle client's, when the run started (- when the runner did not count)
 
 variants (us is the server's CPU per request over the plateau)
 variant         valid median us        min to max   p99 ms  paired differences us     median  verdict
@@ -246,7 +246,7 @@ runs, in the order they ran (one round runs every variant once, the first varian
 round  variant        valid      req/s    us/req   p95 ms   p99 ms   tw/addr  result
     1  skeleton       yes       7390.4      53.5    10.59    20.39     26872  pass
     1  php-swoole-tzimpel yes         7409      67.3     5.26     18.1     27732  pass
-tw/addr: the most TIME_WAIT sockets on one of k6's source addresses when the run started (0 when the runner did not count)
+tw/addr: the most TIME_WAIT sockets on any one address, k6's or the idle client's, when the run started (- when the runner did not count)
 
 variants (us is the server's CPU per request over the plateau)
 variant         valid median us        min to max   p99 ms  paired differences us     median  verdict
@@ -264,7 +264,7 @@ Rule: a variant is beyond the noise when it has at least 2 pairs, every paired d
 | skeleton of the mattsplat pair, 12,000 req/s | 27.94 | 1 run | 1.92 |
 | skeleton of the tzimpel pair, 12,000 req/s | 28.34 | 1 run | 1.89 |
 
-The Xeon's skeleton at 7,500 req/s: median **53.57 µs/req** over 6 counted runs (53.59, 53.82, 53.24, 53.54, 54.42, 53.45; min 53.24, max 54.42). The Mac's reference runs are at 12,000 req/s (the Xeon cannot hold that rate, so the rates differ); the Xeon's µs/req in the staircases (probes on) run from 53.7 to 55.4 over rates from 4,000 to 10,000 req/s, so the rate moves them by under 2 µs: the factor is read as rate-free here, not measured at one rate.
+The Xeon's skeleton at 7,500 req/s: median **53.57 µs/req** over 6 counted runs (53.59, 53.82, 53.24, 53.54, 54.42, 53.45; min 53.24, max 54.42). The Mac's reference runs are at 12,000 req/s (the Xeon cannot hold that rate, so the rates differ); the Xeon's µs/req in the staircases (probes on) run from 53.7 to 55.4 over offered rates from 4001 to 10003 req/s, a spread of 1.7 µs.
 
 Factor against the S1 series: 1.92. The bench estimate of the skeleton (prediction 18) was 88 µs/req on the bench's VM; the Xeon reads 53.6 µs/req, 60.9 % of it.
 
@@ -288,7 +288,7 @@ round  variant        valid      req/s    us/req   p95 ms   p99 ms   tw/addr  re
     2  s1d            yes       7457.4      33.1     0.68     3.74      9149  pass
     3  skeleton       yes       7460.3      33.3     0.78     3.85      9174  pass
     3  s1d            yes       7444.2        33     1.04     4.53      9144  pass
-tw/addr: the most TIME_WAIT sockets on one of k6's source addresses when the run started (0 when the runner did not count)
+tw/addr: the most TIME_WAIT sockets on any one address, k6's or the idle client's, when the run started (- when the runner did not count)
 
 variants (us is the server's CPU per request over the plateau)
 variant         valid median us        min to max   p99 ms  paired differences us     median  verdict
@@ -305,7 +305,7 @@ Rule: a variant is beyond the noise when it has at least 2 pairs, every paired d
 | median of the skeleton runs (Xeon: its 6 counted runs; Mac: its 3) | 53.57 | 33.34 | 1.61 |
 | the 3 skeleton runs of the pairs, by round | 53.59, 53.82, 53.24 | 34.48, 33.34, 33.27 | 1.55, 1.61, 1.6 |
 
-The 12,000-based factor above is 1.92 (the Mac's S1-a, 27.95 µs/req at 12,000 req/s); at 7,500 req/s the Mac's own skeleton costs 33.34 µs/req, 19.3 % more than at 12,000, so a rate-free factor was not right on the Mac side: the Mac's µs/req fall with the rate (impression: the CPU the loop spends on waking up for few requests counts for more per request), the Xeon's do not (53.7 to 55.4 over 4,000 to 10,000). Both factors are kept; the same-rate one is the measured one.
+The 12,000-based factor above is 1.92 (the Mac's S1-a, 27.95 µs/req at 12,000 req/s); at 7,500 req/s the Mac's own skeleton costs 33.34 µs/req, 19.3 % more than at 12,000. The Xeon's staircase steps cost 53.7 to 55.4 µs/req over offered rates from 4001 to 10003 req/s.
 
 ### The reconnect's price on the Xeon and S1-d's cost at the bench's sizes
 
@@ -313,29 +313,29 @@ S1-d with every request reconnecting: the server sent 533307 `Connection: close`
 
 One pair: the skeleton 53.54, S1-d with every request reconnecting 77.23 µs/req: **one reconnect costs 23.69 µs on the Xeon** (44.2 % of the skeleton's median). The Mac's was 6.62 µs (median of 5 pairs, S1 series): 3.58 times.
 
-S1-d with the soft limit L = 64,000 never closes an idle connection, so a share 1 - L / N of the requests reconnect (the S1 series' model). Added µs/req = share times the cost of one reconnect; the share of the skeleton is read against the Xeon's median above.
+S1-d with the soft limit L = 64000 never closes an idle connection, so a share 1 - L / N of the requests reconnect (the S1 series' model). Added µs/req = share times the cost of one reconnect; the share of the skeleton is read against the Xeon's median above.
 
 | Users N | share that reconnect | added µs/req on the Xeon | as a share of the Xeon skeleton | the Mac's added µs/req (6.62) | above 15 %? |
 |---|---|---|---|---|---|
 | 100000 | 36 % | 8.53 | 15.9 % | 2.38 | yes |
-| 150000 | 57.3 % | 13.58 | 25.4 % | 3.8 | yes |
+| 150000 | 57.3 % | 13.58 | 25.4 % | 3.79 | yes |
 | 200000 | 68 % | 16.11 | 30.1 % | 4.5 | yes |
 
 ### The Swoole entries on the Xeon against the Mac
 
-| Entry | Xeon µs/req (its pair) | its pair's skeleton on the Xeon | entry over skeleton | Mac µs/req (scope-13 pair) | Xeon over Mac | bench µs/req (leaderboard) | bench over Xeon |
+| Entry | Xeon µs/req (its pair) | its pair's skeleton on the Xeon | entry over skeleton | Mac µs/req (the Swoole folder's pair) | Xeon over Mac | bench µs/req (leaderboard) | bench over Xeon |
 |---|---|---|---|---|---|---|---|
 | php-swoole-mattsplat | 57.69 | 54.42 | 1.06 | 29.2 | 1.98 | 94 | 1.63 |
 | php-swoole-tzimpel | 67.27 | 53.45 | 1.26 | 32.77 | 2.05 | 101 | 1.5 |
 
-Through the Xeon, the leaderboard's 94 and 101 µs/req are 1.63 and 1.5 times the Xeon's entries (mean 1.57). The skeleton's Xeon median 53.57 µs/req times that mean is **83.9 µs/req on the bench** (87.3 and 80.4 with each factor alone), against 88 through the Mac (prediction 18, scope 13's factors).
+Through the Xeon, the leaderboard's 94 and 101 µs/req are 1.63 and 1.5 times the Xeon's entries (mean 1.57). The skeleton's Xeon median 53.57 µs/req times that mean is **83.9 µs/req on the bench** (87.3 and 80.4 with each factor alone), against 88 through the Mac (prediction 18, the Swoole entries' factors).
 <!-- END summarize -->
 
 ## The reading
 
 - **At the same rate the x86 factor is 1.61, not 1.92.** The Mac's skeleton at 7,500 req/s (the Xeon's rate, the same flags, `mac-same-rate/`) costs 33.34 µs/req (34.48, 33.34, 33.27, a spread of 1.2), against the
   Xeon's 53.57: **1.61** (1.55, 1.61 and 1.60 round by round). The 1.92 below divides by the Mac's 27.95 at 12,000 req/s, and the Mac's cost is not rate-free: it is 19.3 % higher at 7,500 req/s
-  (the Xeon's staircase steps are flat from 4,000 to 10,000 req/s, 53.7 to 55.4, which is what made a rate-free factor look right). Both factors are kept, the 12,000-based one and the same-rate one; the same-rate one is the measured
+  (the Xeon's staircase steps are flat from 4,000 to 10,000 req/s, 53.7 to 55.4, which is what made a rate-free factor look right; impression for the Mac's fall with the rate: the CPU the loop spends on waking up for few requests counts for more per request, not tested). Both factors are kept, the 12,000-based one and the same-rate one; the same-rate one is the measured
   one for a Xeon that cannot hold 12,000. S1-d, never firing, on the Mac at this rate: 33.68, 33.15 and 33.00 against the skeleton's 34.48, 33.34 and 33.27 (paired differences -0.80, -0.19, -0.27), 0 limit closes: no
   cost, as on the Xeon (no floor at this rate, so no verdict). The reconnect's 3.58 times (23.69 on the Xeon against the Mac's 6.62) compares a Xeon at 7,500 with a Mac at the S1 series' rate; it was not remeasured at the same rate
   (if the Mac's reconnect cost has the same 19 % rise at 7,500, the ratio would be nearer 3.0: an impression, not a run).
@@ -349,7 +349,7 @@ Through the Xeon, the leaderboard's 94 and 101 µs/req are 1.63 and 1.5 times th
   within 0.03 % of k6's requests plus the nominal warm-up). That is 44 % of a request. Why it is 3.6 times and the request itself 1.9 times was not looked at:
   most of a reconnect is the kernel's TCP work, so the instance's kernel (7.0) and its mitigations are the first suspects (impression).
 - **S1-d at the bench's sizes, with the Xeon's price** (the S1 series' model, a share `1 - 64,000 / N` of the requests reconnect): **+8.53 µs/req at 100,000
-  users (15.9 % of the Xeon's skeleton), +13.58 at 150,000 (25.4 %), +16.11 at 200,000 (30.1 %)**, against the Mac's +2.38, +3.8 and +4.5 (8.5, 13.6 and 16.1 %).
+  users (15.9 % of the Xeon's skeleton), +13.58 at 150,000 (25.4 %), +16.11 at 200,000 (30.1 %)**, against the Mac's +2.38, +3.79 and +4.5 (8.5, 13.6 and 16.1 %).
   The Mac's 13.6 % at 150,000 stayed under the 15 % line that builds S1-b; the Xeon's 25.4 % is over it. The line is crossed with margin: the reconnect would have
   to cost under 14.0 µs (instead of 23.69) to give 15 % at 150,000. It is one pair, though, and the model is the S1 series', not a run at 150,000 users.
 - **The Swoole entries on the Xeon:** php-swoole-mattsplat 57.69 µs/req against its pair's skeleton 54.42 (+3.3, +6 %; the Mac's +1.3, +4.5 %); php-swoole-tzimpel
@@ -364,8 +364,8 @@ Through the Xeon, the leaderboard's 94 and 101 µs/req are 1.63 and 1.5 times th
 
 | # | Verdict | Measured |
 |---|---|---|
-| 13 | **Half.** | Held on the 12,000-based factor (1.92, 1.89 to 1.92 by Mac reference, inside 1.8 to 3). Missed below at the same rate: 1.61 (the Xeon's 53.57 over the Mac's 33.34 at 7,500 req/s), under 1.8. |
-| 17 | **Half, the factor now below its range.** | The factor part, 1.7 to 2.7: 1.92 held on the 12,000 basis, 1.61 missed below at the same rate. The bench estimate of 45 to 75 µs/req stays missed above (scope 13 already had 88; the Xeon route gives 83.9). |
+| 13 | **Missed, below (1.61).** | The same-rate factor, the measured one, is 1.61 (the Xeon's 53.57 over the Mac's 33.34 at 7,500 req/s), under 1.8 to 3. Note: the 12,000-based factor, 1.92 (1.89 to 1.92 by Mac reference), is inside the range, but it assumed a Mac cost that does not move with the rate, which was wrong. |
+| 17 | **Missed, below on the factor (1.61); the bench estimate missed above.** | The factor part, 1.7 to 2.7: 1.61 at the same rate, under it (note: 1.92 on the 12,000 basis would sit inside, on the wrong rate-free assumption). The bench estimate of 45 to 75 µs/req stays missed above (scope 13 already had 88; the Xeon route gives 83.9). |
 | 18 | **Missed, below.** | 1.92 times the Mac at 12,000 req/s and 1.61 at the same rate, not 2.9 to 3.4; the skeleton 53.57 µs/req on the Xeon, not about 88 (that is the bench's VM, 1.5 to 1.6 times slower than this core, not the Xeon). |
 
 ## Follow-ups

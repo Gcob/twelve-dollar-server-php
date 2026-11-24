@@ -85,7 +85,7 @@ runs, in the order they ran (one round runs every variant once, the first varian
 round  variant        valid      req/s    us/req   p95 ms   p99 ms   tw/addr  result
     1  s1a            yes      11917.3      27.9     1.88     5.75         0  pass
     1  php-swoole-mattsplat yes      11912.7      29.2        2     5.42         0  pass
-tw/addr: the most TIME_WAIT sockets on one of k6's source addresses when the run started (0 when the runner did not count)
+tw/addr: the most TIME_WAIT sockets on any one address, k6's or the idle client's, when the run started (- when the runner did not count)
 
 variants (us is the server's CPU per request over the plateau)
 variant         valid median us        min to max   p99 ms  paired differences us     median  verdict
@@ -107,7 +107,7 @@ runs, in the order they ran (one round runs every variant once, the first varian
 round  variant        valid      req/s    us/req   p95 ms   p99 ms   tw/addr  result
     1  s1a            yes      11906.3      28.3     2.15     6.58         0  pass
     1  php-swoole-tzimpel yes      11927.3      32.8     1.01     4.47         0  pass
-tw/addr: the most TIME_WAIT sockets on one of k6's source addresses when the run started (0 when the runner did not count)
+tw/addr: the most TIME_WAIT sockets on any one address, k6's or the idle client's, when the run started (- when the runner did not count)
 
 variants (us is the server's CPU per request over the plateau)
 variant         valid median us        min to max   p99 ms  paired differences us     median  verdict

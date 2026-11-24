@@ -7,6 +7,11 @@ cd "$(dirname "$0")"
 LAB="$(cd ../.. && pwd)"
 S1=../2026-11-23-s1-fd-wall
 SW=../2026-11-23-swoole-entries
+# Two numbers no file of this folder or of the others holds, so they are written here once: the soft limit L of the S1 series' model (its
+# summarize.sh states it as text), and the leaderboard's µs per request for the two Swoole entries (the challenge repository's LEADERBOARD.md).
+SOFT_LIMIT=64000
+BENCH_MATT=94
+BENCH_TZIM=101
 
 PRELUDE='
 def med: sort | if length == 0 then null elif length % 2 == 1 then .[length / 2 | floor] else (.[length / 2 - 1] + .[length / 2]) / 2 end;
@@ -19,10 +24,13 @@ def ratio: .results.steps[0] | .achieved_rps / .offered_rps * 100;
 '
 runs_of() { jq -s 'map(select(type == "object" and has("steplab")))' "$1"/*.json; }
 
+# The Mac's reconnect: the median paired difference of the S1 series' S1-d against its S1-a at 12,000 req/s, and the pairs it rests on.
+MAC_RECON="$(jq '.variants[] | select(.variant == "s1d") | {cost: .median_difference_us, pairs: (.pairs | length)}' "$S1/s1-12000/summary.json")"
+
 echo "### The staircases: the skeleton (PHP 8.5, telemetry on, probes on), \`s = 0.02\`, 60,000 idle, 60 s steps, the 97 % rule"
 for f in staircase/coarse.json staircase/fine.json; do
   echo
-  echo "**$(basename "$f" .json)** (valid: $(jq -r '.valid' "$f"), other containers: $(jq -r '.other_containers.count' "$f"), k6 connection errors: $(jq -r '.k6_connection_errors' "$f"), CPU model and layout: $(jq -r '.host | "\(.cpu_layout), server cpuset \(.cpuset_server), idle sibling \(.cpuset_idle_sibling), k6 cpuset \(.cpuset_k6), probe cpuset \(.cpuset_probe)"' "$f"))"
+  echo "**$(basename "$f" .json)** (valid: $(jq -r '.valid' "$f"), other containers: $(jq -r '.other_containers.count' "$f"), k6 connection errors: $(jq -r '.k6_connection_errors' "$f"), CPU layout: $(jq -r '.host | "\(.cpu_layout), server cpuset \(.cpuset_server), idle sibling \(.cpuset_idle_sibling), k6 cpuset \(.cpuset_k6), probe cpuset \(.cpuset_probe)"' "$f"))"
   echo
   echo "| Offered req/s | VUs | achieved req/s | achieved / offered | µs CPU/req | p95 ms | p99 ms | result |"
   echo "|---|---|---|---|---|---|---|---|"
@@ -55,6 +63,14 @@ XEON="$(jq -s "$PRELUDE"'map(.[] | select(counted and .steplab.variant == "skele
 MAC_S1A="$(runs_of "$S1/s1-12000" | jq "$PRELUDE"'map(select(counted and .steplab.variant == "s1a") | us)')"
 MAC_MATT="$(runs_of "$SW/mattsplat-pair" | jq "$PRELUDE"'map(select(counted and .steplab.variant == "s1a") | us)')"
 MAC_TZIM="$(runs_of "$SW/tzimpel-pair" | jq "$PRELUDE"'map(select(counted and .steplab.variant == "s1a") | us)')"
+MAC_MATT_ENTRY="$(runs_of "$SW/mattsplat-pair" | jq "$PRELUDE"'map(select(counted and .steplab.variant == "php-swoole-mattsplat") | us)[0]')"
+MAC_TZIM_ENTRY="$(runs_of "$SW/tzimpel-pair" | jq "$PRELUDE"'map(select(counted and .steplab.variant == "php-swoole-tzimpel") | us)[0]')"
+# The skeleton's bench estimate through the Mac (the Swoole folder's: the S1 series' S1-a times the mean bench-over-Mac factor of the two
+# entries), rounded to a whole number as that folder prints it.
+BENCH_EST="$(jq -n "$PRELUDE"'($s1a | med) * ((($bm / $mm) + ($bt / $mt)) / 2) | round' --argjson s1a "$MAC_S1A" --argjson mm "$MAC_MATT_ENTRY" --argjson mt "$MAC_TZIM_ENTRY" \
+  --argjson bm "$BENCH_MATT" --argjson bt "$BENCH_TZIM")"
+STAIR_US="$(jq -s 'map(.results.steps[].cpu_usec_per_request)' staircase/coarse.json staircase/fine.json)"
+STAIR_RATES="$(jq -s 'map(.results.steps[].offered_rps | round)' staircase/coarse.json staircase/fine.json)"
 
 echo
 echo "### The x86 factor: the Xeon's skeleton over the Mac's (µs of server CPU per request)"
@@ -67,11 +83,11 @@ jq -rn "$PRELUDE"'
   row("skeleton of the mattsplat pair, 12,000 req/s"; $matt; "1 run"),
   row("skeleton of the tzimpel pair, 12,000 req/s"; $tzim; "1 run"),
   "",
-  "The Xeon'"'"'s skeleton at 7,500 req/s: median **\($xeon | med | r2) µs/req** over \($xeon | length) counted runs (\($xeon | map(r2) | join(", ")); min \($xeon | min | r2), max \($xeon | max | r2)). The Mac'"'"'s reference runs are at 12,000 req/s (the Xeon cannot hold that rate, so the rates differ); the Xeon'"'"'s µs/req in the staircases (probes on) run from \($stair | min | r1) to \($stair | max | r1) over rates from 4,000 to 10,000 req/s, so the rate moves them by under 2 µs: the factor is read as rate-free here, not measured at one rate.",
+  "The Xeon'"'"'s skeleton at 7,500 req/s: median **\($xeon | med | r2) µs/req** over \($xeon | length) counted runs (\($xeon | map(r2) | join(", ")); min \($xeon | min | r2), max \($xeon | max | r2)). The Mac'"'"'s reference runs are at 12,000 req/s (the Xeon cannot hold that rate, so the rates differ); the Xeon'"'"'s µs/req in the staircases (probes on) run from \($stair | min | r1) to \($stair | max | r1) over offered rates from \($rates | min) to \($rates | max) req/s, a spread of \($stair | max - min | r1) µs.",
   "",
-  "Factor against the S1 series: \((($xeon | med) / ($s1a | med)) | r2). The bench estimate of the skeleton (prediction 18) was 88 µs/req on the bench'"'"'s VM; the Xeon reads \($xeon | med | r1) µs/req, \((($xeon | med) / 88 * 100) | r1) % of it."' \
+  "Factor against the S1 series: \((($xeon | med) / ($s1a | med)) | r2). The bench estimate of the skeleton (prediction 18) was \($est) µs/req on the bench'"'"'s VM; the Xeon reads \($xeon | med | r1) µs/req, \((($xeon | med) / $est * 100) | r1) % of it."' \
   --argjson xeon "$XEON" --argjson s1a "$MAC_S1A" --argjson matt "$MAC_MATT" --argjson tzim "$MAC_TZIM" \
-  --argjson stair "$(jq -s 'map(.results.steps[].cpu_usec_per_request)' staircase/coarse.json staircase/fine.json)"
+  --argjson stair "$STAIR_US" --argjson rates "$STAIR_RATES" --argjson est "$BENCH_EST"
 
 # The Mac at the Xeon's rate (7,500 req/s, the same flags): the same-rate factor, next to the 12,000-based one above.
 if [ -d mac-same-rate ]; then
@@ -84,11 +100,12 @@ if [ -d mac-same-rate ]; then
     ($macpairs | pc) as $mac | ($xeonpairs | pc) as $x
     | "| Reading | Xeon µs/req | Mac µs/req | factor |",
       "|---|---|---|---|",
-      "| median of the skeleton runs (Xeon: its 6 counted runs; Mac: its \($mac | length)) | \($xeon | med | r2) | \($mac | med | r2) | \(($xeon | med) / ($mac | med) | r2) |",
+      "| median of the skeleton runs (Xeon: its \($xeon | length) counted runs; Mac: its \($mac | length)) | \($xeon | med | r2) | \($mac | med | r2) | \(($xeon | med) / ($mac | med) | r2) |",
       "| the 3 skeleton runs of the pairs, by round | \($x | map(r2) | join(", ")) | \($mac | map(r2) | join(", ")) | \([range(0; ($x | length)) as $i | $x[$i] / $mac[$i] | r2] | join(", ")) |",
       "",
-      "The 12,000-based factor above is \(($xeon | med) / ($s1a | med) | r2) (the Mac'"'"'s S1-a, \($s1a | med | r2) µs/req at 12,000 req/s); at 7,500 req/s the Mac'"'"'s own skeleton costs \($mac | med | r2) µs/req, \((($mac | med) / ($s1a | med) - 1) * 100 | r1) % more than at 12,000, so a rate-free factor was not right on the Mac side: the Mac'"'"'s µs/req fall with the rate (impression: the CPU the loop spends on waking up for few requests counts for more per request), the Xeon'"'"'s do not (53.7 to 55.4 over 4,000 to 10,000). Both factors are kept; the same-rate one is the measured one."' \
-    --argjson xeon "$XEON" --argjson s1a "$MAC_S1A" --argjson macpairs "$(runs_of mac-same-rate)" --argjson xeonpairs "$(runs_of pairs)"
+      "The 12,000-based factor above is \(($xeon | med) / ($s1a | med) | r2) (the Mac'"'"'s S1-a, \($s1a | med | r2) µs/req at 12,000 req/s); at 7,500 req/s the Mac'"'"'s own skeleton costs \($mac | med | r2) µs/req, \((($mac | med) / ($s1a | med) - 1) * 100 | r1) % more than at 12,000. The Xeon'"'"'s staircase steps cost \($stair | min | r1) to \($stair | max | r1) µs/req over offered rates from \($rates | min) to \($rates | max) req/s."' \
+    --argjson xeon "$XEON" --argjson s1a "$MAC_S1A" --argjson macpairs "$(runs_of mac-same-rate)" --argjson xeonpairs "$(runs_of pairs)" \
+    --argjson stair "$STAIR_US" --argjson rates "$STAIR_RATES"
 fi
 
 echo
@@ -100,31 +117,29 @@ echo
 RECON="$(runs_of reconnect | jq "$PRELUDE"'map(select(counted)) | ((map(select(.steplab.variant == "skeleton") | us)[0]) as $a | (map(select(.steplab.variant == "s1d-every") | us)[0]) as $b | {skeleton: $a, every: $b, cost: ($b - $a)})')"
 jq -rn "$PRELUDE"'
   ($recon.cost) as $cost | ($xeon | med) as $skel
-  | "One pair: the skeleton \($recon.skeleton | r2), S1-d with every request reconnecting \($recon.every | r2) µs/req: **one reconnect costs \($cost | r2) µs on the Xeon** (\($cost / $skel * 100 | r1) % of the skeleton'"'"'s median). The Mac'"'"'s was 6.62 µs (median of 5 pairs, S1 series): \(($cost / 6.62) | r2) times.",
+  | "One pair: the skeleton \($recon.skeleton | r2), S1-d with every request reconnecting \($recon.every | r2) µs/req: **one reconnect costs \($cost | r2) µs on the Xeon** (\($cost / $skel * 100 | r1) % of the skeleton'"'"'s median). The Mac'"'"'s was \($mac.cost | r2) µs (median of \($mac.pairs) pairs, S1 series): \(($cost / $mac.cost) | r2) times.",
   "",
-  "S1-d with the soft limit L = 64,000 never closes an idle connection, so a share 1 - L / N of the requests reconnect (the S1 series'"'"' model). Added µs/req = share times the cost of one reconnect; the share of the skeleton is read against the Xeon'"'"'s median above.",
+  "S1-d with the soft limit L = \($limit) never closes an idle connection, so a share 1 - L / N of the requests reconnect (the S1 series'"'"' model). Added µs/req = share times the cost of one reconnect; the share of the skeleton is read against the Xeon'"'"'s median above.",
   "",
-  "| Users N | share that reconnect | added µs/req on the Xeon | as a share of the Xeon skeleton | the Mac'"'"'s added µs/req (6.62) | above 15 %? |",
+  "| Users N | share that reconnect | added µs/req on the Xeon | as a share of the Xeon skeleton | the Mac'"'"'s added µs/req (\($mac.cost | r2)) | above 15 %? |",
   "|---|---|---|---|---|---|",
-  ([100000, 150000, 200000][] | . as $n | (1 - 64000 / $n) as $sh
-    | "| \($n) | \($sh * 100 | r1) % | \($sh * $cost | r2) | \($sh * $cost / $skel * 100 | r1) % | \($sh * 6.62 | r2) | \(if $sh * $cost / $skel > 0.15 then "yes" else "no" end) |")' \
-  --argjson recon "$RECON" --argjson xeon "$XEON"
+  ([100000, 150000, 200000][] | . as $n | (1 - $limit / $n) as $sh
+    | "| \($n) | \($sh * 100 | r1) % | \($sh * $cost | r2) | \($sh * $cost / $skel * 100 | r1) % | \($sh * $mac.cost | r2) | \(if $sh * $cost / $skel > 0.15 then "yes" else "no" end) |")' \
+  --argjson recon "$RECON" --argjson xeon "$XEON" --argjson mac "$MAC_RECON" --argjson limit "$SOFT_LIMIT"
 
 echo
 echo "### The Swoole entries on the Xeon against the Mac"
 echo
 {
-  runs_of mattsplat-pair | jq -r "$PRELUDE"'map(select(counted)) | "php-swoole-mattsplat 94 \(map(select(.steplab.variant == "skeleton") | us)[0]) \(map(select(.steplab.variant == "php-swoole-mattsplat") | us)[0])"'
-  runs_of tzimpel-pair | jq -r "$PRELUDE"'map(select(counted)) | "php-swoole-tzimpel 101 \(map(select(.steplab.variant == "php-swoole-tzimpel") | us)[0]) \(map(select(.steplab.variant == "skeleton") | us)[0])"' | awk '{print $1, $2, $4, $3}'
+  runs_of mattsplat-pair | jq -r --argjson bench "$BENCH_MATT" "$PRELUDE"'map(select(counted)) | "php-swoole-mattsplat \($bench) \(map(select(.steplab.variant == "skeleton") | us)[0]) \(map(select(.steplab.variant == "php-swoole-mattsplat") | us)[0])"'
+  runs_of tzimpel-pair | jq -r --argjson bench "$BENCH_TZIM" "$PRELUDE"'map(select(counted)) | "php-swoole-tzimpel \($bench) \(map(select(.steplab.variant == "php-swoole-tzimpel") | us)[0]) \(map(select(.steplab.variant == "skeleton") | us)[0])"' | awk '{print $1, $2, $4, $3}'
 } | jq -Rrn "$PRELUDE"'
   [inputs | split(" ") | {name: .[0], bench: (.[1] | tonumber), skeleton: (.[2] | tonumber), entry: (.[3] | tonumber)}] as $e
-  | "| Entry | Xeon µs/req (its pair) | its pair'"'"'s skeleton on the Xeon | entry over skeleton | Mac µs/req (scope-13 pair) | Xeon over Mac | bench µs/req (leaderboard) | bench over Xeon |",
+  | "| Entry | Xeon µs/req (its pair) | its pair'"'"'s skeleton on the Xeon | entry over skeleton | Mac µs/req (the Swoole folder'"'"'s pair) | Xeon over Mac | bench µs/req (leaderboard) | bench over Xeon |",
     "|---|---|---|---|---|---|---|---|",
     ($e[] | (if .name == "php-swoole-mattsplat" then $mm else $mt end) as $mac
       | "| \(.name) | \(.entry | r2) | \(.skeleton | r2) | \(.entry / .skeleton | r2) | \($mac | r2) | \(.entry / $mac | r2) | \(.bench) | \(.bench / .entry | r2) |"),
     "",
     ($e | map(.bench / .entry)) as $f | (($f | add) / ($f | length)) as $mean
-    | "Through the Xeon, the leaderboard'"'"'s 94 and 101 µs/req are \($f | map(r2) | join(" and ")) times the Xeon'"'"'s entries (mean \($mean | r2)). The skeleton'"'"'s Xeon median \($xeon | med | r2) µs/req times that mean is **\($xeon | med | . * $mean | r1) µs/req on the bench** (\(($xeon | med) as $m | $f | map($m * . | r1) | join(" and ")) with each factor alone), against 88 through the Mac (prediction 18, scope 13'"'"'s factors)."' \
-  --argjson xeon "$XEON" \
-  --argjson mm "$(runs_of "$SW/mattsplat-pair" | jq "$PRELUDE"'map(select(counted and .steplab.variant == "php-swoole-mattsplat") | us)[0]')" \
-  --argjson mt "$(runs_of "$SW/tzimpel-pair" | jq "$PRELUDE"'map(select(counted and .steplab.variant == "php-swoole-tzimpel") | us)[0]')"
+    | "Through the Xeon, the leaderboard'"'"'s \($e | map(.bench) | join(" and ")) µs/req are \($f | map(r2) | join(" and ")) times the Xeon'"'"'s entries (mean \($mean | r2)). The skeleton'"'"'s Xeon median \($xeon | med | r2) µs/req times that mean is **\($xeon | med | . * $mean | r1) µs/req on the bench** (\(($xeon | med) as $m | $f | map($m * . | r1) | join(" and ")) with each factor alone), against \($est) through the Mac (prediction 18, the Swoole entries'"'"' factors)."' \
+  --argjson xeon "$XEON" --argjson est "$BENCH_EST" --argjson mm "$MAC_MATT_ENTRY" --argjson mt "$MAC_TZIM_ENTRY"

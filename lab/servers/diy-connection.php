@@ -172,7 +172,8 @@ final class DiyConnection
         if (is_resource($this->stream)) {
             // Why: a close with bytes the server never read (a request the client sent behind the one answered) makes the kernel send a
             // reset, and a client that reads after it gets an error instead of the end of the response. The FIN of a shutdown goes first,
-            // so the client reads the whole response and then the end of the stream.
+            // so a client that reads a small response on loopback (what the test covers) gets all of it, then the end of the stream. The reset
+            // can still drop bytes left in the send queue: a large response to a client with a full window would need a lingering close.
             if ($this->limitClosed) {
                 @stream_socket_shutdown($this->stream, STREAM_SHUT_WR);
             }

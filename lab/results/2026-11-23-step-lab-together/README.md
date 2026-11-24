@@ -137,7 +137,7 @@ runs, in the order they ran (one round runs every variant once, the first varian
 round  variant        valid      req/s    us/req   p95 ms   p99 ms   tw/addr  result
     1  ref            yes      23296.4      26.7    13.04    29.58         0  pass
     1  cache-256m-exclusive yes      23329.5      24.8    12.29    30.03     10036  pass
-tw/addr: the most TIME_WAIT sockets on one of k6's source addresses when the run started (0 when the runner did not count)
+tw/addr: the most TIME_WAIT sockets on any one address, k6's or the idle client's, when the run started (- when the runner did not count)
 
 variants (us is the server's CPU per request over the plateau)
 variant         valid median us        min to max   p99 ms  paired differences us     median  verdict

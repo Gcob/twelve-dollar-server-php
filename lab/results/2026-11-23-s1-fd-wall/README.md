@@ -225,7 +225,7 @@ round  variant        valid      req/s    us/req   p95 ms   p99 ms   tw/addr  re
     4  s1d            yes      11893.3      34.6     3.08      6.2         0  pass
     5  s1a            yes      11912.3      27.9     1.86     5.58         0  pass
     5  s1d            yes      11902.7      34.3     3.08     6.29         0  pass
-tw/addr: the most TIME_WAIT sockets on one of k6's source addresses when the run started (0 when the runner did not count)
+tw/addr: the most TIME_WAIT sockets on any one address, k6's or the idle client's, when the run started (- when the runner did not count)
 
 variants (us is the server's CPU per request over the plateau)
 variant         valid median us        min to max   p99 ms  paired differences us     median  verdict

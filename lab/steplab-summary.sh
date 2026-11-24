@@ -55,7 +55,7 @@ jq -r "$fmt"'.runs[] | [.round, .variant, (if .valid then "yes" else "no" end), 
   while IFS=$'\t' read -r round variant valid rps us p95 p99 tw result; do
     printf '%5s  %-14s %-5s %10s %9s %8s %8s %9s  %s\n' "$round" "$variant" "$valid" "$rps" "$us" "$p95" "$p99" "$tw" "$result"
   done
-echo "tw/addr: the most TIME_WAIT sockets on one of k6's source addresses when the run started (0 when the runner did not count)"
+echo "tw/addr: the most TIME_WAIT sockets on any one address, k6's or the idle client's, when the run started (- when the runner did not count)"
 echo
 echo "variants (us is the server's CPU per request over the plateau)"
 printf '%-14s %6s %9s %17s %8s  %-22s %9s  %s\n' variant valid "median us" "min to max" "p99 ms" "paired differences us" "median" verdict

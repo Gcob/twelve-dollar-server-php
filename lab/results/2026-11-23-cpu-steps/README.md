@@ -126,7 +126,7 @@ Every series starts with `docker ps` showing no container: the VM is quiet. No i
   that rule, and the same cut here would leave pair 1 alone. The table says which runs failed.
 - **Scope 11's staircase and holds ran without `mmap-off`** (and are not rerun): they use the skeleton's pragmas, so the held rate of 22,000 req/s of that folder is the skeleton's, not S6's.
 - **Every run counted below:** `valid: true`, `other_containers: 0`, 60,000 idle held and none closed by the server.
-- **Scratch paths** (`<tmp>`) were scrubbed from the runs' `command` fields and tables, as in the earlier folders; the syscall counts carry no `other_containers`
+- **Scratch paths** (`<tmp>`) replace the runner's temp folder in the runs' `command` fields and `.txt` logs, as in the earlier folders (the step lab writes `<tmp>` itself now; the files of rounds 2 and 3 of `s6-mmap-off/` and its `pair-2-not-counted/` were scrubbed after the first push); the syscall counts carry no `other_containers`
   field (`docker ps` was empty before each).
 
 ## Results
@@ -168,7 +168,7 @@ round  variant        valid      req/s    us/req   p95 ms   p99 ms   tw/addr  re
     2  mmap-off       yes      23261.3      25.6    13.84    33.82     10036  FAIL: achieved below 97 % of offered
     3  ref            yes      23191.9      27.2    15.14    33.32      7035  FAIL: achieved below 97 % of offered
     3  mmap-off       yes      23310.3        25    12.47     31.4      7159  pass
-tw/addr: the most TIME_WAIT sockets on one of k6's source addresses when the run started (0 when the runner did not count)
+tw/addr: the most TIME_WAIT sockets on any one address, k6's or the idle client's, when the run started (- when the runner did not count)
 
 variants (us is the server's CPU per request over the plateau)
 variant         valid median us        min to max   p99 ms  paired differences us     median  verdict
@@ -185,7 +185,7 @@ runs, in the order they ran (one round runs every variant once, the first varian
 round  variant        valid      req/s    us/req   p95 ms   p99 ms   tw/addr  result
     1  ref            yes      23386.9      27.1    10.75    26.65      7063  pass
     1  cache-256m     yes      23452.9      24.8     8.35    22.29      7143  pass
-tw/addr: the most TIME_WAIT sockets on one of k6's source addresses when the run started (0 when the runner did not count)
+tw/addr: the most TIME_WAIT sockets on any one address, k6's or the idle client's, when the run started (- when the runner did not count)
 
 variants (us is the server's CPU per request over the plateau)
 variant         valid median us        min to max   p99 ms  paired differences us     median  verdict
@@ -202,7 +202,7 @@ runs, in the order they ran (one round runs every variant once, the first varian
 round  variant        valid      req/s    us/req   p95 ms   p99 ms   tw/addr  result
     1  ref            yes      23373.3      26.7    11.41    27.46      7187  pass
     1  exclusive      yes      23485.3      25.9     9.12    19.79      7153  pass
-tw/addr: the most TIME_WAIT sockets on one of k6's source addresses when the run started (0 when the runner did not count)
+tw/addr: the most TIME_WAIT sockets on any one address, k6's or the idle client's, when the run started (- when the runner did not count)
 
 variants (us is the server's CPU per request over the plateau)
 variant         valid median us        min to max   p99 ms  paired differences us     median  verdict
@@ -219,7 +219,7 @@ runs, in the order they ran (one round runs every variant once, the first varian
 round  variant        valid      req/s    us/req   p95 ms   p99 ms   tw/addr  result
     1  ref            yes      23459.3      26.5     8.73     19.5      7163  pass
     1  group-commit   yes      23438.6      27.7     9.83    25.11      7132  pass
-tw/addr: the most TIME_WAIT sockets on one of k6's source addresses when the run started (0 when the runner did not count)
+tw/addr: the most TIME_WAIT sockets on any one address, k6's or the idle client's, when the run started (- when the runner did not count)
 
 variants (us is the server's CPU per request over the plateau)
 variant         valid median us        min to max   p99 ms  paired differences us     median  verdict
@@ -397,8 +397,9 @@ and the WAL restarts. At that rate a 5-minute run would write about 8 GB. `wal_c
   77 % of 2.57 (not beyond 2.57: the step lab's own verdict, with the 2.57 floor, is "within the noise"). Every `mmap-off` run (25.0 to 25.6) is under every reference run (26.4 to 27.6), and the p99s
   do not separate them (references 21.6, 53.7, 33.3 ms; `mmap-off` 24.0, 33.8, 31.4). What weakens it: three of the six runs failed the 97 % rule (the VM's host was not as quiet as the A/A series'
   one: the references drifted up from 26.4 to 27.6 across the three rounds while `mmap-off` stayed flat), so only pair 1 has two passing runs, and on that pair alone the difference is -1.31
-  (4.9 times 0.27). The rule written in the question (all three counted pairs lower and the median beating the 0.27 floor) is met on the three valid pairs; the 2.57 floor is not. **S6 takes `mmap-off` under that rule**
-  (the choice below); against the 2.57 floor it would not be.
+  (4.9 times 0.27). **S6 takes `mmap-off`, and the reason is the data, not a floor.** The 6 runs of the three pairs are ordered: each of the 3 `mmap-off` runs (25.0 to 25.6) is under each of the 3 reference runs (26.4 to 27.6), and all three pairs are lower.
+  It is one pragma, and it reverts in one line. The 0.27 floor is about the size of the order bias of the reference running first in a round (the four A/A pairs at 24,000 that passed the 97 % rule are all negative:
+  -0.26, -0.16, -0.27, -0.06), and the `mmap-off` gap, -1.31 to -2.21 (median -1.98), is 5 to 8 times that. The step lab's own verdict stays "within the noise" against the 2.57 floor, and the choice does not say otherwise.
 - **S6, the pragmas:** both presets are lower by the sign the micro bench gave them (-3.2 % and -3.0 % of a feed), and by more at the macro (-5 % and -8 % of a request),
   but the micro's 3 % is about 1 µs of a feed (31 µs for the query and the JSON), and a feed is 47 % of the requests, so it is worth 0.4 to 0.5 µs of an average request; the macro's 1.3 and 2.2 are
   three to five times that. The cache preset is
@@ -429,11 +430,11 @@ and the WAL restarts. At that rate a 5-minute run would write about 8 GB. `wal_c
 
 | Step | Chosen | Why |
 |---|---|---|
-| S6 | the skeleton's feed query, with **`APP_PRAGMAS=mmap-off`: chosen (D66)** | three counted pairs, all lower (-1.31, -1.98, -2.21), median -1.98 µs: beats the 0.27 floor of the A/A pairs that passed the 97 % rule, not the 2.57 floor of all five; three of its six runs failed the 97 % rule (see "The reading"). cache-256m -2.22 stays one pair; the SQL and fetch variants were slower in the micro bench and were not run |
+| S6 | the skeleton's feed query, with **`APP_PRAGMAS=mmap-off`: chosen** | the 6 runs of the three pairs are ordered (3 `mmap-off` under 3 references), all three pairs lower (-1.31, -1.98, -2.21), median -1.98 µs, 5 to 8 times the 0.27 order bias of a reference that runs first; one pragma, reverted in one line. Not beyond the 2.57 floor of all five A/A pairs, and three of the six runs failed the 97 % rule (see "The reading"). cache-256m -2.22 stays one pair; the SQL and fetch variants were slower in the micro bench and were not run |
 | S8 | the skeleton's default locking | `exclusive` -0.85 µs, under the floor and rules out the checkpointer in a second process, the `mxFrame` sampler and any outside connection; it is allowed on the rules and cheap, so it stays a candidate for the combined run |
 | S9 | the skeleton's write per request | group commit +1.18 µs and a p99 inside the noise, with 1.45 writes per commit at this rate; the checkpointer fails its bound (the WAL never restarts) |
 
 A variant within the noise is not chosen unless it is simpler, and none is simpler than the code it replaces. The three small negatives (cache-256m, mmap-off, exclusive) are lower by
 2.2, 1.3 and 0.85 µs and act on different costs (the page cache, the lock calls); together they could pass the floor that none passes alone, which is a question for the run that puts variants together.
 
-`mmap-off` is the exception, by the rule written for it before its extra pairs ran: chosen if all three counted pairs are lower and their median beats the 0.27 floor. It is not more code: it sets `mmap_size` to 0, so reads go through `pread` and the 64 MiB page cache instead of a 256 MiB map. Scope 11's combined staircase ran without it; it is not rerun, so the held rate of that folder (22,000 req/s) is the skeleton's with S1-d, without S6's pragma.
+`mmap-off` is the exception: each of its 3 runs is under each of the 3 reference runs, and the gap is 5 to 8 times the order bias of the reference running first. It is not more code: it sets `mmap_size` to 0, so reads go through `pread` and the 64 MiB page cache instead of a 256 MiB map. Scope 11's combined staircase ran without it; it is not rerun, so the held rate of that folder (22,000 req/s) is the skeleton's with S1-d, without S6's pragma.

@@ -916,8 +916,10 @@ connections come and go as each one sends a request, and the idle ones the run h
 **Closing cleanly.** The server shuts down its sending side before it closes a connection that the limit ended. Why: a `close()` while the
 receive buffer holds bytes nobody read (the client sent its next request behind the one answered) makes Linux send a reset, and a client
 that reads after it gets `ECONNRESET` where it should get the end of the response (`TCPAbortOnClose` counts it in `/proc/net/netstat`);
-the FIN of the shutdown goes first, so the client reads the whole response and then the end of the stream. `diy-soft-limit-test.php`
-tests it on a TCP pair with 150 KB left unread.
+the FIN of the shutdown goes first, so a client that reads a small response on loopback gets the whole of it and then the end of the stream.
+`diy-soft-limit-test.php` tests it that way, on a TCP pair with 150 KB left unread. It is not a lingering close: a `close()` with unread
+bytes still sends a reset, and that reset drops what is still in the server's send queue, so a large response to a client whose window is
+full could be cut short. The lab's responses are small. Past the lab, shut down, read until the end of the stream or a short timeout, then close.
 
 **What it counts** (`connections` in the telemetry line, `APP_TELEMETRY=1`): `open_peak` (the most client connections open at once in
 that second), `limit_closes` (the `Connection: close` responses the limit caused: a client that asked for the close is not one) and
@@ -1052,6 +1054,13 @@ arguments to that variant's `lab/realistic.sh` call, split on spaces and given l
 extension and `php.ini` (`--variant-args "other=--image 8.3-apt --ext swoole"`). **The first variant is the reference.** Runs are **interleaved by round**: round 1 runs every variant once in the given order, round 2 again, and so on for
 `--pairs` rounds, so a slow drift of the VM hits every variant alike.
 
+**The order inside a round is not rotated.** The reference runs first in every round. The A/A data shows an order effect of about -0.2 µs/req:
+the four A/A pairs at 24,000 req/s that passed the 97 % rule are all negative (-0.26, -0.16, -0.27, -0.06), the second run of an identical pair costing
+a little less, and the Mac's same-rate S1-d pair that never fires is lower in 3 of 3 rounds. The order stays for this phase: the A/A floor
+(0.27 µs/req, from those four pairs) absorbs an effect of that size, so a variant that clears the floor clears it with the bias in. Alternating the
+order of each round (ABBA: reference, variant, then variant, reference) cancels a steady bias and is the fix for a later phase; it needs no change to the
+verdict, only to the order the runner loops in.
+
 **The judgment** (`lab/steplab-verdict.jq`, a pure function of the run JSON files): the number of a run is the server's CPU per
 request over the plateau (what the aggregator reads from the cgroup). A run counts when its JSON is valid. A variant's **paired
 differences** are its number minus the reference's of the same round; a round where either run is invalid has no pair. A variant is
@@ -1079,11 +1088,11 @@ connection keeps its port for 60 s and the VM's ephemeral ports are 55000 to 655
 
 A count that does not drop within `--time-wait-wait` seconds (default 150) is a harness failure. The counts before and after
 each run (per address that holds any, the busiest, k6's and the idle client's busiest, the total on the clients' addresses, the total on the VM) are in the run's JSON, under `steplab.time_wait`,
-and the busiest address before each run is in the table (`tw/addr`).
+and the most TIME_WAIT sockets on any one address (k6's or the idle client's) before each run is in the table (`tw/addr`; `-` when the runner did not count).
 
 **What it writes** into `--out` (default `lab/results/steplab-<label>-<image>-<time>/`): `<variant>-<round>.json` (the realistic run's
 JSON with a `steplab` object: variant, index, round, the variant's env and server file, the TIME_WAIT counts), `<variant>-<round>.txt`
-(that run's table), `summary.json` and `summary.txt`. `bash lab/steplab-summary.sh <folder> [--floor <us>] [--json <file>]` rebuilds the
+(that run's table; the runner's temp folder is a per-user path on the Mac, so both files hold `<tmp>` where it was), `summary.json` and `summary.txt`. `bash lab/steplab-summary.sh <folder> [--floor <us>] [--json <file>]` rebuilds the
 two tables and the verdicts from the JSON files alone, so a results folder's `summarize.sh` calls it. Exit codes: 0 every run ran (an
 invalid run or a failing step is a result), 1 a harness failure, 2 usage. The runs of a comparison take what they take: a 60 s plateau
 with 60,000 idle connections is about 4 minutes a run, plus the drain of the TIME_WAIT sockets.
