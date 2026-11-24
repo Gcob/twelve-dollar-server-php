@@ -1,13 +1,11 @@
 # $12 server challenge in PHP
 
-**Status:** 🔵 Phase 5a running (the step lab, first run) · approved on 2026-11-21 · snapshot 2026-11-21-0920 ·
-**Round:** 4
-**Since your last read:** phase 5 started at 20:48 on your go. Its plan is
-[details/phase-5.md](details/phase-5.md): 12 scopes, predictions written before any measurement. S1's fd wall
-first, with the io_uring spike beside it: its gate passes (the bench runs submissions with systemd, not Docker, D52).
-Then SQLite's feed query, the write and durability. I split the step lab in two runs (Q13). The plan review
-(NOT_OK, 2 🔴) found that one io_uring ring can't hold more than 65,535 connections (Q15, D56) and that S1-d's first
-setting would have closed the idle connections; settled as D51, D53, D56 to D59. Progress in [run.md](run.md).
+**Status:** 🏁 Phase 5a delivered, to review (the step lab, first run) · approved on 2026-11-21 · snapshot 2026-11-21-0920 ·
+**Round:** 6
+**Since your last read:** phase 5a delivered on 2026-11-23 at 21:11, both final reviews OK, branch
+`phase-5-claude` pushed, not merged. S1-d holds the fd wall; of S6, S8 and S9 only `mmap-off` is kept (about 2 µs of
+27, D66); on x86 a request costs 1.61 times the Mac at the same rate, and a reconnect 3.6 times (S1-b goes to 5b, D67).
+Delivery, headline numbers and the merge command in [run.md](run.md) ("Delivery").
 **Project:** this repo, `plan/` · **Submission:** `submissions/php-<runtime>-Gcob/` · **Jira:** none
 
 ## 👉 Your turn
@@ -15,8 +13,40 @@ setting would have closed the idle connections; settled as D51, D53, D56 to D59.
 > **Answer freely:** a letter or `ok`, your own choice (`other: …`), `?` if it's unclear, or
 > `badly framed: …` if an option is missing or the question doesn't hold.
 
-Nothing for you right now: Q16 and Q17 answered A and A (before 19:19), moved to
-[2026-11-23-1919.ronde-5.md](questions/2026-11-23-1919.ronde-5.md). The phase resumed at 19:18.
+- ⚪ **Phase 5a is delivered:** review `phase-5-claude` and merge it, or tell me to. The command is in
+  [run.md](run.md) ("Delivery").
+
+### Q18/19 [run, lab] : a series driver and a host-state line in the lab, first thing in 5b?
+
+Six measuring scopes rewrote the same script (quiet check, dated start and end, one `steplab.sh` per series, the gap
+between runs), and four could not explain a slow series: `other_containers: 0` was true while the Mac ran 25 % slower
+(09:16) and the Xeon failed the 97 % rule at 43 % CPU.
+
+- **A.** 5b's first scope adds `lab/stages.sh` (the series driver) and a host line in each run's JSON (load, the VM's
+  CPU, steal on x86, the disk's fsync time). **For:** every later scope saves its script and can tell a slow day
+  from slow code. **Against:** one small scope before the first measurement.
+- **B.** Leave it; each scope writes its own script. **For:** nothing to build. **Against:** the same 10 lines again,
+  and slow days stay unexplained.
+
+**Recommendation:** A. **Flips if:** 5b has few measuring scopes: B.
+
+**Answer:**
+
+### Q19/19 [run, method] : rotate the order in a round (ABBA) and settle the floor rule once, before 5b measures?
+
+The reference always runs first in a round, and the A/A pairs show an order effect of about -0.2 µs. The floor at
+24,000 req/s was 2.57 µs because of one run that failed the 97 % rule (0.27 without it), and D66 then kept variant
+runs that failed the same rule. Both reviewers asked for one rule, written before the pairs.
+
+- **A.** `steplab.sh` alternates the order (reference first, then variant first), and one rule for every pair, A/A
+  included: a run that fails the 97 % rule counts, and the floor is the median of the A/A differences plus their
+  spread. **For:** no order bias; the same rule both sides. **Against:** new A/A pairs at each rate.
+- **B.** Keep today's order and floor, and say it in each README. **For:** comparable with 5a's numbers.
+  **Against:** a variant of about 0.5 µs stays invisible or looks real by chance.
+
+**Recommendation:** A. **Flips if:** 5b must compare its numbers to 5a's pair for pair: B.
+
+**Answer:**
 
 Answered questions: [questions/](questions/), the latest in
 [2026-11-23-1919.ronde-5.md](questions/2026-11-23-1919.ronde-5.md).
@@ -52,7 +82,7 @@ step's choice backed by a measurement.
 **Decisions:** 67 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
 is a prediction we re-measure, not an answer.
 
-### Phase 5a scopes (running)
+### Phase 5a scopes (delivered)
 
 Detail, seams, cases and the predictions in [details/phase-5.md](details/phase-5.md). One commit each, on branch
 `phase-5-claude` (D14). Scopes 6, 10, 11 and 12 measure, so they need a quiet Docker VM (D15). Each variant is a
