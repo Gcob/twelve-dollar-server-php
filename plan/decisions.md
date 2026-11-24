@@ -314,7 +314,9 @@
 - **D67:** phase 5b first measures a second reconnect pair on x86, then builds S1-b (scope 3's two processes) if
   S1-d still adds more than D60's 15 % at 150,000 users with the Xeon's price. Scope 12's one pair priced a reconnect
   at 23.69 µs (the Mac's 6.62), so 25.4 % at 150,000 users. The AWS run needs Jacob's go and the policy again
-  (Jacob, Q17 = A, through the planning session, 2026-11-23, before 19:19).
+  (Jacob, Q17 = A, through the planning session, 2026-11-23, before 19:19). A Mac reconnect pair at the Xeon's
+  rate (7,500 req/s) joins it, about 5 minutes: scope 11c found the Mac's cost per request depends on the rate and
+  the Xeon's doesn't (same-rate factor 1.61, not 1.92), so the 3.58 times may be nearer 3 (project manager, 20:24).
 
 ## History
 
