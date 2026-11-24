@@ -85,17 +85,30 @@ if [ -f "$TMP/s6-mmap-off.json" ]; then
   echo
   echo "The floor of the five A/A pairs is **$FLOOR µs/req**, but its largest pair is the one whose run failed the 97 % rule; the floor of the $FLOOR_PASSING_PAIRS A/A pairs whose runs both passed it is **$FLOOR_PASSING µs/req**. Each pair is the variant's µs/req minus the reference's of the same round (the reference runs first)."
   echo
-  echo "| Pair (round) | reference µs/req | mmap-off µs/req | paired difference µs | reference p99 ms | mmap-off p99 ms |"
-  echo "|---|---|---|---|---|---|"
-  jq -r "$PRELUDE"'.runs as $r | .variants[] | select(.reference | not) | .pairs[] | . as $p
-    | ($r | map(select(.round == $p.round and .index == 0))[0].p99_ms) as $rp | ($r | map(select(.round == $p.round and .index == 1))[0].p99_ms) as $vp
-    | "| \($p.round) | \($p.reference_us | r2) | \($p.us_per_request | r2) | \($p.difference_us | sgn) | \($rp | r2) | \($vp | r2) |"' "$TMP/s6-mmap-off.json"
+  echo "| Pair (round) | reference µs/req | mmap-off µs/req | paired difference µs | reference p99 ms | mmap-off p99 ms | reference, 97 % rule | mmap-off, 97 % rule |"
+  echo "|---|---|---|---|---|---|---|---|"
+  jq -r "$PRELUDE"'def pr: if . == "pass" then "pass" else "FAIL" end;
+    .runs as $r | .variants[] | select(.reference | not) | .pairs[] | . as $p
+    | ($r | map(select(.round == $p.round and .index == 0))[0]) as $rr | ($r | map(select(.round == $p.round and .index == 1))[0]) as $vr
+    | "| \($p.round) | \($p.reference_us | r2) | \($p.us_per_request | r2) | \($p.difference_us | sgn) | \($rr.p99_ms | r2) | \($vr.p99_ms | r2) | \($rr.result | pr) | \($vr.result | pr) |"' "$TMP/s6-mmap-off.json"
+  echo
+  echo "The 97 % rule columns are the realistic mode's own verdict on each run (achieved at least 97 % of offered); a run that fails it is valid and counted, as the step lab counts it."
   bash "$LAB/steplab-summary.sh" s6-mmap-off --floor "$FLOOR_PASSING" --json "$TMP/s6-mmap-off-passing.json" >/dev/null
   echo
   echo "| Reading of the floor | floor µs/req | median paired difference µs | pairs with the same sign | verdict of the rule |"
   echo "|---|---|---|---|---|"
   jq -r "$PRELUDE"'.variants[] | select(.reference | not) | "| the 5 A/A pairs | \($f) | \(.median_difference_us | sgn) | \(.same_sign) | \(.verdict) |"' --arg f "$FLOOR" "$TMP/s6-mmap-off.json"
   jq -r "$PRELUDE"'.variants[] | select(.reference | not) | "| the \($n) A/A pairs that passed the 97 % rule | \($f) | \(.median_difference_us | sgn) | \(.same_sign) | \(.verdict) |"' --arg f "$FLOOR_PASSING" --arg n "$FLOOR_PASSING_PAIRS" "$TMP/s6-mmap-off-passing.json"
+fi
+
+if [ -f s9-checkpointer/checkpointer.json ]; then
+  echo
+  echo "### S9: the background checkpointer's 2-minute smoke (\`APP_CHECKPOINTER=1000\`, telemetry on, one run, no reference)"
+  echo
+  echo "| valid | other containers | achieved / offered | µs CPU/req | p99 ms | WAL frames in use (\`mxFrame\`) at the end | the most frames gained in one second | WAL file at the end | bound (2 times the most frames between two checkpoints) | times the bound |"
+  echo "|---|---|---|---|---|---|---|---|---|---|"
+  jq -r "$PRELUDE"'[.results.series[].server] as $s | ($s | map(.wal_frames)) as $f | ([range(1; $f | length) as $i | $f[$i] - $f[$i - 1]] | max) as $jump
+    | "| \(.valid) | \(.other_containers.count) | \(ratio | r1) % | \(us | r2) | \(.results.steps[0].latency_ms.overall.p99 | r2) | \($f[-1]) | \($jump) | \($s[-1].wal_bytes) bytes | \($jump * 2) | \($f[-1] / ($jump * 2) | r1) |"' s9-checkpointer/checkpointer.json
 fi
 
 if [ -d s9-group-commit ]; then

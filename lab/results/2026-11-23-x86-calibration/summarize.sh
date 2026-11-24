@@ -73,6 +73,24 @@ jq -rn "$PRELUDE"'
   --argjson xeon "$XEON" --argjson s1a "$MAC_S1A" --argjson matt "$MAC_MATT" --argjson tzim "$MAC_TZIM" \
   --argjson stair "$(jq -s 'map(.results.steps[].cpu_usec_per_request)' staircase/coarse.json staircase/fine.json)"
 
+# The Mac at the Xeon's rate (7,500 req/s, the same flags): the same-rate factor, next to the 12,000-based one above.
+if [ -d mac-same-rate ]; then
+  pair_section mac-same-rate "The Mac at the Xeon's rate: the skeleton against S1-d (\`APP_SOFT_CONN_LIMIT=65450\`), 7,500 req/s, 3 rounds, the skeleton first in each round, the Xeon's flags"
+  echo
+  echo "### The x86 factor at the same rate: the Xeon's skeleton over the Mac's, both at 7,500 req/s with telemetry on"
+  echo
+  jq -rn "$PRELUDE"'
+    def pc: map(select(counted and .steplab.variant == "skeleton")) | sort_by(.steplab.round) | map(us);
+    ($macpairs | pc) as $mac | ($xeonpairs | pc) as $x
+    | "| Reading | Xeon µs/req | Mac µs/req | factor |",
+      "|---|---|---|---|",
+      "| median of the skeleton runs (Xeon: its 6 counted runs; Mac: its \($mac | length)) | \($xeon | med | r2) | \($mac | med | r2) | \(($xeon | med) / ($mac | med) | r2) |",
+      "| the 3 skeleton runs of the pairs, by round | \($x | map(r2) | join(", ")) | \($mac | map(r2) | join(", ")) | \([range(0; ($x | length)) as $i | $x[$i] / $mac[$i] | r2] | join(", ")) |",
+      "",
+      "The 12,000-based factor above is \(($xeon | med) / ($s1a | med) | r2) (the Mac'"'"'s S1-a, \($s1a | med | r2) µs/req at 12,000 req/s); at 7,500 req/s the Mac'"'"'s own skeleton costs \($mac | med | r2) µs/req, \((($mac | med) / ($s1a | med) - 1) * 100 | r1) % more than at 12,000, so a rate-free factor was not right on the Mac side: the Mac'"'"'s µs/req fall with the rate (impression: the CPU the loop spends on waking up for few requests counts for more per request), the Xeon'"'"'s do not (53.7 to 55.4 over 4,000 to 10,000). Both factors are kept; the same-rate one is the measured one."' \
+    --argjson xeon "$XEON" --argjson s1a "$MAC_S1A" --argjson macpairs "$(runs_of mac-same-rate)" --argjson xeonpairs "$(runs_of pairs)"
+fi
+
 echo
 echo "### The reconnect's price on the Xeon and S1-d's cost at the bench's sizes"
 echo

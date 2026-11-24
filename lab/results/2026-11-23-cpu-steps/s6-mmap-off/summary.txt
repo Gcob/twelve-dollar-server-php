@@ -2,11 +2,15 @@ runs, in the order they ran (one round runs every variant once, the first varian
 round  variant        valid      req/s    us/req   p95 ms   p99 ms   tw/addr  result
     1  ref            yes      23474.6      26.4     8.99    21.64       200  pass
     1  mmap-off       yes      23446.6      25.1     9.54    24.02     10036  pass
+    2  ref            yes      23061.7      27.6     19.5    53.66         0  FAIL: achieved below 97 % of offered
+    2  mmap-off       yes      23261.3      25.6    13.84    33.82     10036  FAIL: achieved below 97 % of offered
+    3  ref            yes      23191.9      27.2    15.14    33.32      7035  FAIL: achieved below 97 % of offered
+    3  mmap-off       yes      23310.3        25    12.47     31.4      7159  pass
 tw/addr: the most TIME_WAIT sockets on one of k6's source addresses when the run started (0 when the runner did not count)
 
 variants (us is the server's CPU per request over the plateau)
 variant         valid median us        min to max   p99 ms  paired differences us     median  verdict
-ref               1/1      26.4      26.4 to 26.4    21.64  reference                      -  reference
-mmap-off          1/1      25.1      25.1 to 25.1    24.02  -1.3                        -1.3  screen: not better in one pair
+ref               3/3      27.2      26.4 to 27.6    33.32  reference                      -  reference
+mmap-off          3/3      25.1        25 to 25.6     31.4  -1.3 -2 -2.2                  -2  within the noise
 
 Rule: a variant is beyond the noise when it has at least 2 pairs, every paired difference (its µs CPU/req minus the reference's in the same round) has the same sign and the median paired difference is at least 2.57 µs in absolute value; otherwise it is within the noise. A round where either run is invalid has no pair. One pair with a floor: a screen (beats the floor when lower by at least the floor, else not better), never a verdict. No pair: no verdict. No floor: not judged (the floor comes from an A/A calibration).

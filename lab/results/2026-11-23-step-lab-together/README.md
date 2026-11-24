@@ -119,6 +119,8 @@ invalid is kept and shown, not counted. Every counted run says `other_containers
   it was fine at 07:55 and nothing had run.
 - **The control ran last, after the rest, and its result is above:** the skeleton alone, one 2-step staircase (22,250 and 23,000 req/s, `s = 0.02`, 60,000 idle, `--vu-cap 5400`, lag gate 5.5 s, warm-up 2,000 req/s for 60 s, telemetry and probes on, no soft limit), run at 09:16, after the phase's other runs and the review of its first pass.
   Its first step failed, which ends a staircase, so 23,000 and the hold were not run.
+- **The held rate was run again, interleaved, after the control, on a quiet VM** (20:03 end; `held-rate-interleaved/`): the skeleton, S1-d, the skeleton at one 24,000 req/s step each, because the control could not pass in its own state. A gate came first (the
+  skeleton's step had to pass; it did, at 97.27 %). Neither this folder's staircase nor its three holds were rerun, and they ran without `APP_PRAGMAS=mmap-off`, chosen afterwards (`2026-11-23-cpu-steps`).
 - **Nothing was invalid.** Every counted run: `valid: true`, `other_containers: 0`, 60,000 idle held at the end, none closed by the server. `docker ps` was empty before each run (07:51 to 08:42, 2026-11-23).
 - **Scratch paths** (`<tmp>`) were scrubbed from the screen's run files, as in the earlier folders.
 
@@ -196,6 +198,44 @@ Run `control/staircase.json`: think scale 0.02, VU cap 5400, warm-up 2000,60, 60
 | 1 | 4204 | 22250.4 | 19713.3 | 186290 | 35.2 | 91.72 | 297.35 | 0 % | 370.26 | FAIL: achieved below 97 % of offered |
 
 Stopped at step 1: achieved below 97 % of offered.
+
+### The held rate, interleaved: one 24,000 req/s step each, the skeleton, S1-d (`APP_SOFT_CONN_LIMIT=65450`), the skeleton again, in that order, a minute apart
+
+**skeleton-1**
+
+Run `held-rate-interleaved/skeleton-1.json`: think scale 0.02, VU cap 5400, warm-up 2000,60, 60 s plateaus, lag gate 5.5 s, server environment `APP_TELEMETRY=1`; valid true, other containers 0, idle held 60000 at the start and 60000 at the end, aggregator max lag 4.204 s, k6 connection errors 0, limit closes 0, accept pauses 0, most connections open 64535.
+
+| Step | VUs | offered req/s | achieved req/s | users | µs CPU/req | p95 ms | p99 ms | errors | k6 CPU % of one | result |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | 4535 | 24002.3 | 23347 | 220629 | 26.3 | 11.41 | 25.49 | 0 % | 314.86 | pass |
+
+No step failed.
+
+**s1d-1**
+
+Run `held-rate-interleaved/s1d-1.json`: think scale 0.02, VU cap 5400, warm-up 2000,60, 60 s plateaus, lag gate 5.5 s, server environment `APP_SOFT_CONN_LIMIT=65450 APP_TELEMETRY=1`; valid true, other containers 0, idle held 60000 at the start and 60000 at the end, aggregator max lag 3.211 s, k6 connection errors 0, limit closes 0, accept pauses 0, most connections open 64535.
+
+| Step | VUs | offered req/s | achieved req/s | users | µs CPU/req | p95 ms | p99 ms | errors | k6 CPU % of one | result |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | 4535 | 24002.3 | 23352.1 | 220678 | 26 | 11.07 | 25.11 | 0 % | 313.69 | pass |
+
+No step failed.
+
+**skeleton-2**
+
+Run `held-rate-interleaved/skeleton-2.json`: think scale 0.02, VU cap 5400, warm-up 2000,60, 60 s plateaus, lag gate 5.5 s, server environment `APP_TELEMETRY=1`; valid true, other containers 0, idle held 60000 at the start and 60000 at the end, aggregator max lag 3.628 s, k6 connection errors 0, limit closes 0, accept pauses 0, most connections open 64535.
+
+| Step | VUs | offered req/s | achieved req/s | users | µs CPU/req | p95 ms | p99 ms | errors | k6 CPU % of one | result |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | 4535 | 24002.3 | 23354.9 | 220704 | 26.6 | 11.75 | 24.74 | 0 % | 312.99 | pass |
+
+No step failed.
+
+| Order | run | achieved / offered | µs CPU/req | p99 ms |
+|---|---|---|---|---|
+| 1 | skeleton-1 | 97.27 % | 26.28 | 25.49 |
+| 2 | s1d-1 | 97.29 % | 26.02 | 25.11 |
+| 3 | skeleton-2 | 97.3 % | 26.58 | 24.74 |
 
 ### The profile (Excimer, 1 ms CPU time, one run: the held rate, `s = 0.02`, 60,000 idle, telemetry off), beside the baseline's and today's skeleton's
 
@@ -286,6 +326,12 @@ Users from the leaderboard's formula (about 8.0 million over the µs per request
   87.4 % of the 24,002 offered, p99 293 ms. **The reading: the skeleton does not hold 22,250 either under that state, so the 8 % drop of the held rate is not shown to be S1-d's. It is not shown to be the day's either:** the control cannot pass in the state it ran in, so it
   says nothing about the state of 08:00 to 08:40, when S1-d failed at 23,000 and 22,250 at normal CPU per request (28.5 and 28.0). For phase 5b: S1-d's per-request path (one comparison, one counter at each accept) is 0.4 µs in the profile, and the question of whether
   it moves the knee needs the skeleton and S1-d run interleaved, on a day when the skeleton passes 24,000, before S1-d is blamed or cleared. The host's load was not recorded for the S1-d staircase; during the control the Mac's load average was 12 to 14 (the run's own k6 and VM included).
+- **The held rate, interleaved, on a quiet VM (2026-11-23, 19:53 to 20:03, `docker ps` empty before each run, `other_containers: 0`): the gate passed, and S1-d is not what lowered the knee.** One step each at 24,000 req/s with this
+  folder's flags (`--vu-cap 5400 --lag-gate 5.5 --warmup 2000,60`, telemetry and probes on, 60 s plateau, a minute apart): the skeleton 23,347 achieved (97.27 %), 26.3 µs/req, p99 25.49 ms; S1-d
+  (`APP_SOFT_CONN_LIMIT=65450`) 23,352 (97.29 %), 26.0 µs/req, p99 25.11; the skeleton again 23,355 (97.31 %), 26.6, p99 24.74. All three pass the 97 % rule at 24,000 req/s, the rate this folder's S1-d staircase failed at
+  23,000 (96.4 %) and 22,250 (96.6 %): so on this day S1-d holds 24,000 as the skeleton does. That points to the state of that morning (the Mac's host, as the control said it could be) for the staircase's 22,000 req/s, not to S1-d's accounting.
+  What it does not say: it is one step each, not a staircase, the three runs pass by 0.3 point (a line the baseline's own 24,000 steps failed 4 times in 17), and µs/req (26.0 to 26.6) is lower than the staircase's 27.4 to 28.5 because the
+  host is in another state (the runs that morning, with the same code, read 27.6). The three runs separate nothing of S1-d from the skeleton beyond their own spread.
 - **Not above the harness floor:** the held rate is a floor of the harness at `s = 0.02` (the server is 59 % busy at 22,000 req/s), so the result is the µs/req, which did not move. The mapped users at the held rate fell with the rate
   (203,239 against 221,002); by the leaderboard's formula on the µs they are 290,025 against 294,659.
 - **The profile has not moved:** S6 50.6 % of the samples (51.7 % in the baseline), S8 20.9 % (20.2), S7 10.0 % (9.7), S2 8.2 % (8.0), the loop 6.5 % (6.5), 31 % of the CPU in the kernel (30). The feed's query alone is 38.0 % (38.8).
@@ -302,7 +348,7 @@ Users from the leaderboard's formula (about 8.0 million over the µs per request
 | Step | Chosen | Why |
 |---|---|---|
 | S1 | S1-d, `APP_SOFT_CONN_LIMIT` just under the file descriptor limit | past the limit it costs 6.62 µs a reconnect (2.4 µs a request at 100,000 users, 4.5 at 200,000); in this mode it never fires and its limit closes are 0 |
-| S6 | the skeleton's query and pragmas | cache-256m -2.22 µs alone, -1.87 µs with `exclusive`: under the floor both times |
+| S6 | the skeleton's query and pragmas | cache-256m -2.22 µs alone, -1.87 µs with `exclusive`: under the floor both times. `mmap-off` was chosen afterwards, from its own three pairs (`2026-11-23-cpu-steps`); this folder's staircase and holds ran without it and were not rerun |
 | S8 | the skeleton's locking | `exclusive` -0.85 µs alone: under the floor |
 | S9 | the skeleton's write per request | group commit +1.18 µs; the checkpointer failed its bound |
 

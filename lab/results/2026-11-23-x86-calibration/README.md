@@ -2,8 +2,8 @@
 
 The skeleton and S1-d run on one AWS `c5.2xlarge` (Intel Xeon, x86-64), in the lab's realistic mode with the Mac's shape: `s = 0.02`, 60,000 idle
 connections, the server on one vCPU with its hyperthread sibling idle, 2 GiB, PHP 8.5. The Mac's Docker VM is busy with other projects'
-containers, so no Mac run is made now: the x86 factor is read against the Mac's existing runs, named below, and the same-rate Mac pair is a
-follow-up for a quiet VM. These are x86 numbers on a shared cloud host, not a score. This file is written in two steps: the predictions and the
+containers, so no Mac run was made with the instance: the x86 factor was first read against the Mac's existing runs, named below, and the same-rate Mac pair was
+run afterwards, on a quiet VM (`mac-same-rate/`). These are x86 numbers on a shared cloud host, not a score. This file is written in two steps: the predictions and the
 plan first (committed before any run on the instance), then the results.
 
 ## Predictions
@@ -96,7 +96,7 @@ Added on 2026-11-23 at 04:34 from scope 13's factors (3.22 and 3.08), before any
    against the skeleton at the same rate, on the images the Mac runs used (`8.3-apt` and `8.3-apt-tzimpel`).
 6. **The Mac side:** the x86 factor is the Xeon's skeleton µs/req over the Mac's, taken from the Mac's own skeleton runs at the nearest rate
    and shape: the S1 series' S1-a at 12,000 req/s (27.95 µs/req, telemetry on, median of 5; `2026-11-23-s1-fd-wall`) and the skeleton of
-   the Swoole pairs (27.94 and 28.34). The rate difference is said. A same-rate Mac pair waits for a quiet VM.
+   the Swoole pairs (27.94 and 28.34). The rate difference is said. A same-rate Mac pair (7,500 req/s, the Xeon's flags) was run afterwards, once the VM was quiet: `mac-same-rate/`, and the factor at the same rate sits next to this one.
 7. **The end:** the instance terminated (3 hours at most from its launch), its security group and key pair deleted, and the describes of
    the teardown script checked (their output is in the hand-back, not here: it holds ids).
 
@@ -119,7 +119,9 @@ Added on 2026-11-23 at 04:34 from scope 13's factors (3.22 and 3.08), before any
   on the Mac at 24,000 (63 % busy). The cause was not isolated: the server's longest callback is 25 to 28 ms in the runs (16 to 28 on the Mac) and a 4 KiB
   synchronous write on the instance's volume takes 2.8 ms (a `dd` with `oflag=dsync`, before the runs), so slow writes inside a callback are a
   suspect, nothing more. The µs/req of the staircase steps are flat (see the table): the rate moves them by under 2 µs.
-- **No Mac run, and no A/A calibration on the instance.** The Mac's Docker VM is busy with other projects' containers. The factor is read against the
+- **The Mac's same-rate pair was run later, on a quiet VM** (2026-11-23 at 19:38 to 19:51, `docker ps` empty before it, `other_containers: 0` in all six runs): `lab/steplab.sh` with the Xeon's flags
+  (`--rate 7500 --vu-cap 5400`, telemetry on in both, S1-d at `APP_SOFT_CONN_LIMIT=65450`), 3 rounds, in `mac-same-rate/`. The Mac's CPU layout is its default, the Xeon's is `x86-8`: the server on one CPU in both.
+- **No Mac run with the instance, and no A/A calibration on the instance.** The Mac's Docker VM is busy with other projects' containers. The factor is read against the
   Mac's own skeleton runs at 12,000 req/s with telemetry on (the S1 series' S1-a and the skeleton of each Swoole pair), a different rate from the
   Xeon's 7,500. With no A/A floor no pair is judged: the differences are read next to the skeleton's own spread on the Xeon (six runs, 53.24 to 54.42).
 - **Docker's cgroup driver is `cgroupfs` on the instance.** The lab's probe reads `/sys/fs/cgroup/docker/<id>`, which Docker Desktop uses; Docker Engine
@@ -266,6 +268,45 @@ The Xeon's skeleton at 7,500 req/s: median **53.57 µs/req** over 6 counted runs
 
 Factor against the S1 series: 1.92. The bench estimate of the skeleton (prediction 18) was 88 µs/req on the bench's VM; the Xeon reads 53.6 µs/req, 60.9 % of it.
 
+### The Mac at the Xeon's rate: the skeleton against S1-d (`APP_SOFT_CONN_LIMIT=65450`), 7,500 req/s, 3 rounds, the skeleton first in each round, the Xeon's flags
+
+| Run | valid | other containers | idle held at the end | closed by the server | limit closes | achieved req/s | achieved / offered | µs CPU/req | p95 ms | p99 ms | idle bind retries | result |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| skeleton-1 | true | 0 | 60000 | 0 | 0 | 7449.1 | 99.3 % | 34.48 | 1.187 | 5.105 | 200 | pass |
+| s1d-1 | true | 0 | 60000 | 0 | 0 | 7452.9 | 99.3 % | 33.68 | 0.855 | 3.905 | 150 | pass |
+| skeleton-2 | true | 0 | 60000 | 0 | 0 | 7451.4 | 99.3 % | 33.34 | 0.771 | 4.334 | 150 | pass |
+| s1d-2 | true | 0 | 60000 | 0 | 0 | 7457.4 | 99.4 % | 33.15 | 0.684 | 3.735 | 150 | pass |
+| skeleton-3 | true | 0 | 60000 | 0 | 0 | 7460.3 | 99.4 % | 33.27 | 0.782 | 3.847 | 150 | pass |
+| s1d-3 | true | 0 | 60000 | 0 | 0 | 7444.2 | 99.2 % | 33 | 1.038 | 4.532 | 150 | pass |
+
+```text
+runs, in the order they ran (one round runs every variant once, the first variant is the reference)
+round  variant        valid      req/s    us/req   p95 ms   p99 ms   tw/addr  result
+    1  skeleton       yes       7449.1      34.5     1.19     5.11     10036  pass
+    1  s1d            yes       7452.9      33.7     0.86     3.91      7022  pass
+    2  skeleton       yes       7451.4      33.3     0.77     4.33      9199  pass
+    2  s1d            yes       7457.4      33.1     0.68     3.74      9149  pass
+    3  skeleton       yes       7460.3      33.3     0.78     3.85      9174  pass
+    3  s1d            yes       7444.2        33     1.04     4.53      9144  pass
+tw/addr: the most TIME_WAIT sockets on one of k6's source addresses when the run started (0 when the runner did not count)
+
+variants (us is the server's CPU per request over the plateau)
+variant         valid median us        min to max   p99 ms  paired differences us     median  verdict
+skeleton          3/3      33.3      33.3 to 34.5     4.33  reference                      -  reference
+s1d               3/3      33.1        33 to 33.7     3.91  -0.8 -0.2 -0.3              -0.3  no floor: not judged: run with --floor <µs> from an A/A calibration
+
+Rule: a variant is beyond the noise when it has at least 2 pairs, every paired difference (its µs CPU/req minus the reference's in the same round) has the same sign and the median paired difference is at least the floor in absolute value; otherwise it is within the noise. A round where either run is invalid has no pair. One pair with a floor: a screen (beats the floor when lower by at least the floor, else not better), never a verdict. No pair: no verdict. No floor: not judged (the floor comes from an A/A calibration).
+```
+
+### The x86 factor at the same rate: the Xeon's skeleton over the Mac's, both at 7,500 req/s with telemetry on
+
+| Reading | Xeon µs/req | Mac µs/req | factor |
+|---|---|---|---|
+| median of the skeleton runs (Xeon: its 6 counted runs; Mac: its 3) | 53.57 | 33.34 | 1.61 |
+| the 3 skeleton runs of the pairs, by round | 53.59, 53.82, 53.24 | 34.48, 33.34, 33.27 | 1.55, 1.61, 1.6 |
+
+The 12,000-based factor above is 1.92 (the Mac's S1-a, 27.95 µs/req at 12,000 req/s); at 7,500 req/s the Mac's own skeleton costs 33.34 µs/req, 19.3 % more than at 12,000, so a rate-free factor was not right on the Mac side: the Mac's µs/req fall with the rate (impression: the CPU the loop spends on waking up for few requests counts for more per request), the Xeon's do not (53.7 to 55.4 over 4,000 to 10,000). Both factors are kept; the same-rate one is the measured one.
+
 ### The reconnect's price on the Xeon and S1-d's cost at the bench's sizes
 
 S1-d with every request reconnecting: the server sent 533307 `Connection: close` responses; k6 made 484385 requests, plus the warm-up's nominal 48750 (its rate times its plateau plus half its 10 s ramp; the server counts its whole life): a difference of 172, 0.03 % of the closes, so every request reconnected.
@@ -292,10 +333,16 @@ Through the Xeon, the leaderboard's 94 and 101 µs/req are 1.63 and 1.5 times th
 
 ## The reading
 
-- **The x86 factor is 1.92.** The skeleton costs **53.57 µs/req** on the Xeon (median of six runs, 53.24 to 54.42, at 7,500 req/s with 60,000 idle) against the
+- **At the same rate the x86 factor is 1.61, not 1.92.** The Mac's skeleton at 7,500 req/s (the Xeon's rate, the same flags, `mac-same-rate/`) costs 33.34 µs/req (34.48, 33.34, 33.27, a spread of 1.2), against the
+  Xeon's 53.57: **1.61** (1.55, 1.61 and 1.60 round by round). The 1.92 below divides by the Mac's 27.95 at 12,000 req/s, and the Mac's cost is not rate-free: it is 19.3 % higher at 7,500 req/s
+  (the Xeon's staircase steps are flat from 4,000 to 10,000 req/s, 53.7 to 55.4, which is what made a rate-free factor look right). Both factors are kept, the 12,000-based one and the same-rate one; the same-rate one is the measured
+  one for a Xeon that cannot hold 12,000. S1-d, never firing, on the Mac at this rate: 33.68, 33.15 and 33.00 against the skeleton's 34.48, 33.34 and 33.27 (paired differences -0.80, -0.19, -0.27), 0 limit closes: no
+  cost, as on the Xeon (no floor at this rate, so no verdict). The reconnect's 3.58 times (23.69 on the Xeon against the Mac's 6.62) compares a Xeon at 7,500 with a Mac at the S1 series' rate; it was not remeasured at the same rate
+  (if the Mac's reconnect cost has the same 19 % rise at 7,500, the ratio would be nearer 3.0: an impression, not a run).
+- **The x86 factor is 1.92 against the Mac at 12,000 req/s.** The skeleton costs **53.57 µs/req** on the Xeon (median of six runs, 53.24 to 54.42, at 7,500 req/s with 60,000 idle) against the
   Mac's 27.95 (S1-a, five runs) and 27.94 and 28.34 (the skeletons of the Swoole pairs): 1.92, 1.92 and 1.89. The rates differ (7,500 against 12,000); the
-  Xeon's µs/req do not move with the rate in the staircase, so the factor is read as rate-free, but it was not measured at one rate: the same-rate Mac
-  pair is a follow-up for a quiet VM (7,500 req/s, skeleton against itself would also give the Mac's own spread at that rate).
+  Xeon's µs/req do not move with the rate in the staircase, so the factor was read as rate-free, but the Mac's do move with it (the first bullet): the same-rate
+  factor is 1.61, from the Mac pair run afterwards.
 - **S1-d that never fires costs nothing the Xeon sees:** 53.4, 53.7 and 53.5 against the skeleton's 53.6, 53.8 and 53.2 (paired differences -0.2, -0.1,
   +0.3), 0 limit closes. No floor, so no verdict; the differences are inside the skeleton's own 0.6 µs spread.
 - **One reconnect costs 23.69 µs on the Xeon**, 3.58 times the Mac's 6.62 (one pair: 53.54 against 77.23 µs/req, every request reconnecting, the close count
@@ -317,13 +364,13 @@ Through the Xeon, the leaderboard's 94 and 101 µs/req are 1.63 and 1.5 times th
 
 | # | Verdict | Measured |
 |---|---|---|
-| 13 | **Held.** | 1.92 (1.89 to 1.92 by Mac reference), inside 1.8 to 3. |
-| 17 | **Half.** | The Xeon reads 1.92 times the Mac, inside 1.7 to 2.7. The bench estimate of 45 to 75 µs/req stays missed above (scope 13 already had 88; the Xeon route gives 83.9). |
-| 18 | **Missed, below.** | 1.92 times the Mac, not 2.9 to 3.4; the skeleton 53.57 µs/req on the Xeon, not about 88 (that is the bench's VM, 1.5 to 1.6 times slower than this core, not the Xeon). |
+| 13 | **Half.** | Held on the 12,000-based factor (1.92, 1.89 to 1.92 by Mac reference, inside 1.8 to 3). Missed below at the same rate: 1.61 (the Xeon's 53.57 over the Mac's 33.34 at 7,500 req/s), under 1.8. |
+| 17 | **Half, the factor now below its range.** | The factor part, 1.7 to 2.7: 1.92 held on the 12,000 basis, 1.61 missed below at the same rate. The bench estimate of 45 to 75 µs/req stays missed above (scope 13 already had 88; the Xeon route gives 83.9). |
+| 18 | **Missed, below.** | 1.92 times the Mac at 12,000 req/s and 1.61 at the same rate, not 2.9 to 3.4; the skeleton 53.57 µs/req on the Xeon, not about 88 (that is the bench's VM, 1.5 to 1.6 times slower than this core, not the Xeon). |
 
 ## Follow-ups
 
-- The same-rate Mac pair (7,500 req/s, skeleton against itself) on a quiet VM, to make the factor a same-rate one and to give the Mac's own spread there.
+- A reconnect pair on the Mac at 7,500 req/s (the S1-d variant with `APP_SOFT_CONN_LIMIT=60000`), to compare the reconnect's 3.58 times at one rate: the same-rate pair did the skeleton and the S1-d that never fires, not the reconnect.
 - The S1-b question (build or not) now depends on which machine the 15 % line is read on: the Mac says 13.6 % at 150,000 users, the Xeon 25.4 %. A second reconnect
   pair on the Xeon, or a run at the real user count, would tighten the 23.69 µs.
 - Why the 97 % rule fails on the Xeon at 43 % CPU (see "What differed"): the longest callbacks and the volume's write latency were not separated.

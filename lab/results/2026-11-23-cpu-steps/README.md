@@ -118,7 +118,13 @@ Every series starts with `docker ps` showing no container: the VM is quiet. No i
 - **Two more `mmap-off` pairs were asked for after the first review, and neither was counted.** They ran from 09:20 on 2026-11-23, with `lab/steplab.sh --first-round 2` (a flag added for it: the rounds number on from the
   folder's last). Round 2's reference ran at 09:20 on a VM with no other container and failed the 97 % rule at 35.2 µs/req (87.4 % of offered, p99 293 ms: the same state as the held rate's control in
   `2026-11-23-step-lab-together`, which also read 35.2 µs/req); its `mmap-off` run started when the Docker VM filled with other containers (19 of them in the run's JSON) and read 58.6 µs/req at 15,092 req/s. The pair is not counted: both runs are kept in
-  `s6-mmap-off/pair-2-not-counted/` with the runner's log, and the run in flight when round 3 started was stopped before it left a file. So `mmap-off` has its one counted pair (-1.31 µs), and the two more that the review asked for wait for a quiet VM.
+  `s6-mmap-off/pair-2-not-counted/` with the runner's log, and the run in flight when round 3 started was stopped before it left a file. So `mmap-off` had its one counted pair (-1.31 µs) that morning; the two more that the review asked for were run again on a quiet VM, next bullet.
+- **The two more `mmap-off` pairs ran on 2026-11-23 from 19:20, on a quiet VM (`docker ps` empty before the series, `other_containers: 0` in all four runs), and are counted as pairs 2 and 3**
+  (`s6-mmap-off/ref-2.json` to `mmap-off-3.json`, the same `--first-round 2` call as the interrupted one, `--floor 2.57`; the runner's log is `s6-mmap-off/steplab-rounds-2-3.log`). **Three of the six runs
+  of the three pairs fail the 97 % rule** (the reference of round 2 at 96.1 % with a p99 of 53.7 ms, its `mmap-off` run at 96.9 %, the reference of round 3 at 96.6 %; only the first pair has two
+  passing runs), at 27.2 to 27.6 µs/req for the references and 25.0 to 25.6 for `mmap-off`. They are valid runs and are counted, as the step lab counts them; the A/A floor of 0.27 leaves out the one A/A pair whose run failed
+  that rule, and the same cut here would leave pair 1 alone. The table says which runs failed.
+- **Scope 11's staircase and holds ran without `mmap-off`** (and are not rerun): they use the skeleton's pragmas, so the held rate of 22,000 req/s of that folder is the skeleton's, not S6's.
 - **Every run counted below:** `valid: true`, `other_containers: 0`, 60,000 idle held and none closed by the server.
 - **Scratch paths** (`<tmp>`) were scrubbed from the runs' `command` fields and tables, as in the earlier folders; the syscall counts carry no `other_containers`
   field (`docker ps` was empty before each).
@@ -138,6 +144,10 @@ Today's skeleton, the reference of every pair: telemetry off (S6 and S8) 26.37, 
 |---|---|---|---|---|---|---|---|---|---|---|
 | s6-mmap-off | ref-1 | true | 0 | 60000 | 0 | 97.8 % | 26.37 | 8.99 | 21.64 | pass |
 | s6-mmap-off | mmap-off-1 | true | 0 | 60000 | 0 | 97.7 % | 25.06 | 9.54 | 24.02 | pass |
+| s6-mmap-off | ref-2 | true | 0 | 60000 | 0 | 96.1 % | 27.6 | 19.5 | 53.66 | FAIL: achieved below 97 % of offered |
+| s6-mmap-off | mmap-off-2 | true | 0 | 60000 | 0 | 96.9 % | 25.62 | 13.84 | 33.82 | FAIL: achieved below 97 % of offered |
+| s6-mmap-off | ref-3 | true | 0 | 60000 | 0 | 96.6 % | 27.22 | 15.14 | 33.32 | FAIL: achieved below 97 % of offered |
+| s6-mmap-off | mmap-off-3 | true | 0 | 60000 | 0 | 97.1 % | 25.01 | 12.47 | 31.4 | pass |
 | s6-cache-256m | ref-1 | true | 0 | 60000 | 0 | 97.4 % | 27.06 | 10.75 | 26.65 | pass |
 | s6-cache-256m | cache-256m-1 | true | 0 | 60000 | 0 | 97.7 % | 24.83 | 8.35 | 22.29 | pass |
 | s8-exclusive | ref-1 | true | 0 | 60000 | 0 | 97.4 % | 26.71 | 11.41 | 27.46 | pass |
@@ -154,12 +164,16 @@ runs, in the order they ran (one round runs every variant once, the first varian
 round  variant        valid      req/s    us/req   p95 ms   p99 ms   tw/addr  result
     1  ref            yes      23474.6      26.4     8.99    21.64       200  pass
     1  mmap-off       yes      23446.6      25.1     9.54    24.02     10036  pass
+    2  ref            yes      23061.7      27.6     19.5    53.66         0  FAIL: achieved below 97 % of offered
+    2  mmap-off       yes      23261.3      25.6    13.84    33.82     10036  FAIL: achieved below 97 % of offered
+    3  ref            yes      23191.9      27.2    15.14    33.32      7035  FAIL: achieved below 97 % of offered
+    3  mmap-off       yes      23310.3        25    12.47     31.4      7159  pass
 tw/addr: the most TIME_WAIT sockets on one of k6's source addresses when the run started (0 when the runner did not count)
 
 variants (us is the server's CPU per request over the plateau)
 variant         valid median us        min to max   p99 ms  paired differences us     median  verdict
-ref               1/1      26.4      26.4 to 26.4    21.64  reference                      -  reference
-mmap-off          1/1      25.1      25.1 to 25.1    24.02  -1.3                        -1.3  screen: not better in one pair
+ref               3/3      27.2      26.4 to 27.6    33.32  reference                      -  reference
+mmap-off          3/3      25.1        25 to 25.6     31.4  -1.3 -2 -2.2                  -2  within the noise
 
 Rule: a variant is beyond the noise when it has at least 2 pairs, every paired difference (its µs CPU/req minus the reference's in the same round) has the same sign and the median paired difference is at least 2.57 µs in absolute value; otherwise it is within the noise. A round where either run is invalid has no pair. One pair with a floor: a screen (beats the floor when lower by at least the floor, else not better), never a verdict. No pair: no verdict. No floor: not judged (the floor comes from an A/A calibration).
 ```
@@ -219,23 +233,33 @@ Rule: a variant is beyond the noise when it has at least 2 pairs, every paired d
 
 | Series | Variant | pairs | reference µs/req | variant µs/req | paired difference µs | floor µs | reference p99 ms | variant p99 ms | verdict |
 |---|---|---|---|---|---|---|---|---|---|
-| s6-mmap-off | mmap-off | 1 | 26.37 | 25.06 | -1.31 | 2.57 | 21.64 | 24.02 | screen: not better in one pair |
+| s6-mmap-off | mmap-off | 3 | 27.22 | 25.06 | -1.98 | 2.57 | 33.32 | 31.4 | within the noise |
 | s6-cache-256m | cache-256m | 1 | 27.06 | 24.83 | -2.22 | 2.57 | 26.65 | 22.29 | screen: not better in one pair |
 | s8-exclusive | exclusive | 1 | 26.71 | 25.86 | -0.85 | 2.57 | 27.46 | 19.79 | screen: not better in one pair |
 | s9-group-commit | group-commit | 1 | 26.49 | 27.68 | +1.18 | 2.57 | 19.5 | 25.11 | screen: not better in one pair |
 
-### `APP_PRAGMAS=mmap-off`, its 1 counted pair(s), against both readings of the floor
+### `APP_PRAGMAS=mmap-off`, its 3 counted pair(s), against both readings of the floor
 
 The floor of the five A/A pairs is **2.57 µs/req**, but its largest pair is the one whose run failed the 97 % rule; the floor of the 4 A/A pairs whose runs both passed it is **0.27 µs/req**. Each pair is the variant's µs/req minus the reference's of the same round (the reference runs first).
 
-| Pair (round) | reference µs/req | mmap-off µs/req | paired difference µs | reference p99 ms | mmap-off p99 ms |
-|---|---|---|---|---|---|
-| 1 | 26.37 | 25.06 | -1.31 | 21.64 | 24.02 |
+| Pair (round) | reference µs/req | mmap-off µs/req | paired difference µs | reference p99 ms | mmap-off p99 ms | reference, 97 % rule | mmap-off, 97 % rule |
+|---|---|---|---|---|---|---|---|
+| 1 | 26.37 | 25.06 | -1.31 | 21.64 | 24.02 | pass | pass |
+| 2 | 27.6 | 25.62 | -1.98 | 53.66 | 33.82 | FAIL | FAIL |
+| 3 | 27.22 | 25.01 | -2.21 | 33.32 | 31.4 | FAIL | pass |
+
+The 97 % rule columns are the realistic mode's own verdict on each run (achieved at least 97 % of offered); a run that fails it is valid and counted, as the step lab counts it.
 
 | Reading of the floor | floor µs/req | median paired difference µs | pairs with the same sign | verdict of the rule |
 |---|---|---|---|---|
-| the 5 A/A pairs | 2.57 | -1.31 | true | screen: not better in one pair |
-| the 4 A/A pairs that passed the 97 % rule | 0.27 | -1.31 | true | screen: beats the floor |
+| the 5 A/A pairs | 2.57 | -1.98 | true | within the noise |
+| the 4 A/A pairs that passed the 97 % rule | 0.27 | -1.98 | true | beyond the noise |
+
+### S9: the background checkpointer's 2-minute smoke (`APP_CHECKPOINTER=1000`, telemetry on, one run, no reference)
+
+| valid | other containers | achieved / offered | µs CPU/req | p99 ms | WAL frames in use (`mxFrame`) at the end | the most frames gained in one second | WAL file at the end | bound (2 times the most frames between two checkpoints) | times the bound |
+|---|---|---|---|---|---|---|---|---|---|
+| true | 0 | 96.3 % | 30.92 | 40.44 | 757402 | 6526 | 3120496272 bytes | 13052 | 58 |
 
 ### S9: group commit, judged on its latency first (telemetry on for both sides)
 
@@ -248,7 +272,7 @@ The floor of the five A/A pairs is **2.57 µs/req**, but its largest pair is the
 
 | Variant | micro: median ns per feed | micro: against the reference | macro: median paired difference µs/req | macro: against the reference's µs/req |
 |---|---|---|---|---|
-| `APP_PRAGMAS=mmap-off` | 29954 | -3.2 % | -1.31 | -5 % |
+| `APP_PRAGMAS=mmap-off` | 29954 | -3.2 % | -1.98 | -7.3 % |
 | `APP_PRAGMAS=cache-256m` | 30030 | -3 % | -2.22 | -8.2 % |
 
 ### Syscalls per request (strace -c, 2,000 req/s, 20 s of the plateau; counts only), the skeleton and `APP_LOCKING=exclusive`
@@ -347,29 +371,34 @@ The old client stopped the run on its first `Cannot assign requested address`. W
 
 ## The checkpointer (D63): a finding, not a pair
 
-`APP_CHECKPOINTER` was not run. It failed its own bound in the smoke of the scope that built it, which ran it once at the pair's rate (24,000 req/s, 60,000 idle,
-2 minutes, telemetry on, `docker ps` empty): these are its figures, from that scope's hand-back (scratch runs, not in this folder: counts only). A 2-minute rerun of that smoke, saved in this folder so that anyone can reproduce the numbers,
-was planned for `s9-checkpointer/` and not run: it waits for a quiet VM.
+`APP_CHECKPOINTER` was not run as a pair: it failed its own bound in the smoke of the scope that built it, and that smoke is the finding. It was run again on a quiet VM for this folder
+(`s9-checkpointer/`, 2026-11-23 at 19:31: 24,000 req/s, 60,000 idle, 2 minutes, telemetry on, `APP_CHECKPOINTER=1000`, `docker ps` empty before it, `other_containers: 0`, valid), so that anyone can reproduce the numbers; its table is in the
+regenerated results above (the smoke of "S9: the background checkpointer's 2-minute smoke"). The first row below is that run; the second row is the group commit smoke of the scope that built it (a scratch run, counts only, not in this folder).
 
-| Smoke (one run each) | achieved req/s | µs CPU/req | p99 ms | WAL frames in use (`mxFrame`, the sampler) | WAL file |
+| Smoke (one run each; the checkpointer's own two runs agree to 1 %) | achieved req/s | µs CPU/req | p99 ms | WAL frames in use (`mxFrame`, the sampler) | WAL file |
 |---|---|---|---|---|---|
-| `APP_CHECKPOINTER=1000` | 23,172 | 31.81 | 46.2 | 758,740 at the end, growing all run (6,568 frames the most in a second) | 3.13 GB |
-| `APP_GROUP_COMMIT=1` | 23,348 | 27.16 | 25.9 | 1,006 at most (SQLite's own checkpoint) | 4.2 MB |
+| `APP_CHECKPOINTER=1000`, this folder's run | 23,124 (96.3 % of offered: FAIL the 97 % rule) | 30.92 | 40.44 | 757,402 at the end, growing all run (6,526 frames the most in a second) | 3.12 GB |
+| `APP_CHECKPOINTER=1000`, the smoke that built it | 23,172 | 31.81 | 46.2 | 758,740 at the end, growing all run (6,568 frames the most in a second) | 3.13 GB |
+| `APP_GROUP_COMMIT=1`, the smoke that built it | 23,348 | 27.16 | 25.9 | 1,006 at most (SQLite's own checkpoint) | 4.2 MB |
 
 The checkpointer does copy the WAL back (`nBackfill` follows `mxFrame` one to three seconds behind), but a WAL starts over from its first frame only when a
 checkpoint has caught up with `mxFrame` at the moment a write begins. A `PASSIVE` pass from another process copies up to the `mxFrame` it saw when it began, the
 writer adds frames meanwhile, and at about 2,000 writes a second the gap is never zero; SQLite's own autocheckpoint runs inside the writer, so no frame is added during it
 and the WAL restarts. At that rate a 5-minute run would write about 8 GB. `wal_checkpoint(RESTART)` and `PASSIVE` repeated until caught up also grew in scratch runs at 15,000 to
-17,000 writes a second. The bound was 2 times the most frames written between two checkpoints (about 13,100); the run reached 58 times it.
+17,000 writes a second. The bound was 2 times the most frames written between two checkpoints (about 13,100); the run reached 58 times it, and this folder's rerun 58 times too (757,402 frames against 13,052).
 
 ## The reading
 
-- **No variant beat the floor.** Three of the four are lower than the reference (cache-256m -2.22 µs, mmap-off -1.31, exclusive -0.85) and group commit is higher (+1.18), every
+- **No variant beat the floor in its one pair** (`mmap-off` got two more pairs afterwards, below). Three of the four are lower than the reference (cache-256m -2.22 µs, mmap-off -1.31, exclusive -0.85) and group commit is higher (+1.18), every
   one under 2.57. One pair is a screen, not a verdict. The A/A at this rate (`2026-11-23-s1-fd-wall/aa-24000`) had four of its five pairs within 0.3 µs and one at 2.57, and that 2.57 pair is the one whose run (b-2: 28.48 µs/req, p99 51 ms, 96.7 %) failed the 97 % rule: the floor
   of 2.57 is set by a run that would not have counted as a pass, so a difference of 2 µs is not out of what two identical runs do now and then; the references of this folder (26.37, 27.06, 26.71 and, with telemetry on, 26.49) spread by 0.7 µs.
-- **`mmap-off`, against both readings of the floor:** the floor of the five A/A pairs is 2.57 µs/req, set by the one pair whose run failed the 97 % rule; the floor of the four pairs that passed it is **0.27 µs/req**. The one counted pair is -1.31 µs: not
-  better than 2.57 (51 % of it), and 4.9 times 0.27. One pair is a screen under both readings, and the table "against both readings of the floor" above is where the two more pairs will land. Which reading is the right one, and so whether S6 takes `mmap-off`,
-  is Jacob's to choose (D65); this folder does not change the choice.
+- **`mmap-off`, three counted pairs, against both readings of the floor:** the floor of the five A/A pairs is 2.57 µs/req, set by the one pair whose run failed the 97 % rule; the floor of the four pairs that
+  passed it is **0.27 µs/req**. The three pairs are -1.31, -1.98 and -2.21 µs (references 26.37, 27.60, 27.22; `mmap-off` 25.06, 25.62, 25.01): **all three lower, median -1.98**, which is 7.3 times 0.27 and
+  77 % of 2.57 (not beyond 2.57: the step lab's own verdict, with the 2.57 floor, is "within the noise"). Every `mmap-off` run (25.0 to 25.6) is under every reference run (26.4 to 27.6), and the p99s
+  do not separate them (references 21.6, 53.7, 33.3 ms; `mmap-off` 24.0, 33.8, 31.4). What weakens it: three of the six runs failed the 97 % rule (the VM's host was not as quiet as the A/A series'
+  one: the references drifted up from 26.4 to 27.6 across the three rounds while `mmap-off` stayed flat), so only pair 1 has two passing runs, and on that pair alone the difference is -1.31
+  (4.9 times 0.27). The rule written in the question (all three counted pairs lower and the median beating the 0.27 floor) is met on the three valid pairs; the 2.57 floor is not. **S6 takes `mmap-off` under that rule**
+  (the choice below); against the 2.57 floor it would not be.
 - **S6, the pragmas:** both presets are lower by the sign the micro bench gave them (-3.2 % and -3.0 % of a feed), and by more at the macro (-5 % and -8 % of a request),
   but the micro's 3 % is about 1 µs of a feed (31 µs for the query and the JSON), and a feed is 47 % of the requests, so it is worth 0.4 to 0.5 µs of an average request; the macro's 1.3 and 2.2 are
   three to five times that. The cache preset is
@@ -388,21 +417,23 @@ and the WAL restarts. At that rate a 5-minute run would write about 8 GB. `wal_c
 
 ## Did the predictions hold?
 
-9. **Half.** Held: `join` is slower than the reference (4 to 5 times, in the micro bench), and no pragma preset moves µs/req beyond the noise (-1.31 and -2.22 µs against a floor of 2.57, one pair each).
-   Missed: `two-step` is not the fastest SQL (50 to 60 % *slower* in the micro bench, not 10 to 30 % under), `FETCH_NUM` does not save under 5 % (it costs 9.5 % more), and no S6 variant is chosen, so
-   "the chosen S6 saves 1 to 4 µs (4 to 15 %)" has nothing to measure: the best candidate, cache-256m, is -2.22 µs (8 %), inside that range and under the floor, from one pair.
+9. **Half.** Held: `join` is slower than the reference (4 to 5 times, in the micro bench), and no pragma preset moves µs/req beyond the noise (-1.31 and -2.22 µs against a floor of 2.57, one pair each; `mmap-off` with three pairs, median -1.98 µs, still under 2.57 and over the 0.27 of the passing A/A pairs).
+   Missed: `two-step` is not the fastest SQL (50 to 60 % *slower* in the micro bench, not 10 to 30 % under), `FETCH_NUM` does not save under 5 % (it costs 9.5 % more), and
+   "the chosen S6 saves 1 to 4 µs (4 to 15 %)" is read on `mmap-off`, chosen after its three pairs (D66): median -1.98 µs, 7.3 % of the references' median 27.22, inside both ranges (the pairs spread from -1.31 to -2.21; a pair-1-only reading, -1.31 µs and 5 %, is inside them too).
 10. **Not judged as written; its range held for the one S8 variant that exists.** `APP_IO=sockets` was not built: the count showed exactly one `recvfrom` and one `sendto` per request and nothing to remove. The S8 variant
     that was built, `exclusive`, saves 0.85 µs per request, inside the predicted 0.5 to 2 µs and under the floor, and its syscall count is 43 % lower (5.607 to 3.219).
 11. **Half.** Held: group commit's p99 is within the noise (25.11 against a reference of 19.5, the four references' spread being 19.5 to 27.5). Missed: µs/req did not fall by 0 to 3 %, it rose by 4.5 %
-    (+1.18, under the floor, so within the noise but on the wrong side); and the checkpointer clause missed: it was not run, and in its smoke it cost 31.81 µs/req against 27.16 for group commit alone, with a WAL of 3.13 GB.
+    (+1.18, under the floor, so within the noise but on the wrong side); and the checkpointer clause missed: its 2-minute smoke, run again for this folder, cost 30.92 µs/req against 27.2 for the day's references (one run, no pair, +14 %), a p99 of 40.44 ms, and a WAL of 3.12 GB (the first smoke: 31.81, 3.13 GB). The clause (µs/req within the noise, stalled seconds not lowered) is missed on the µs side.
 
 ## The choice
 
 | Step | Chosen | Why |
 |---|---|---|
-| S6 | the skeleton's feed query and pragmas | no variant beat the floor: cache-256m -2.22 µs (the nearest), mmap-off -1.31, both one pair; the SQL and fetch variants were slower in the micro bench and were not run |
+| S6 | the skeleton's feed query, with **`APP_PRAGMAS=mmap-off`: chosen (D66)** | three counted pairs, all lower (-1.31, -1.98, -2.21), median -1.98 µs: beats the 0.27 floor of the A/A pairs that passed the 97 % rule, not the 2.57 floor of all five; three of its six runs failed the 97 % rule (see "The reading"). cache-256m -2.22 stays one pair; the SQL and fetch variants were slower in the micro bench and were not run |
 | S8 | the skeleton's default locking | `exclusive` -0.85 µs, under the floor and rules out the checkpointer in a second process, the `mxFrame` sampler and any outside connection; it is allowed on the rules and cheap, so it stays a candidate for the combined run |
 | S9 | the skeleton's write per request | group commit +1.18 µs and a p99 inside the noise, with 1.45 writes per commit at this rate; the checkpointer fails its bound (the WAL never restarts) |
 
 A variant within the noise is not chosen unless it is simpler, and none is simpler than the code it replaces. The three small negatives (cache-256m, mmap-off, exclusive) are lower by
 2.2, 1.3 and 0.85 µs and act on different costs (the page cache, the lock calls); together they could pass the floor that none passes alone, which is a question for the run that puts variants together.
+
+`mmap-off` is the exception, by the rule written for it before its extra pairs ran: chosen if all three counted pairs are lower and their median beats the 0.27 floor. It is not more code: it sets `mmap_size` to 0, so reads go through `pread` and the 64 MiB page cache instead of a 256 MiB map. Scope 11's combined staircase ran without it; it is not rerun, so the held rate of that folder (22,000 req/s) is the skeleton's with S1-d, without S6's pragma.

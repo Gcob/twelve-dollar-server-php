@@ -1,0 +1,30 @@
+steplab: 2 variant(s) x 2 round(s), 24000 req/s for 60s (think scale 0.02, 60000 idle connections), warm-up 2400,60, into lab/results/2026-11-23-cpu-steps/s6-mmap-off
+[1/4] round 2, ref
+  TIME_WAIT before: 0 on the busiest address, 0 in all on the clients' addresses, 0 on the VM, waited 0 s
+  valid, 23061.7 req/s, 27.6 us/req, p99 53.662 ms, FAIL: achieved below 97 % of offered, TIME_WAIT after: 10036 on the busiest address
+[2/4] round 2, mmap-off
+  TIME_WAIT before: 10036 on the busiest address, 32768 in all on the clients' addresses, 32768 on the VM, waited 0 s
+  valid, 23261.3 req/s, 25.6 us/req, p99 33.824 ms, FAIL: achieved below 97 % of offered, TIME_WAIT after: 7035 on the busiest address
+[3/4] round 3, ref
+  TIME_WAIT before: 7035 on the busiest address, 32768 in all on the clients' addresses, 32768 on the VM, waited 0 s
+  valid, 23191.9 req/s, 27.2 us/req, p99 33.324 ms, FAIL: achieved below 97 % of offered, TIME_WAIT after: 7159 on the busiest address
+[4/4] round 3, mmap-off
+  TIME_WAIT before: 7159 on the busiest address, 32768 in all on the clients' addresses, 32768 on the VM, waited 0 s
+  valid, 23310.3 req/s, 25 us/req, p99 31.397 ms, pass, TIME_WAIT after: 7180 on the busiest address
+
+runs, in the order they ran (one round runs every variant once, the first variant is the reference)
+round  variant        valid      req/s    us/req   p95 ms   p99 ms   tw/addr  result
+    1  ref            yes      23474.6      26.4     8.99    21.64       200  pass
+    1  mmap-off       yes      23446.6      25.1     9.54    24.02     10036  pass
+    2  ref            yes      23061.7      27.6     19.5    53.66         0  FAIL: achieved below 97 % of offered
+    2  mmap-off       yes      23261.3      25.6    13.84    33.82     10036  FAIL: achieved below 97 % of offered
+    3  ref            yes      23191.9      27.2    15.14    33.32      7035  FAIL: achieved below 97 % of offered
+    3  mmap-off       yes      23310.3        25    12.47     31.4      7159  pass
+tw/addr: the most TIME_WAIT sockets on one of k6's source addresses when the run started (0 when the runner did not count)
+
+variants (us is the server's CPU per request over the plateau)
+variant         valid median us        min to max   p99 ms  paired differences us     median  verdict
+ref               3/3      27.2      26.4 to 27.6    33.32  reference                      -  reference
+mmap-off          3/3      25.1        25 to 25.6     31.4  -1.3 -2 -2.2                  -2  within the noise
+
+Rule: a variant is beyond the noise when it has at least 2 pairs, every paired difference (its µs CPU/req minus the reference's in the same round) has the same sign and the median paired difference is at least 2.57 µs in absolute value; otherwise it is within the noise. A round where either run is invalid has no pair. One pair with a floor: a screen (beats the floor when lower by at least the floor, else not better), never a verdict. No pair: no verdict. No floor: not judged (the floor comes from an A/A calibration).

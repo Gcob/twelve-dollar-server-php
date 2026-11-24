@@ -96,6 +96,25 @@ if [ -f control/staircase.json ]; then
   fi
 fi
 
+if [ -f held-rate-interleaved/skeleton-1.json ]; then
+  echo
+  echo "### The held rate, interleaved: one 24,000 req/s step each, the skeleton, S1-d (\`APP_SOFT_CONN_LIMIT=65450\`), the skeleton again, in that order, a minute apart"
+  for run in skeleton-1 s1d-1 skeleton-2; do
+    echo
+    echo "**$run**"
+    echo
+    staircase_table "held-rate-interleaved/$run"
+  done
+  echo
+  echo "| Order | run | achieved / offered | µs CPU/req | p99 ms |"
+  echo "|---|---|---|---|---|"
+  n=0
+  for run in skeleton-1 s1d-1 skeleton-2; do
+    n=$((n + 1))
+    jq -r "$PRELUDE"'.results.steps[0] as $s | "| \($n) | \($run) | \($s.achieved_rps / $s.offered_rps * 100 | r2) % | \($s.cpu_usec_per_request | r2) | \($s.latency_ms.overall.p99 | r2) |"' --arg run "$run" --argjson n "$n" "held-rate-interleaved/$run.json"
+  done
+fi
+
 PROFILE=profile/profile.json
 if [ -f "$PROFILE" ] && [ -n "$HOLDS" ]; then
   # shellcheck disable=SC2086
