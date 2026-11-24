@@ -13,6 +13,15 @@ reference is `mmap-off` (D70). Q19 is coded as A until you answer. Progress in [
 > **Answer freely:** a letter or `ok`, your own choice (`other: …`), `?` if it's unclear, or
 > `badly framed: …` if an option is missing or the question doesn't hold.
 
+**🔴 Your go for one AWS session (scope 9), blocking only scope 9.** Same shape as 5a's calibration (one `c5.2xlarge`
+in `ca-central-1`, about 1 hour 15, terminated after; 5a's lived 1 h 01): a second reconnect pair, S1-b against S1-a
+(3 pairs), and 5b's configuration against 5a's (3 pairs), all at 7,500 req/s. Why it's worth it now: on the Mac S1-b
+costs **+2.14 µs/req (+8.6 %)**, a tie with S1-d near 100,000 users and cheaper at 150,000 (S1-d +3.4 to +3.8 µs);
+but a reconnect costs **4.0 times** more on the Xeon than on the Mac (23.69 against 5.91 µs, 7a), so the S1 choice is
+decided on x86. **What I need:** reattach the factory's `aws/phase-5-x86-calibration-policy.json` to your CLI user and
+say "go AWS"; I'll run it as soon as scope 8 is done (or earlier if you prefer), then you delete the policy. Without
+your go, the run delivers scopes 1 to 8 and stops here (⏸️).
+
 ### Q18/19 [run, lab] : a series driver and a host-state line in the lab, first thing in 5b?
 
 Six measuring scopes rewrote the same script (quiet check, dated start and end, one `steplab.sh` per series, the gap
