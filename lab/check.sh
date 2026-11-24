@@ -246,12 +246,22 @@ check_public_guard_catches_temp_folder() {
   done
 }
 
-check_results_hold_no_container_names() {
-  local json named=""
+# The JSON files of a folder that name another container. Only an object is a run's record: a file that is an array (a list of counts,
+# say) has no `other_containers` to read, and jq would fail on it.
+files_naming_containers() {
+  local json
   while IFS= read -r json; do
-    jq -e '(.other_containers.names // []) | length == 0' "$json" >/dev/null 2>&1 || named="$named $json"
-  done < <(find "$LAB/results" -name '*.json')
+    jq -e 'if type == "object" then ((.other_containers.names // []) | length == 0) else true end' "$json" >/dev/null 2>&1 || printf ' %s' "$json"
+  done < <(find "$1" -name '*.json')
+}
+
+check_results_hold_no_container_names() {
+  local named
+  named="$(files_naming_containers "$LAB/results")"
   [ -z "$named" ] || { echo "container names in:$named"; return 1; }
+  # The fixtures: an array file and an object with no name pass, an object with a name is caught.
+  named="$(files_naming_containers "$LAB/check/fixtures/container-names")"
+  [ "$named" = " $LAB/check/fixtures/container-names/object-named.json" ] || { echo "the fixtures: expected only object-named.json, got:$named"; return 1; }
 }
 
 # The bake-off server under k6 on /posts/<id>, with --env, --label and the default file name: the run is valid, the JSON holds
