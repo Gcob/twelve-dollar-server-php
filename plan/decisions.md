@@ -307,6 +307,14 @@
   while the VM is quiet and reported against both floors (2.57, and the four passing pairs'); the S6 choice itself
   goes to Jacob with those numbers. The same developer runs the held rate's control (the skeleton without S1-d at
   22,250 and 23,000 req/s), the review's 🟠 (project manager, phase 5, 2026-11-23 09:14, pr-reviewer pass 1).
+- **D66:** S6 takes `APP_PRAGMAS=mmap-off` if two more pairs at 24,000 req/s confirm it: chosen if all three
+  counted pairs are lower than their references and their median beats 0.27 µs/req, the floor of the four A/A pairs
+  that passed the 97 % rule (D51's floor read without the failed run). Scope 11's staircase ran without it and is
+  not rerun (Jacob, Q16 = A, through the planning session, 2026-11-23, before 19:19).
+- **D67:** phase 5b first measures a second reconnect pair on x86, then builds S1-b (scope 3's two processes) if
+  S1-d still adds more than D60's 15 % at 150,000 users with the Xeon's price. Scope 12's one pair priced a reconnect
+  at 23.69 µs (the Mac's 6.62), so 25.4 % at 150,000 users. The AWS run needs Jacob's go and the policy again
+  (Jacob, Q17 = A, through the planning session, 2026-11-23, before 19:19).
 
 ## History
 
