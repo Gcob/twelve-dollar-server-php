@@ -88,8 +88,8 @@ the branch's checkout, so that nothing edited the lab's code while they ran. Eve
    | Variant | Gate | The number | Why no macro pair |
    |---|---|---|---|
    | `APP_JSON=concat` | micro bench, ns per call of the route | feed 33,755 against `encode`'s 30,842 ns (+9.4 %), post +1.3 % | slower than `encode`: no pair can make it chosen |
-   | `APP_DRIVER=ffi` with `APP_JSON=sqlite` | micro bench, the scope's own gate | feed 30,728 against PDO's 30,677 ns (+0.2 %); raw FFI at most -467 ns of a feed (-1.5 %, spreads touch) and -91 ns of a post; SQLite's own work is 98 % of a feed | the gate failed. The driver reads only, behind a bench-only flag (a server booted with it would answer 500 to a write), and cannot be measured at the macro |
-   | `APP_PARSE=lean` | micro bench, ns per head parse | -18.7 % of a feed's head, -9.7 % and -10.2 % of a like's and a post's (about 50 ns of a request that costs about 27 µs) | under the 20 % bar: not wired, so there is no switch to run |
+   | `APP_DRIVER=ffi` with `APP_JSON=sqlite` | micro bench: the driver had to beat PDO's `sqlite` per feed to be worth a server run | feed 30,728 against PDO's 30,677 ns (+0.2 %); raw FFI at most -467 ns of a feed (-1.5 %, spreads touch) and -91 ns of a post; SQLite's own work is 98 % of a feed | the gate failed. The driver reads only, behind a bench-only flag (a server booted with it would answer 500 to a write), and cannot be measured at the macro |
+   | the lean parse (no `APP_PARSE` switch exists: it lives only in `lab/micro/benches/parse.php` as `ParseBenchLean`) | micro bench, ns per head parse | -18.7 % of a feed's head, -9.7 % and -10.2 % of a like's and a post's (about 50 ns of a request that costs about 27 µs) | under the micro bench's 20 % bar: never wired into the server, so there is no switch to run |
    | `APP_LOOP=nolock` | syscalls per request (`lab/syscalls.sh`) | 5.624 against the reference's 5.623 | a no-op on this image (`event.so` links no `libevent_pthreads`) |
    | `APP_LOOP=changelist` | the same | 5.620 against 5.623; with `APP_GROUP_COMMIT=1` `epoll_ctl` 0.158 to 0.078 a request (-1.6 % of the syscalls) | removes no syscall alone, and group commit, the only thing it pays with, did not beat the floor in 5a |
    | `APP_LOOP=poll` | the same | 5.511 against 5.623 (-0.11 a request: the count did drop, `ppoll` 0.414 a request replacing `epoll_pwait` 0.538) | not paired: that count was taken with 0 idle connections, and the realistic runs hold 60,000, which `ppoll` passes on every call, a cost the count does not see |
@@ -111,8 +111,8 @@ the branch's checkout, so that nothing edited the lab's code while they ran. Eve
 - **The CPU variants' screens and the profile: nothing was run twice and no run was invalid.** The `json-sqlite` series exited 0 (5 min 30 s), the quiet
   check saw 0 other containers before it and before the profile, both screen runs and the profile run are valid with 60,000 idle held at the
   end and none closed by the server. The idle client bound again 200 times in `ref-1` and the profile run, 0 times in `json-sqlite-1` (the busy
-  ports of the run before, as in 5a). Of the variants of scopes 4 to 6, one was screened (`APP_JSON=sqlite`); the other six are in the plan's table
-  with their numbers.
+  ports of the run before, as in 5a). Of the seven variants built for this phase (the JSON builders, the FFI driver, the lean parse and the three loop presets), one was screened (`APP_JSON=sqlite`); the other six are in the table
+  of item 7 with the micro bench's or the syscall count's number that stopped each.
 - **The S1-b series: nothing run twice and no series failed.** The file exited 0; every one of the 6 runs is valid, 0 other containers, 60,000 idle
   held at the end and none closed by the server. No run waited for TIME_WAIT sockets. The idle client bound again 175 times in 5 of the 6 runs (0 in
   the first), the busy ports of the run before, as in 5a. The series took 16.5 minutes.

@@ -697,7 +697,8 @@ children by a hash of the client's address and port.
   container ends all its processes when it is removed. A child does not watch its parent: killing the parent alone (outside a container) leaves
   the children serving.
 - **SQLite:** each child is a WAL reader and writer on the same file, with `busy_timeout = 5000`. A write that waits for the other child's lock
-  waits inside its own request, and is committed before its response.
+  is held up by SQLite's busy handler, which sleeps inside the call: it blocks that child's whole event loop, every connection of that child,
+  until the lock frees or `busy_timeout` ends. The other child keeps serving. The write is committed before its response.
 - **Refused with 2 or more** (exit 1, a message on stderr): `APP_LOCKING=exclusive` (a second process cannot open the database),
   `APP_CHECKPOINTER` (one more process on the database) and `APP_PROFILE` (one file, one process). With `APP_WORKERS=1` all three are as before.
 - **Telemetry** (`APP_TELEMETRY=1`): one line per child per second, with `"pid"` after `second`. `lab/macro/series-lib.php` (`telemetry_sum`)
