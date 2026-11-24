@@ -573,6 +573,24 @@ competition after all..."
 on `liburing-ffi` with the three pure levers above, all without C of our own. The hybrid stays a possible second,
 honestly labelled entry, decided after that ring phase.
 
+### 2026-11-24 09:40 · ❓ Question: the forecast again, after 5b and its x86 run
+
+**Context:** 5b found no CPU variant beating the noise (D75). On the Xeon, S1-b costs +7.44 µs/req (+14.8 %), more
+than on the Mac (+8.6 %), and wins over S1-d at 150,000 users; at 100,000 they tie (D77). With the bench at about
+84 µs/req plus S1-b's share, the projection is **about 83,000 to 88,000**. Ruby's ladder (entry 2026-11-24 09:09)
+shows the ring through `liburing-ffi` is the pure lever left (D76, phase 8).
+
+**Forecast (Claude, replaces 2026-11-23 19:25, to check against phase 7's score):**
+
+| Target | Odds | What it takes |
+|---|---|---|
+| > 71,000 | ~85 % | phases 6 and 7 with S1-b |
+| 100,000 | ~45 % | phase 8's ring without S1-b's cost, plus some of the tuned SQLite build |
+| 120,000 | ~20 % | the ring cutting the kernel's share as it did for Ruby (111 to 66 µs/req there) |
+| 150,000+ | < 5 % | our own C reading the B-tree (out, D76) |
+
+**Verdict:** 👀 a forecast, not a decision.
+
 ### 2026-11-22 18:08 · 💡 Idea: try io_uring anyway, something nobody tried in PHP
 
 **Jacob:** "do you think we could still even try it? […] to be at the top, we need to do some, let's say, gray hat
