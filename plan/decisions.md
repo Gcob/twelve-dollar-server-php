@@ -316,7 +316,9 @@
   at 23.69 µs (the Mac's 6.62), so 25.4 % at 150,000 users. The AWS run needs Jacob's go and the policy again
   (Jacob, Q17 = A, through the planning session, 2026-11-23, before 19:19). A Mac reconnect pair at the Xeon's
   rate (7,500 req/s) joins it, about 5 minutes: scope 11c found the Mac's cost per request depends on the rate and
-  the Xeon's doesn't (same-rate factor 1.61, not 1.92), so the 3.58 times may be nearer 3 (project manager, 20:24).
+  the Xeon's doesn't (same-rate factor 1.61, not 1.92), so the 3.58 times may be nearer 3 (project manager, 20:24). The x86 run includes `mmap-off` once (D66; no measured
+  configuration has it yet), and its brief says that stock Docker on Ubuntu needs the `cgroupfs` driver for the
+  lab's probe (pr-reviewer pass 2, 🟡 8 and 9).
 
 ## History
 
