@@ -54,8 +54,10 @@ rule cover every pair?
 
 **Flips if:** 5b must compare its numbers to 5a's pair for pair.
 
-**Meanwhile:** coded as A in 5b's scope 2 with a `FIXME(pending)` (run rules); B is one switch back
-(`--order fixed`, `--floor`).
+**Meanwhile:** coded as A in 5b's scope 2 with a `FIXME(pending)` (run rules), made precise by the plan review
+(D71): runs the harness marks invalid stay out as today, the quartiles are inclusive (0.36 µs on 5a's A/A at 24,000),
+and round 1 runs the reference last so a one-pair screen has the order bias against the variant. B is `--order fixed`
+plus a typed `--floor` (the largest A/A difference).
 
 **Answer:**
 
@@ -92,7 +94,7 @@ step's choice backed by a measurement.
 | 7 | Score           | `bench/load.js` ramps, x86 calibration                      | More than 71,000 held for 5 minutes                     |
 | 8 | Submit          | The PR to the challenge repo                                | CI green                                                |
 
-**Decisions:** 70 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
+**Decisions:** 73 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
 is a prediction we re-measure, not an answer.
 
 ### Phase 5b scopes (running)

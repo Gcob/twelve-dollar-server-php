@@ -336,6 +336,27 @@
   parser and loop variants, the FFI driver, the Mac measurements, the chosen variants together, x86 with Jacob's go.
   S4, S3 and S5 are skipped (D60); SQLite's own JSON functions are SQLite's code, not ours (D2) (project manager,
   phase 5b, 2026-11-23 23:24).
+- **D71:** the step lab's counting and floor, as 5b codes Q19's A until Jacob answers, settled with the plan
+  review's picks: a run counts when the harness says it is valid, whether or not its step passes the 97 % rule (as
+  today); a counted run that failed the rule is flagged `*`; a run the harness marked invalid (lag, k6's memory, idle
+  connections closed) stays out of the pairs. The floor of an A/A folder is `|median| + interquartile range` of its
+  paired differences, quartiles by linear interpolation (inclusive): 0.36 µs/req on 5a's A/A at 24,000, 0.52 at
+  12,000, where the largest difference gave 2.57. Rounds alternate, and round 1 runs the reference **last**, so a
+  one-pair screen and the first round of a confirmation have the order bias (about -0.2 µs on the second run) against
+  the variant, not for it. 5a's result folders keep printing the tables they were judged by: new columns and the new
+  rule's text only for runs that carry them (project manager, phase 5b, 2026-11-23 23:37,
+  [PLAN-2026-11-23-2335](reviews/PLAN-2026-11-23-2335.md) items 1 to 4).
+- **D72:** the Mac measurements that need only the instrument run as soon as scope 2 is in, while scopes 3 and 4 are
+  coded: the A/A at 24,000 (its first pair is the real-shape smoke of the new order and host line), the Mac reconnect
+  pair at 7,500, and the PHP 8.4 and 8.6 screens. S1-b's pairs follow scope 3, the variant screens scopes 4 to 6. A
+  developer coding during a measurement runs no Docker until the project manager says the VM is free. Why: at 5a's
+  pace the first measured run would start near 04:45 and the last end near 08:30, and in 5a the VM filled at 09:20
+  (project manager, phase 5b, 2026-11-23 23:37, [PLAN-2026-11-23-2335](reviews/PLAN-2026-11-23-2335.md) item 5).
+- **D73:** `APP_LOOP`'s presets get no macro pair unless a gate first shows a cost to remove: `syscalls.sh` under
+  each preset against the reference (5a's count has 0 `epoll_ctl` per request, so the change list has nothing to
+  batch, and no locking only matters with threads). The counts are the result, as 5a's `APP_IO` was. The lean parser
+  is wired only if its micro bench saves at least 20 % of a parse: a bar of this phase, not of D60 (project manager,
+  phase 5b, 2026-11-23 23:37, [PLAN-2026-11-23-2335](reviews/PLAN-2026-11-23-2335.md) items 6 and 10).
 
 ## History
 
