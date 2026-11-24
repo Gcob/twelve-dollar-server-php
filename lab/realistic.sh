@@ -710,13 +710,19 @@ if [ "$telemetry_value" = 1 ]; then
     [inputs | fromjson?] as $l
     | [$l[] | .connections // empty] as $c
     | [$l[] | .group_commit // empty] as $g
+    | [$l[] | select(.connections != null)] as $with
+    | ([$with[] | .pid // empty] | unique) as $pids
     | if ($c | length) == 0 then null
       else {close_responses: ($c | map(.limit_closes) | add), accept_pauses: ($c | map(.accept_pauses) | add),
-            open_peak: ($c | map(.open_peak) | max), telemetry_seconds: ($c | length),
+            open_peak: ($with | group_by(.pid) | map(map(.connections.open_peak) | max) | add),
+            telemetry_seconds: ($with | map(.second) | unique | length),
             longest_callback_ms_max: ([$l[] | .longest_callback_ms // empty] | max),
             group_commit: (if ($g | length) == 0 then null
                            else {commits: ($g | map(.commits) | add), batch_mean: (($g | map(.commits * .batch_mean) | add) / ($g | map(.commits) | add) * 100 | round / 100),
-                                 batch_max: ($g | map(.batch_max) | max)} end)} end')"
+                                 batch_max: ($g | map(.batch_max) | max)} end)}
+           # Why: with several processes (APP_WORKERS) each prints its own lines with its pid; the peak is then the sum of the peaks of the
+           # processes, the most connections the server could have held at once, and a harness must not read it as one process peak.
+           + (if ($pids | length) == 0 then {} else {processes: ($pids | length), open_peak_note: "sum of the peak of each process"} end) end')"
 fi
 invalid_all="$(jq -r --arg extra "$extra_invalid" '(map(select(.invalid != "") | .invalid) + (if $extra == "" then [] else [$extra] end)) | join("; ")' "$tmp/runs.json")"
 
@@ -806,7 +812,7 @@ else
 fi
 jq -r '"k6 connection errors: \(.k6_connection_errors)" + (if (.k6_error_codes | length) > 0 then " (k6 error codes: \(.k6_error_codes | to_entries | map("\(.key) x \(.value)") | join(", ")))" else "" end)' "$out"
 jq -r '.cold | "database copy in the page cache when the server opened it (fincore): \(.resident_bytes) of \(.size_bytes) bytes, \(.resident_share * 100 | round) %, --cold \(if .requested then "on" else "off" end)"' "$out"
-jq -r '.server_connections | "server connections: soft limit \(.soft_limit // "off"), " + (if .telemetry == null then "no telemetry" else "\(.telemetry.close_responses) Connection: close responses, \(.telemetry.accept_pauses) accept pauses, \(.telemetry.open_peak) open at most" end) + ", file descriptors peak \(.fds_peak // .fds_peak_note)"' "$out"
+jq -r '.server_connections | "server connections: soft limit \(.soft_limit // "off"), " + (if .telemetry == null then "no telemetry" else "\(.telemetry.close_responses) Connection: close responses, \(.telemetry.accept_pauses) accept pauses, \(.telemetry.open_peak) open at most" + (if .telemetry.processes == null then "" else " (\(.telemetry.open_peak_note), \(.telemetry.processes) processes)" end) end) + ", file descriptors peak \(.fds_peak // .fds_peak_note)"' "$out"
 jq -r 'select(.idle != null) | .idle | "idle connections: \(.requested) requested, \(.held_at_start) held at the start and \(.held_at_end) at the end, \(.closed_by_server_at_end) closed by the server; the server counted \(.server_established_at_start) and \(.server_established_at_end) established, \(.server_fds_open_with_idle) file descriptors open with them",
   "idle client memory: \(.client.memory_current_mib_at_end) MiB memory.current at the end (peak \(.client.memory_peak_mib), anon \(.client.anon_mib), kernel \(.client.kernel_mib), socket buffers \(.client.socket_buffers_mib)), the process RSS \(.client.rss_mib) MiB after opening them, opened in \(.seconds_to_open) s from \(.source_addresses | length) source addresses"' "$out"
 jq -r '.host | def n: if . == null then "not read" else tostring end; "host: load1 \(.before.load1 | n) before the warm-up and \(.plateau.load1 | n) on the plateau (load5 \(.before.load5 | n) and \(.plateau.load5 | n)), CPU busy \(.before.cpu_busy_pct | n) % and \(.plateau.cpu_busy_pct | n) %, steal \(.before.steal_pct | n) % and \(.plateau.steal_pct | n) %, fsync \(.fsync_ms | n) ms, \(.other_containers) other containers"' "$out"

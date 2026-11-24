@@ -649,6 +649,76 @@ check_challenge_test_passes_with_group_commit_and_checkpointer() {
   [ -z "$left" ] || { echo "containers left behind: ${left//$'\n'/ }"; return 1; }
 }
 
+# APP_WORKERS (several processes on one port, lab/app/workers.php): the switch's values and refusals, the supervision with children that only
+# report, and lab/app/server.php as a process with 2 workers (boot lines, each worker's own database connection, both answering 200
+# connections, every write committed before its response, a worker killed, SIGTERM, the refusals).
+check_app_workers_cases() {
+  local out ok rc=0
+  out="$(bash "$LAB/run.sh" 8.5 php -d extension=sockets -d extension=event -d extension=pcntl /lab/check/app-workers-test.php 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "app-workers-test.php exited $rc: ${out//$'\n'/ | }"; return 1; }
+  ok="$(grep -c '^ok  ' <<<"$out")"
+  [ "$ok" = 25 ] || { echo "expected 25 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
+  ! grep -q 'FAIL' <<<"$out" || { echo "a case failed: ${out//$'\n'/ | }"; return 1; }
+}
+
+# The challenge's 42 checks against the server with 2 workers (and with the reference's pragmas, which the step lab measures against), started
+# the way the lab starts it (`--ext sockets --ext event --ext pcntl`), and no container left behind.
+check_challenge_test_passes_with_workers() {
+  local out env left rc
+  for env in APP_WORKERS=2 "APP_WORKERS=2 APP_PRAGMAS=mmap-off"; do
+    rc=0
+    # shellcheck disable=SC2046 # one --env per word on purpose
+    out="$(bash "$LAB/challenge-test.sh" --image 8.5 --ext sockets --ext event --ext pcntl $(printf -- '--env %s ' $env) 2>&1)" || rc=$?
+    [ "$rc" = 0 ] || { echo "$env: lab/challenge-test.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
+    grep -qx 'passed=42 failed=0' <<<"$out" || { echo "$env: the summary is not 'passed=42 failed=0': ${out//$'\n'/ | }"; return 1; }
+  done
+  left="$(docker ps -a --format '{{.Names}}' | grep '^lab-challenge-' || true)"
+  [ -z "$left" ] || { echo "containers left behind: ${left//$'\n'/ }"; return 1; }
+}
+
+# wait_container_ends <container> <seconds>: waits until the container is no longer running; returns 1 when it still is.
+wait_container_ends() {
+  for _ in $(seq 1 $(( $2 * 5 ))); do
+    [ "$(docker inspect -f '{{.State.Running}}' "$1")" = true ] || return 0
+    sleep 0.2
+  done
+  return 1
+}
+
+# Two workers in a container, where the server is the container's first process: the boot lines, 200 connections with a request each answered
+# by both processes (the telemetry lines say their pid), a worker killed with SIGKILL ends the container with exit code 1 (the parent stops
+# the other worker and exits), and SIGTERM to the container's first process ends it with exit code 0.
+check_app_workers_in_a_container() {
+  local name=lab-check-workers log pid answered total code
+  CHECK_APP_EXT_EXTRA=pcntl start_app_for_check "$name" 18166 0 APP_WORKERS=2 APP_TELEMETRY=1 || return 1
+  log="$(docker logs "$name" 2>&1)"
+  grep -Eqx 'workers: 2 \(pids [0-9]+ [0-9]+\)' <<<"$log" || { docker rm -f "$name" >/dev/null 2>&1; echo "the boot lines do not say the workers: ${log//$'\n'/ | }"; return 1; }
+  docker exec "$name" php /lab/check/conn-client.php 18166 seq 200 >/dev/null
+  sleep 2.2
+  log="$(docker logs "$name" 2>&1)"
+  answered="$(sed -n 's/^telemetry //p' <<<"$log" | jq -s '[.[] | select((.requests["GET /health"] // 0) > 0) | .pid] | unique | length')"
+  total="$(sed -n 's/^telemetry //p' <<<"$log" | jq -s '[.[].requests["GET /health"] // 0] | add')"
+  if [ "$answered" != 2 ] || [ "$total" != 200 ]; then
+    docker rm -f "$name" >/dev/null 2>&1
+    echo "expected 200 health checks answered by 2 processes, the telemetry says $total by $answered: $(grep '^telemetry' <<<"$log" | head -n 3 | tr '\n' ' ')"
+    return 1
+  fi
+  pid="$(sed -n 's/^workers: 2 (pids \([0-9]*\) [0-9]*)$/\1/p' <<<"$log")"
+  docker exec "$name" sh -c "kill -9 $pid"
+  wait_container_ends "$name" 10 || { docker logs "$name" 2>&1 | tail -n 3; docker rm -f "$name" >/dev/null 2>&1; echo "the container still runs 10 s after a worker was killed"; return 1; }
+  code="$(docker inspect -f '{{.State.ExitCode}}' "$name")"
+  log="$(docker logs "$name" 2>&1)"
+  docker rm -f "$name" >/dev/null 2>&1
+  [ "$code" = 1 ] || { echo "after a worker was killed the container exited $code, not 1: ${log//$'\n'/ | }"; return 1; }
+  grep -qx "server: worker $pid was killed by signal 9, stopping the others" <<<"$log" || { echo "the parent did not say which worker was killed: ${log//$'\n'/ | }"; return 1; }
+  CHECK_APP_EXT_EXTRA=pcntl start_app_for_check "$name" 18166 0 APP_WORKERS=2 || return 1
+  docker kill -s TERM "$name" >/dev/null
+  wait_container_ends "$name" 10 || { docker rm -f "$name" >/dev/null 2>&1; echo "the container still runs 10 s after SIGTERM"; return 1; }
+  code="$(docker inspect -f '{{.State.ExitCode}}' "$name")"
+  docker rm -f "$name" >/dev/null 2>&1
+  [ "$code" = 0 ] || { echo "after SIGTERM the container exited $code, not 0"; return 1; }
+}
+
 # The feed bench times every case of the S6 variants and none is skipped (each case checked its answer against the reference's), and the
 # plans saved next to its output are what SQLite says today.
 check_micro_feed_bench() {
@@ -1013,7 +1083,7 @@ check_series_cases() {
   [ "$rc" = 0 ] || { echo "series-test.php exited $rc: ${out//$'\n'/ | }"; return 1; }
   grep -q '^FAIL' <<<"$out" && { echo "a case failed: ${out//$'\n'/ | }"; return 1; }
   ok="$(grep -c '^ok  ' <<<"$out")"
-  [ "$ok" -ge 23 ] || { echo "expected at least 23 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
+  [ "$ok" -ge 30 ] || { echo "expected at least 30 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
   return 0
 }
 
@@ -1029,14 +1099,15 @@ check_telemetry_cases() {
 }
 
 # start_app_for_check <container> <port> <cold 0|1> [K=V]...: the app on a fresh copy of the seed through lab_start_app, waited on until it
-# listens. Prints the failure and returns 1 when it never does.
+# listens. Prints the failure and returns 1 when it never does. CHECK_APP_EXT_EXTRA (one extension name, set for that one call) is loaded after
+# sockets and event: `pcntl` for APP_WORKERS.
 # Why disable SC2034: LAB_COLD, LAB_EXT and LAB_ENV are read by lab_start_app and lab_build_php_flags (lib.sh), which shellcheck does not follow.
 # shellcheck disable=SC2034
 start_app_for_check() {
   local name="$1" port="$2"
   LAB_COLD="$3"
   shift 3
-  LAB_EXT=(sockets event)
+  LAB_EXT=(sockets event ${CHECK_APP_EXT_EXTRA:+"$CHECK_APP_EXT_EXTRA"})
   LAB_ENV=("$@")
   lab_build_php_flags
   docker rm -f "$name" >/dev/null 2>&1
@@ -1238,6 +1309,42 @@ check_realistic_soft_limit_run() {
   [ "$rc" = 0 ] || { echo "--no-series: lab/realistic.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
   jq -e '.server_connections.fds_peak == null and (.server_connections.fds_peak_note | contains("--no-series")) and .server_connections.telemetry.close_responses > 0' "$json" >/dev/null \
     || { echo "--no-series: the JSON should say the fd peak was not read: $(jq -c '.server_connections' "$json")"; return 1; }
+  [ -z "$(docker ps -a --format '{{.Names}}' | grep '^lab-realistic-' || true)" ] || { echo "containers left behind"; return 1; }
+}
+
+# The realistic mode with 2 workers, 300 idle connections, about 190 VUs and a soft limit of 180 a process. The 300 idle connections split about
+# 150 and 150 (never past 180, so none is closed), and with the VUs' connections each process hovers around its limit, so a good share of the
+# responses of k6 say close (a connection that closes frees a seat, so not all of them). Valid; the telemetry of both processes summed (the
+# closes are above a tenth of k6's request count and not above it; the peak is the sum of the two peaks and says so; the rows say 2 processes and count the requests the aggregator counted within
+# 2 %); the file descriptors of both processes counted; the extensions recorded.
+check_realistic_workers_run() {
+  local out rc=0 json verdict
+  json="$(mktemp -d)/realistic.json"
+  out="$(bash "$LAB/realistic.sh" --image 8.5 --think-scale 0.1 --idle 300 --hold 200,15 --ext sockets --ext event --ext pcntl --env APP_WORKERS=2 --env APP_SOFT_CONN_LIMIT=180 --label test --out "$json" 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "lab/realistic.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
+  grep -qx 'VALID' <<<"$out" || { echo "the run is not marked VALID: ${out//$'\n'/ | }"; return 1; }
+  verdict="$(jq -c '
+    ($ARGS.named.requests) as $k6
+    | .server_connections as $c
+    | .results.series as $rows
+    | ($rows | .[1:-1]) as $inner
+    | ([$inner[].telemetry.requests // {} | to_entries[].value] | add // 0) as $tel
+    | ([$inner[].requests] | add // 0) as $agg
+    | {clauses: {
+         idle_held: (.idle.held_at_start == 300 and .idle.held_at_end == 300 and .idle.closed_by_server_at_end == 0),
+         no_k6_connection_error: (.k6_connection_errors == 0),
+         two_processes_in_the_summary: ($c.telemetry.processes == 2 and $c.telemetry.open_peak_note != null),
+         some_responses_close: ($c.telemetry != null and $c.telemetry.close_responses > 0.1 * $k6 and $c.telemetry.close_responses <= $k6),
+         no_accept_pause: ($c.telemetry.accept_pauses == 0),
+         peak_is_the_sum_of_two_peaks: ($c.telemetry.open_peak >= 300 and $c.telemetry.open_peak <= 600),
+         rows_say_two_processes: (([$rows[].telemetry.processes // 0] | max) == 2),
+         telemetry_counts_the_requests: (($tel - $agg | fabs) <= 0.02 * $agg + 8),
+         fds_of_both_processes: ($c.fds_peak > 300 and $c.fds_peak_note == null),
+         extensions_recorded: (.server.ext == ["sockets", "event", "pcntl"] and (.server.env | index("APP_WORKERS=2") != null))},
+       numbers: {k6_requests: $k6, server_connections: $c, telemetry_requests: $tel, aggregator_requests: $agg}}' --argjson requests "$(jq '.results.run_total | map(.count) | add' "$json")" "$json")"
+  jq -e '.clauses | all' <<<"$verdict" >/dev/null \
+    || { echo "the JSON does not hold the run, failing clauses $(jq -c '[.clauses | to_entries[] | select(.value == false) | .key]' <<<"$verdict"), numbers $(jq -c '.numbers' <<<"$verdict")"; return 1; }
+  grep -q '^server connections: soft limit 180, .* open at most (sum of the peak of each process, 2 processes), ' <<<"$out" || { echo "the table does not say the peak is a sum over 2 processes: ${out//$'\n'/ | }"; return 1; }
   [ -z "$(docker ps -a --format '{{.Names}}' | grep '^lab-realistic-' || true)" ] || { echo "containers left behind"; return 1; }
 }
 
@@ -2037,6 +2144,9 @@ CHECKS=(
   check_diy_group_commit
   check_app_group_commit_cases
   check_challenge_test_passes_with_group_commit_and_checkpointer
+  check_app_workers_cases
+  check_challenge_test_passes_with_workers
+  check_app_workers_in_a_container
   check_soft_limit_closes_the_third_connection
   check_soft_limit_keeps_idle_connections
   check_soft_limit_serves_churn_at_256_fds
@@ -2059,6 +2169,7 @@ CHECKS=(
   check_idle_client_hold_mode
   check_realistic_idle_run
   check_realistic_soft_limit_run
+  check_realistic_workers_run
   check_realistic_idle_closed_by_the_server_fails
   check_macro_fresh_db_cold_per_second
   check_macro_cold_needs_fresh_db

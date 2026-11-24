@@ -37,6 +37,9 @@ const APP_POST_SELECT = 'SELECT p.id, p.body, p.created_at, u.username AS author
 //   APP_CHECKPOINTER  <ms>: the server connection never checkpoints (wal_autocheckpoint = 0) and a second process, started at boot with its own
 //                     connection, runs PRAGMA wal_checkpoint(PASSIVE) every <ms> milliseconds (lab/app/checkpointer.php). It ends with the server.
 //                     Don't use it as it is: under a steady writer the WAL never restarts and grows without bound (about 3 GB in 2 minutes).
+// The variant of S1-b, read apart from the others (app_workers):
+//   APP_WORKERS       <n>: n processes share the port with SO_REUSEPORT, each with its own loop and its own connection to the database
+//                     (lab/app/workers.php). Unset or 1: one process. Refused with APP_LOCKING=exclusive, APP_CHECKPOINTER and APP_PROFILE.
 const APP_FEED_SQL_VARIANTS = ['reference', 'join', 'two-step'];
 const APP_FETCH_VARIANTS = ['assoc', 'num', 'assoc-loop', 'num-loop'];
 const APP_LOCKING_VARIANTS = ['normal', 'exclusive'];
@@ -103,6 +106,41 @@ function app_variants(array $env): array
         throw new InvalidArgumentException('APP_CHECKPOINTER cannot be set with APP_LOCKING=exclusive: the checkpointer is a second process, and with exclusive locking no second process can open the database');
     }
     return $variants;
+}
+
+const APP_WORKERS_MAX = 64;
+
+/**
+ * APP_WORKERS from the environment (pass getenv()): how many processes serve on the one port with SO_REUSEPORT (lab/app/workers.php). Unset,
+ * empty or 1 is one process, as it always was. More than one is refused with what a second process breaks: the exclusive lock (it cannot
+ * open the database), the checkpointer (a third process, which never worked) and the profiler (one file, written by one process).
+ *
+ * @param array<string, mixed> $env
+ * @param array{locking: string, checkpointer: int} $variants app_variants()
+ */
+function app_workers(array $env, array $variants): int
+{
+    $value = $env['APP_WORKERS'] ?? '';
+    if ($value === '') {
+        return 1;
+    }
+    if (!is_string($value) || !ctype_digit($value) || strlen($value) > 3 || (int) $value < 1 || (int) $value > APP_WORKERS_MAX) {
+        throw new InvalidArgumentException('APP_WORKERS must be a whole number from 1 to ' . APP_WORKERS_MAX . ', got ' . json_encode($value));
+    }
+    $workers = (int) $value;
+    if ($workers === 1) {
+        return 1;
+    }
+    if ($variants['locking'] === 'exclusive') {
+        throw new InvalidArgumentException("APP_WORKERS=$workers cannot be set with APP_LOCKING=exclusive: with exclusive locking no second process can open the database");
+    }
+    if ($variants['checkpointer'] > 0) {
+        throw new InvalidArgumentException("APP_WORKERS=$workers cannot be set with APP_CHECKPOINTER: the checkpointer would be one more process on the database");
+    }
+    if ((string) ($env['APP_PROFILE'] ?? '') !== '') {
+        throw new InvalidArgumentException("APP_WORKERS=$workers cannot be set with APP_PROFILE: the profiler writes one file, and it profiles one process");
+    }
+    return $workers;
 }
 
 /** The SQL of the feed for a feed variant (the first statement, for two-step). */

@@ -659,6 +659,42 @@ the real app in the test's process, and `lab/app/server.php` as a child process:
 back and ends with the server, the telemetry line has the batches), and `check_challenge_test_passes_with_group_commit_and_checkpointer`
 (the 42 checks with each switch and both).
 
+### Several processes on one port (`APP_WORKERS`)
+
+`APP_WORKERS=<n>` on `lab/app/server.php` (1 to 64; unset, empty or `1` is the one process it always was: the same boot lines and bytes). With
+`n` of 2 or more the parent reads and checks the configuration and forks `n` children **before** it opens the database or any socket
+(`lab/app/workers.php`). Each child opens its own connection to the database (`app_boot`, never inherited), its own listening socket on the
+same host and port with `SO_REUSEPORT` (`diy_listen($host, $port, $backlog, true)`: the backlog and `TCP_NODELAY` are the single process's), its
+own event loop and its own 65,535 file descriptors, and tells the parent it listens. The kernel splits the new connections between the
+children by a hash of the client's address and port.
+
+- **Needs `pcntl`.** The lab's default extension list is `sockets event` and one `--ext` replaces the whole list: every run and check with
+  workers passes `--ext sockets --ext event --ext pcntl`. Without it the server says so on stderr and exits 1.
+- **Boot lines:** `workers: <n> (pids <a> <b>)`, then the lines of a single process, once the children all listen: `listening on`, `soft
+  connection limit: <n> per process` (the limit applies to each process's own connections), `app variants: ...`, `loop:` and `socket:` (the
+  first child's).
+- **The parent never restarts a child.** When one ends, however it ends, the parent stops the others and exits 1 (`server: worker <pid> was
+  killed by signal 9, stopping the others`), so that a bench sees the crash. SIGTERM or SIGINT to the parent stops the children and exits 0. A
+  container ends all its processes when it is removed. A child does not watch its parent: killing the parent alone (outside a container) leaves
+  the children serving.
+- **SQLite:** each child is a WAL reader and writer on the same file, with `busy_timeout = 5000`. A write that waits for the other child's lock
+  waits inside its own request, and is committed before its response.
+- **Refused with 2 or more** (exit 1, a message on stderr): `APP_LOCKING=exclusive` (a second process cannot open the database),
+  `APP_CHECKPOINTER` (one more process on the database) and `APP_PROFILE` (one file, one process). With `APP_WORKERS=1` all three are as before.
+- **Telemetry** (`APP_TELEMETRY=1`): one line per child per second, with `"pid"` after `second`. `lab/macro/series-lib.php` (`telemetry_sum`)
+  sums the lines of one second into one row (`processes`: how many; requests, closes and faults added, the longest callback and the WAL size
+  the largest, the batch mean of group commit weighted by commits), and `lab/realistic.sh` sums the run: the closes and the accept pauses
+  added, **`open_peak` the sum of each process's own peak** (an upper bound of the connections open at once; `open_peak_note` says so), and
+  `processes`. With one process the JSON and the rows are what they were. The sampler already counts the file descriptors, memory and CPU of
+  every process of the server's container.
+- **Both processes answering** is read from the telemetry (`pid`), so the response bytes carry no extra header.
+
+**Checks:** `app-workers-test.php` (the switch and its refusals; the supervision with children that only report; the server as a process:
+boot lines, a database connection and a listening socket per child and none in the parent, 200 connections answered by both children and 60
+writes each committed before its 201, a child killed with SIGKILL, SIGTERM, the refusals, no pcntl, no database), `check_challenge_test_passes_with_workers`
+(the 42 checks, also with `APP_PRAGMAS=mmap-off`), `check_app_workers_in_a_container` (the same where the server is the container's first process:
+exit codes 1 and 0), `check_realistic_workers_run` (a realistic run with the telemetry summed), and the cases of `series-test.php`.
+
 ## The realistic mode
 
 ```bash

@@ -80,6 +80,25 @@ $tel = telemetry_parse($log);
 check('the telemetry lines are keyed by their second, the other lines are ignored', array_keys($tel) === [100, 101], json_encode(array_keys($tel)));
 check('a line keeps its numbers', $tel[100]['requests'] === ['GET /feed' => 5, 'GET /posts/:id' => 7] && $tel[100]['longest_callback_ms'] === 1.5 && $tel[100]['gc_runs'] === 2);
 
+// A server of two processes prints a line per process per second, each with its pid: the lines of a second are summed into one row.
+// The expected numbers are worked out by hand from the two lines below.
+$two = implode("\n", [
+    'telemetry {"second":100,"pid":7,"requests":{"GET /feed":5,"GET /posts/:id":7},"wal_bytes":4096,"longest_callback_ms":1.5,"gc_runs":2,"gc_collected":10,"minflt":30,"majflt":1,"connections":{"open_peak":30000,"limit_closes":2,"accept_pauses":0},"group_commit":{"commits":4,"batch_mean":2.0,"batch_max":3}}',
+    'telemetry {"second":100,"pid":8,"requests":{"GET /feed":3,"POST /posts":4},"wal_bytes":8192,"longest_callback_ms":0.5,"gc_runs":1,"gc_collected":4,"minflt":20,"majflt":0,"connections":{"open_peak":29000,"limit_closes":1,"accept_pauses":1},"group_commit":{"commits":2,"batch_mean":5.0,"batch_max":9}}',
+    'telemetry {"second":101,"pid":8,"requests":{"GET /feed":1},"wal_bytes":8192,"longest_callback_ms":0.2,"gc_runs":0,"gc_collected":0,"minflt":0,"majflt":0}',
+    '',
+]);
+$sum = telemetry_parse($two);
+check('two processes print the same second: one row, with the process count and no pid', array_keys($sum) === [100, 101] && $sum[100]['processes'] === 2 && !isset($sum[100]['pid']), json_encode($sum[100] ?? null));
+check('their requests are summed per endpoint', $sum[100]['requests'] === ['GET /feed' => 8, 'GET /posts/:id' => 7, 'POST /posts' => 4], json_encode($sum[100]['requests']));
+check('the counts of the loop are summed and the longest callback and the WAL are the largest', $sum[100]['gc_runs'] === 3 && $sum[100]['minflt'] === 50 && $sum[100]['majflt'] === 1 && $sum[100]['longest_callback_ms'] === 1.5 && $sum[100]['wal_bytes'] === 8192);
+check('their connections are summed, the peaks too', $sum[100]['connections'] === ['open_peak' => 59000, 'limit_closes' => 3, 'accept_pauses' => 1], json_encode($sum[100]['connections']));
+check('the mean batch of group commit is weighted by the commits: (4 x 2 + 2 x 5) / 6 = 3', $sum[100]['group_commit'] === ['commits' => 6, 'batch_mean' => 3.0, 'batch_max' => 9], json_encode($sum[100]['group_commit']));
+check('a second only one process printed is a row of one process', $sum[101]['processes'] === 1 && $sum[101]['requests'] === ['GET /feed' => 1]);
+// A line with no pid (one process) is the row, byte for byte: the same text decodes to the same row.
+$one = 'telemetry {"second":100,"requests":{"GET /feed":5},"wal_bytes":4096,"longest_callback_ms":1.5,"gc_runs":2,"gc_collected":10,"minflt":30,"majflt":1,"connections":{"open_peak":3,"limit_closes":0,"accept_pauses":0}}';
+check('a line with no pid is kept as it is', telemetry_parse($one) === [100 => json_decode(substr($one, 10), true)] && !isset(telemetry_parse($one)[100]['processes']));
+
 // --- the merge ----------------------------------------------------------------------------------------------------------------------
 // Samples at the boundaries 200 to 204; latency for seconds 200, 201 and 203 (nothing at 202); telemetry for 200 and 202.
 $samples = [];

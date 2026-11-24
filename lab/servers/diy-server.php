@@ -259,18 +259,19 @@ final class DiyServer
 
 /**
  * The listening socket of a DIY server: bound on $host:$port, non-blocking, with TCP_NODELAY. Exits with a message when it cannot
- * listen. One process serves, so no SO_REUSEPORT (PHP asks for SO_REUSEADDR by default).
+ * listen. One process serves by default, so no SO_REUSEPORT (PHP asks for SO_REUSEADDR by default); with $reusePort several processes
+ * each bind the same port and the kernel splits the new connections between them.
  *
  * @return resource
  */
-function diy_listen(string $host, int $port, int $backlog)
+function diy_listen(string $host, int $port, int $backlog, bool $reusePort = false)
 {
     $listener = stream_socket_server(
         "tcp://$host:$port",
         $errno,
         $errstr,
         STREAM_SERVER_BIND | STREAM_SERVER_LISTEN,
-        stream_context_create(['socket' => ['backlog' => $backlog, 'so_reuseport' => false]])
+        stream_context_create(['socket' => ['backlog' => $backlog, 'so_reuseport' => $reusePort]])
     );
     if ($listener === false) {
         fwrite(STDERR, "diy-server: cannot listen on $host:$port: $errstr ($errno)\n");
