@@ -57,7 +57,10 @@ rule cover every pair?
 **Meanwhile:** coded as A in 5b's scope 2 with a `FIXME(pending)` (run rules), made precise by the plan review
 (D71): runs the harness marks invalid stay out as today, the quartiles are inclusive (0.36 µs on 5a's A/A at 24,000),
 and round 1 runs the reference last so a one-pair screen has the order bias against the variant. B is `--order fixed`
-plus a typed `--floor` (the largest A/A difference).
+plus a typed `--floor` (the largest A/A difference). **First result (2026-11-24, 7a):** the A/A at 24,000 in
+alternating order gives a floor of 0.864 µs/req (median +0.08, interquartile range 0.78): the first run of a round
+still costs 0.2 to 0.3 µs more, and alternating turns that bias into spread instead of a one-sided error. Under B it
+would have stayed a one-sided bias of about -0.2 µs with a floor near 0.27 (`lab/results/2026-11-24-cpu-steps-5b/`).
 
 **Answer:**
 
