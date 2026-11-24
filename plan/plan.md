@@ -1,10 +1,10 @@
 # $12 server challenge in PHP
 
-**Status:** ▶️ Phase 5b: scopes 1 to 7 and 9 done (branch `phase-5b-claude` pushed, not merged); the delta reviews of scope 9 running · approved on 2026-11-21 · snapshot 2026-11-21-0920 ·
+**Status:** 🏁 Phase 5b delivered: scopes 1 to 7 and 9 (8 skipped, D75), both final reviews OK, branch `phase-5b-claude` pushed at `afffbb4`, not merged · approved on 2026-11-21 · snapshot 2026-11-21-0920 ·
 **Round:** 6
 **Since your last read:** scope 9 ran on x86 (one `c5.2xlarge`, 43 minutes, everything tagged removed): **S1-b is
 chosen** (D77, 2 processes on `SO_REUSEPORT`, the soft limit in each). It costs +7.44 µs/req (+14.8 %) on the Xeon and adds
-10.89 µs at 150,000 users, against S1-d's 13.51 (26.9 %, over the 15 % line); at 100,000 users the two are 1.05 µs
+10.90 µs at 150,000 users, against S1-d's 13.51 (26.9 %, over the 15 % line); at 100,000 users the two are 1.04 µs
 apart, a tie in practice. The second reconnect pair gave 23.44 µs (5a's 23.69). The bench estimate is 79.0 µs/req
 without S1's cost (5a: 83.9) and 96.1 at 150,000 users with S1-b. Results:
 `lab/results/2026-11-24-x86-s1b/` on the branch. Earlier: phase 5b's Mac work (scopes 1 to 7, D75) found no new CPU
@@ -15,6 +15,9 @@ variant beyond the noise, and D76 put the pure ring phase after phase 7. Progres
 
 > **Answer freely:** a letter or `ok`, your own choice (`other: …`), `?` if it's unclear, or
 > `badly framed: …` if an option is missing or the question doesn't hold.
+
+**🟠 Review and merge `phase-5b-claude`** (or tell the project manager to): the delivery and the merge command are in
+[run.md](run.md#delivery).
 
 **🟠 Delete the AWS policy `twelve-dollar-x86-calibration`** (detach it from your CLI user, then delete it): scope 9
 is done and `teardown.sh --verify` shows nothing tagged left (only the terminated instance).
