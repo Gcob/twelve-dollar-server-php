@@ -11,7 +11,7 @@ measurement (D5). Then the run stops (D12).
 **Plan review:** [PLAN-2026-11-23-2335.md](../reviews/PLAN-2026-11-23-2335.md), NOT_OK (1 🔴, 5 🟠, 9 🟡). Its six
 questions were settled by the project manager with the reviewer's own picks (D71 to D73), and its minor points are
 folded in below. Delta: [PLAN-2026-11-23-2341-delta.md](../reviews/PLAN-2026-11-23-2341-delta.md), NOT_OK (1 🟠: 7a
-would measure a worktree being edited), settled with the reviewer's pick (D74). Prediction 9 was revised at 23:37, still before any measurement. The reviewer ran SQLite's JSON
+would measure a worktree being edited), settled with the reviewer's pick (D74). Delta 2: [PLAN-2026-11-23-2342-delta.md](../reviews/PLAN-2026-11-23-2342-delta.md), OK (1 🟡: the commit goes into `stages.json`, folded into scope 1). Prediction 9 was revised at 23:37, still before any measurement. The reviewer ran SQLite's JSON
 against the golden files: the feed and the three posts byte for byte; only U+2028 differs (SQLite raw), which the
 spec allows.
 
@@ -90,7 +90,7 @@ bake-off's server; the TIME_WAIT gate. New for 5b:
   one series per line: a name, then the arguments of one `steplab.sh` call. For each series: the quiet check (the
   Docker VM's running containers that aren't the lab's: 0, or refuse; `--allow-busy` runs anyway and labels every
   JSON of the series `busy: true`, for smokes only), the dated start, the `steplab.sh` call with `--out <dir>/<name>`,
-  the dated end, then the gap. It writes `stages.json` (each series: name, command, start, end, exit code, quiet check)
+  the dated end, then the gap. It writes `stages.json` (the commit it measures and whether the tree is dirty; each series: name, command, start, end, exit code, quiet check)
   and prints a line per series. A series that fails stops the file (its exit code kept), unless `--keep-going`.
 - **The host line:** `realistic.sh` adds to each run's JSON a `host` object read twice, before the warm-up and in the
   middle of the plateau: `load1`, `load5` (the VM's `/proc/loadavg`), `cpu_busy_pct` (the VM's `/proc/stat` over 5
