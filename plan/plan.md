@@ -38,13 +38,24 @@ The reference always runs first in a round, and the A/A pairs show an order effe
 24,000 req/s was 2.57 µs because of one run that failed the 97 % rule (0.27 without it), and D66 then kept variant
 runs that failed the same rule. Both reviewers asked for one rule, written before the pairs.
 
+**Question:** before 5b measures anything, should `steplab.sh` alternate which side runs first, and should one floor
+rule cover every pair?
+
 - **A.** `steplab.sh` alternates the order (reference first, then variant first), and one rule for every pair, A/A
   included: a run that fails the 97 % rule counts, and the floor is the median of the A/A differences plus their
-  spread. **For:** no order bias; the same rule both sides. **Against:** new A/A pairs at each rate.
-- **B.** Keep today's order and floor, and say it in each README. **For:** comparable with 5a's numbers.
-  **Against:** a variant of about 0.5 µs stays invisible or looks real by chance.
+  spread.
+  **Aims at:** verdicts with no order bias, the same rule on both sides.
+  **For:** a 0.5 µs variant is neither hidden nor faked by the order. **Against:** new A/A pairs at each rate.
+- **B.** Keep today's order and floor, and say it in each README.
+  **Aims at:** 5b's numbers comparable pair for pair with 5a's.
+  **For:** nothing to rebuild or recalibrate. **Against:** a variant of about 0.5 µs stays invisible or looks real
+  by chance.
 
-**Recommendation:** A. **Flips if:** 5b must compare its numbers to 5a's pair for pair: B.
+**Confidence:** A 75 % · B 25 %
+
+**Recommendation:** A: the steps left in 5b (S7, S2, the loop) are small, so the noise rule decides them.
+
+**Flips if:** 5b must compare its numbers to 5a's pair for pair.
 
 **Answer:**
 
