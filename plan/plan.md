@@ -23,7 +23,8 @@ costs **+2.14 µs/req (+8.6 %)**, a tie with S1-d near 100,000 users and cheaper
 but a reconnect costs **4.0 times** more on the Xeon than on the Mac (23.69 against 5.91 µs, 7a), so the S1 choice is
 decided on x86. **What I need:** reattach the factory's `aws/phase-5-x86-calibration-policy.json` to your CLI user and
 say "go AWS"; I'll run it right away (scopes 1 to 7 are done, scope 8 is skipped, D75), then you delete the policy.
-Without your go, the run delivers scopes 1 to 7 and stops here (⏸️).
+Without your go, the run delivers scopes 1 to 7 and stops here (⏸️): S1 stays S1-d (5a's choice), and S1-b stays
+measured on the Mac only.
 
 ### Q18/19 [run, lab] : a series driver and a host-state line in the lab, first thing in 5b?
 

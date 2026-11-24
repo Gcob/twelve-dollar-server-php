@@ -5,7 +5,8 @@ order of a round and reads one floor rule (Q19, coded as A until answered); S1 h
 pair on the Xeon, S1-b's own cost, the S1 variant for the bench's sizes, D67, D69); S7, S2, the event loop, S6's
 driver and the PHP version each have a chosen variant with its µs of CPU per request (median of its runs) against the
 reference's (D49), or the micro bench that says why none was run; the chosen variants together have a new µs/req,
-profile and held rate on the Mac, and on x86 if the AWS session runs. The predictions below were written before any
+profile and held rate on the Mac, and on x86 if the AWS session runs (D75: no variant was chosen, so 5a's stand,
+and predictions 11 and 13 are not applicable). The predictions below were written before any
 measurement (D5). Then the run stops (D12).
 
 **Plan review:** [PLAN-2026-11-23-2335.md](../reviews/PLAN-2026-11-23-2335.md), NOT_OK (1 🔴, 5 🟠, 9 🟡). Its six
