@@ -613,6 +613,40 @@ with pinned versions, healthy within 60 s; the bench starts it with systemd as `
 
 **Verdict:** ✅ the brief of phase 6's project manager.
 
+### 2026-11-24 14:05 · 💡 Idea: other C libraries through FFI, and a thin C glue between PHP and them
+
+**Jacob:** could we search GitHub, PECL or elsewhere for other C libraries we could use through FFI, for the ring for
+example? And could a small piece of C just glue PHP to such a library, to remove FFI's overhead? Is that too far
+from PHP, and would it really help, or are the bottlenecks elsewhere?
+
+**Challenge, the libraries (a first search, 2026-11-24):**
+
+- **Swoole 6.2:** its coroutine HTTP server can run on io_uring sockets, built with `--enable-uring_socket` (plus
+  `--enable-iouring` or `--with-liburing-dir`). Off-the-shelf C, like the record holder's Swoole, so inside D2's line.
+  The release notes name only the coroutine HTTP server. The Swoole entries ran at 94 to 101 µs/req on the VM against
+  our 84 (D61), so the ring would have to win more than that gap. A cheap screen: one configure flag, one server.
+- **OpenSwoole 26.2:** an io_uring reactor that uses `IORING_OP_POLL_ADD` in place of epoll. It still makes one
+  read and one write syscall per request, so it keeps most of the kernel's share. Probably not worth a run.
+- **ext-mrloop** (`ringPHP/php-mrloop`): a PHP extension over the mrloop io_uring loop, with a `tcpServer()` API.
+  Off-the-shelf but small (32 stars): an audit before any screen.
+- **php-uring** (`l3tum/php-uring`): an FFI userland package, 0.1.2 from 2023, 17 installs. Prior art for phase 8 at
+  most.
+- **SQLite:** no library helps. 5b's FFI driver showed SQLite's own work is 98 % of a feed; a different binding
+  changes the 2 %. Only skipping SQLite's VM (reading the B-tree) changes the cost, and that's our own C.
+
+**Challenge, the C glue:**
+
+- **The most it can save is what FFI costs:** about 0.4 µs/req on the Mac and about 1 µs on the bench (5a scope 4),
+  about 1 % of 84 µs. Ruby's ladder agrees: its own C ring added 5,000 users (155,000 to 160,000, about 3 %).
+- **Where the CPU goes:** SQLite 35 to 55 %, the kernel's syscalls 25 to 40 %, JSON and the parser 15 to 30 %. The
+  glue touches none of them; the ring touches the kernel's share, through `liburing-ffi` with no C of ours.
+- **It's our own C:** the line D2 drew, already ❌ on 2026-11-23 19:28. The hybrid stays a possible second entry,
+  decided after phase 8 (D76).
+
+**Verdict:** ❌ the C glue (D2, D60: about 1 to 3 %). 🔶 the libraries: a proposal for phase 8's plan, as its first
+scope: a screen of Swoole 6.2's io_uring HTTP server (one pair against phase 7's server, fail fast), and an audit of
+ext-mrloop. OpenSwoole's POLL_ADD reactor and php-uring are left out unless the audit finds a reason.
+
 ### 2026-11-22 18:08 · 💡 Idea: try io_uring anyway, something nobody tried in PHP
 
 **Jacob:** "do you think we could still even try it? […] to be at the top, we need to do some, let's say, gray hat
