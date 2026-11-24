@@ -319,6 +319,10 @@
   the Xeon's doesn't (same-rate factor 1.61, not 1.92), so the 3.58 times may be nearer 3 (project manager, 20:24). The x86 run includes `mmap-off` once (D66; no measured
   configuration has it yet), and its brief says that stock Docker on Ubuntu needs the `cgroupfs` driver for the
   lab's probe (pr-reviewer pass 2, 🟡 8 and 9).
+- **D68:** phase 5b's first scope adds a series driver (`lab/stages.sh`: the quiet check, dated start and end, one
+  `steplab.sh` per series, the gap between runs) and a host line in each run's JSON (load, the VM's CPU, steal on
+  x86, the disk's fsync time), before any measurement. Six of 5a's measuring scopes rewrote the same script, and four
+  couldn't tell a slow day from slow code (Jacob, Q18 = A, decision board, 2026-11-23 23:01).
 
 ## History
 

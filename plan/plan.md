@@ -30,7 +30,7 @@ between runs), and four could not explain a slow series: `other_containers: 0` w
 
 **Recommendation:** A. **Flips if:** 5b has few measuring scopes: B.
 
-**Answer:**
+**Answer:** A (Jacob, decision board, 23:01). D68.
 
 ### Q19/19 [run, method] : rotate the order in a round (ABBA) and settle the floor rule once, before 5b measures?
 
@@ -47,6 +47,8 @@ runs that failed the same rule. Both reviewers asked for one rule, written befor
 **Recommendation:** A. **Flips if:** 5b must compare its numbers to 5a's pair for pair: B.
 
 **Answer:**
+
+---
 
 Answered questions: [questions/](questions/), the latest in
 [2026-11-23-1919.ronde-5.md](questions/2026-11-23-1919.ronde-5.md).
@@ -79,7 +81,7 @@ step's choice backed by a measurement.
 | 7 | Score           | `bench/load.js` ramps, x86 calibration                      | More than 71,000 held for 5 minutes                     |
 | 8 | Submit          | The PR to the challenge repo                                | CI green                                                |
 
-**Decisions:** 67 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
+**Decisions:** 68 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
 is a prediction we re-measure, not an answer.
 
 ### Phase 5a scopes (delivered)
