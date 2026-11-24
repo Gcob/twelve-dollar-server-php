@@ -501,6 +501,23 @@ is 85,000 to 90,000. The feed is about half the CPU and about 80 % of a feed is 
 **Verdict:** 👀 a forecast, not a decision. Phase 5b aims at 100,000 (no reconnect cost, the FFI SQLite driver),
 120,000 is the stretch. Compare with the real score in phase 7.
 
+### 2026-11-23 19:28 · 💡 Idea: our own PHP extensions in C, to save what FFI costs
+
+**Jacob:** "Could we be able to add our custom php modules extensions to save what FFI costs?"
+
+**Challenge:**
+
+- **FFI costs almost nothing:** scope 4 measured about 0.4 µs per request on the Mac at 8 requests per loop turn,
+  about 1 µs on the bench, about 1 % of the skeleton's 84 µs. An extension saves at most that: a tiny margin (D60).
+  The cost is in SQLite running the query and, past the fd wall, in x86's reconnects.
+- **It's our own native code:** ❌ since 2026-11-22 (entry "compile the slowest PHP functions to native code", D2).
+  The leaderboard notes file HolyPHP's mostly-C entry as "not really PHP"; our own C extension crosses that line.
+- **Off-the-shelf extensions stay fine:** `pdo_sqlite`, `ext-event`, Swoole, FFI itself. The line is writing C
+  ourselves.
+
+**Verdict:** ❌ D2, and D60 (about 1 % at best). The PHP-side levers are the FFI SQLite driver (phase 5b) and removing
+the reconnect cost (Q17).
+
 ### 2026-11-22 18:08 · 💡 Idea: try io_uring anyway, something nobody tried in PHP
 
 **Jacob:** "do you think we could still even try it? […] to be at the top, we need to do some, let's say, gray hat
