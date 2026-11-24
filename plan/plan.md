@@ -1,12 +1,11 @@
 # $12 server challenge in PHP
 
-**Status:** 🏁 Phase 5a merged (the step lab, first run; merge `a9ffb59`); phase 5b next · approved on 2026-11-21 · snapshot 2026-11-21-0920 ·
+**Status:** 🔵 Phase 5b running (the step lab, second run) · approved on 2026-11-21 · snapshot 2026-11-21-0920 ·
 **Round:** 6
-**Since your last read:** phase 5a delivered on 2026-11-23 at 21:11, both final reviews OK, branch
-`phase-5-claude` pushed, not merged. S1-d holds the fd wall; of S6, S8 and S9 only `mmap-off` is kept (about 2 µs of
-27, D66); on x86 a request costs 1.61 times the Mac at the same rate, and a reconnect 3.6 times (S1-b goes to 5b, D67).
-Merged on Jacob's go (`a9ffb59`). Delivery and headline numbers in
-[runs/phase-5a/run.md](runs/phase-5a/run.md) ("Delivery").
+**Since your last read:** phase 5b started on 2026-11-23 at 23:19 on your "Yes, merge and go". Its plan is in
+[details/phase-5b.md](details/phase-5b.md): 9 scopes, the predictions written before any run. Two project-manager
+decisions: S1-b is built before the AWS session, so one session prices it with the reconnect (D69), and 5b's
+reference is `mmap-off` (D70). Q19 is coded as A until you answer. Progress in [run.md](run.md).
 **Project:** this repo, `plan/` · **Submission:** `submissions/php-<runtime>-Gcob/` · **Jira:** none
 
 ## 👉 Your turn
@@ -55,6 +54,9 @@ rule cover every pair?
 
 **Flips if:** 5b must compare its numbers to 5a's pair for pair.
 
+**Meanwhile:** coded as A in 5b's scope 2 with a `FIXME(pending)` (run rules); B is one switch back
+(`--order fixed`, `--floor`).
+
 **Answer:**
 
 ---
@@ -90,8 +92,25 @@ step's choice backed by a measurement.
 | 7 | Score           | `bench/load.js` ramps, x86 calibration                      | More than 71,000 held for 5 minutes                     |
 | 8 | Submit          | The PR to the challenge repo                                | CI green                                                |
 
-**Decisions:** 68 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
+**Decisions:** 70 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
 is a prediction we re-measure, not an answer.
+
+### Phase 5b scopes (running)
+
+Detail, seams, cases and the predictions in [details/phase-5b.md](details/phase-5b.md). One commit each, on branch
+`phase-5b-claude` (D14). Scopes 7 and 8 measure, so they need a quiet Docker VM (D15); scope 9 needs your go for AWS.
+
+| # | Commit                                                         | Done when (short)                                                        |
+|---|----------------------------------------------------------------|--------------------------------------------------------------------------|
+| 1 | `feat(lab): a series driver and the host's state in each run`  | `stages.sh` runs series with the quiet check and dates; a host line in each run's JSON (D68) |
+| 2 | `feat(lab): alternate the order of a round, and one floor rule` | ABBA rounds, `--floor-from` an A/A folder, one rule for every pair (Q19, coded A) |
+| 3 | `feat(app): several processes on SO_REUSEPORT`                 | S1-b: `APP_WORKERS=2` passes 42/42, both pids answer (D69)               |
+| 4 | `feat(app): JSON built by concatenation or by SQLite`          | `APP_JSON=concat` and `sqlite` 42/42, ns per feed for each                     |
+| 5 | `feat(app): parser and event-loop variants`                    | the parse micro bench; `APP_PARSE=lean` only if it saves 20 %; `APP_LOOP` presets 42/42 |
+| 6 | `feat(app): an FFI driver to libsqlite3`                       | ns per feed for PDO and FFI; stops at the micro if FFI doesn't win       |
+| 7 | `docs(lab): the CPU steps of 5b and S1-b, measured on the Mac` | the A/A floor, each variant's pairs, S1-b's cost, a choice per step      |
+| 8 | `docs(lab): the chosen variants together, 5b`                  | 5b's configuration against 5a's, interleaved holds, the profile          |
+| 9 | `docs(lab): S1-b and the reconnect on x86`                     | only with your go: the reconnect, S1-b and 5b's configuration on a Xeon  |
 
 ### Phase 5a scopes (merged)
 
@@ -176,5 +195,6 @@ You don't need to read this part: it's the index of the execution details, in `d
 - [Phase 3](details/phase-3.md): the bake-off scopes, their seams and cases, and the predictions.
 - [Phase 4](details/phase-4.md): the realistic baseline's scopes, their seams and cases, and the predictions.
 - [Phase 5](details/phase-5.md): the step lab's first run (5a): scopes, seams, cases and the predictions.
+- [Phase 5b](details/phase-5b.md): the step lab's second run: scopes, seams, cases and the predictions.
 - [Phase 2's run](runs/phase-2/run.md), [phase 3's](runs/phase-3/run.md), [phase 4's](runs/phase-4/run.md) and [phase 5a's](runs/phase-5a/run.md): progress, reviews and retro, with
   their `state/`.

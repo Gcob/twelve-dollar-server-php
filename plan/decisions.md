@@ -323,6 +323,19 @@
   `steplab.sh` per series, the gap between runs) and a host line in each run's JSON (load, the VM's CPU, steal on
   x86, the disk's fsync time), before any measurement. Six of 5a's measuring scopes rewrote the same script, and four
   couldn't tell a slow day from slow code (Jacob, Q18 = A, decision board, 2026-11-23 23:01).
+- **D69:** S1-b (`APP_WORKERS`, 5a's scope 3) is built in 5b before the x86 session, not after the second reconnect
+  pair: one AWS session then prices the reconnect and S1-b together, instead of two sessions and two of Jacob's gos.
+  D67's rule still decides the choice (S1-b only if S1-d adds more than 15 % at 150,000 users with the Xeon's price).
+  Why building first is cheap enough: 5a's one pair crossed the line with margin (the reconnect would have to cost
+  under 14.0 µs, not 23.69, to stay under 15 %), and S1-b is about an hour of code with its Mac cost measured the
+  same night (project manager, phase 5b, 2026-11-23 23:24).
+- **D70:** phase 5b's reference is `APP_PRAGMAS=mmap-off` (D66), PHP 8.5, telemetry off, at 24,000 req/s, `s = 0.02`,
+  60,000 idle: the chosen configuration so far without S1-d, which never fires in the realistic mode and costs
+  nothing it can see (5a, `step-lab-together`). The scopes, in [details/phase-5b.md](details/phase-5b.md): the series
+  driver, the round order and floor rule (Q19), S1-b, `APP_JSON` (concatenation, or SQLite's JSON functions), the
+  parser and loop variants, the FFI driver, the Mac measurements, the chosen variants together, x86 with Jacob's go.
+  S4, S3 and S5 are skipped (D60); SQLite's own JSON functions are SQLite's code, not ours (D2) (project manager,
+  phase 5b, 2026-11-23 23:24).
 
 ## History
 
