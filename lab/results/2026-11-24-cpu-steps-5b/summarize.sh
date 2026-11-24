@@ -179,3 +179,50 @@ done
 echo
 jq -rn "$PRELUDE"'"S1-b and S1-d add the same at a share of \($b / $r12 * 100 | r1) % of requests reconnecting (S1-d at the 12,000 req/s figure), that is N = \(64000 / (1 - $b / $r12) | round) users; with the 7,500 req/s figure, \($b / $r75 * 100 | r1) % and N = \(64000 / (1 - $b / $r75) | round). Below that size S1-d is cheaper, above it S1-b is."' \
   --argjson r75 "$RECON7500" --argjson r12 "$MAC_RECON12" --argjson b "$S1B_ADD"
+
+# --------------------------------------------------------------------------------------------------------------------------------
+# The CPU variants of 5b: the screens that ran (one pair each, the A/A's floor), then the profile of the chosen combination.
+echo
+echo "### The CPU variants of 5b: the series, as the driver recorded them (\`stages-screens.json\`)"
+echo
+jq -r '"The lab'"'"'s commit when the file started: `\(.commit[0:7])`, tracked files changed since: \(.dirty). Gap between series: \(.gap_s) s; `--allow-busy`: \(.allow_busy)."' stages-screens.json
+echo
+echo "| Series | start (UTC) | end (UTC) | exit code | other containers at the quiet check | busy | refused |"
+echo "|---|---|---|---|---|---|---|"
+jq -r '.series[] | "| \(.name) | \(.start) | \(.end) | \(.exit_code) | \(.other_containers) | \(.busy) | \(.refused) |"' stages-screens.json
+screen_section json-sqlite "\`APP_JSON=sqlite\` against \`encode\` at 24,000 req/s (\`APP_PRAGMAS=mmap-off\` on both, the A/A's floor, one pair)" json-sqlite
+
+# --------------------------------------------------------------------------------------------------------------------------------
+# The profile: one profiled run of the chosen combination (here the reference alone), folded into the steps, beside 5a's.
+PROFILE=profile/profile.json
+if [ -f "$PROFILE" ]; then
+  TOGETHER=../2026-11-23-step-lab-together
+  STEPS=../2026-11-23-cpu-steps
+  # The reference's runs at 24,000 req/s (the A/A's ten, and the reference of every screen): the fold's microseconds per request.
+  REF_RUNS="$(jq -s 'map(select(type == "object" and has("steplab")))' aa-24000/*.json php-8.6/*.json php-8.4/*.json json-sqlite/*.json)"
+  REF_US="$(jq -r "$PRELUDE"'map(select(counted and (.steplab.variant | IN("a", "b", "ref"))) | us) | med' <<<"$REF_RUNS")"
+  REF_N="$(jq -r 'map(select(.valid and .other_containers.count == 0 and (.steplab.variant | IN("a", "b", "ref")))) | length' <<<"$REF_RUNS")"
+  echo
+  echo "### The profile of the chosen combination (the reference alone: \`APP_PRAGMAS=mmap-off\`), beside 5a's (Excimer, 1 ms CPU time, one run: 24,000 req/s, \`s = 0.02\`, 60,000 idle, telemetry off)"
+  echo
+  jq -r "$PRELUDE"'"The profiled run is valid \(.valid), other containers \(.other_containers.count), idle held \(.idle.held_at_start) / \(.idle.held_at_end). Profiled window (the server'"'"'s whole life after its first answer: warm-up, ramps and plateau): \(.profile.samples) samples at \(.profile.period_s * 1000) ms, the cgroup'"'"'s user CPU \(.profile.cgroup.user_usec / 1000 | round) ms and system CPU \(.profile.cgroup.system_usec / 1000 | round) ms (**\(.profile.cgroup.system_share * 100 | round) % in the kernel**), the samples cover \(.profile.samples_over_cgroup_cpu * 100 | round) % of that CPU, unclassified \(.profile.unclassified_share * 100 | . * 10 | round / 10) %. The profiled run itself read \(.results.steps[0].cpu_usec_per_request | r2) µs/req (the sampler costs CPU)."' "$PROFILE"
+  echo
+  echo "Each cell is a share of all the samples of its profile and the microseconds it is on the average request of that profile (the fold's \`--us-per-req\`: 5a's together 27.58 (the median of its 3 holds at 22,000 req/s, telemetry on, S1-d on, no \`mmap-off\`), 5a's skeleton 26.71 (the CPU steps' three references' median at 24,000 req/s, no pragma), and this run's $(jq -rn "$PRELUDE"'$u | r2' --argjson u "$REF_US") (the median of the $REF_N reference runs of this folder at 24,000 req/s, telemetry off)). The kernel's share is the cgroup's system CPU."
+  echo
+  echo "| Step | in this profile | 5a together: share, µs | 5a skeleton: share, µs | 5b reference: share, µs | 5b minus 5a together, µs | 5b minus 5a skeleton, µs |"
+  echo "|---|---|---|---|---|---|---|"
+  jq -rn "$PRELUDE"'def rows: .profile.fold | split("\n") | map(capture("^(?<step>(S[1-9] |event loop|unclassified).*?)\\s+[0-9.]+% [0-9.]+us\\s+[0-9.]+% [0-9.]+us\\s+[0-9.]+% [0-9.]+us\\s+[0-9.]+% [0-9.]+us\\s+[0-9.]+% [0-9.]+us\\s+[0-9.]+% [0-9.]+us\\s+(?<pct>[0-9.]+)% [0-9.]+us$"));
+    {"S1 accept connections": "no soft limit (5a together ran S1-d, which never fired)",
+     "S6 query SQLite": "`APP_PRAGMAS=mmap-off` (the reference; `APP_JSON=sqlite` screened, not better)"} as $variant
+    | (input | rows) as $t | (input | rows) as $s | (input | rows) as $r
+    | [range(0; $r | length)] | map(. as $i | $r[$i].step as $step
+      | (($t[$i].pct | tonumber) / 100 * 27.58) as $ut | (($s[$i].pct | tonumber) / 100 * 26.71) as $us | (($r[$i].pct | tonumber) / 100 * $u) as $ur
+      | "| \($step) | \($variant[$step | rtrimstr(" ")] // $variant[$step] // "unchanged") | \($t[$i].pct) %, \($ut | r1) µs | \($s[$i].pct) %, \($us | r1) µs | \($r[$i].pct) %, \($ur | r1) µs | \($ur - $ut | sgn) | \($ur - $us | sgn) |") | .[]' \
+    --argjson u "$REF_US" "$TOGETHER/profile/profile.json" "$STEPS/profile/skeleton.json" "$PROFILE"
+  echo
+  echo "The fold of \`profile/profile.collapsed\` with \`--us-per-req\` set to the reference runs' median:"
+  echo
+  echo '```text'
+  bash "$LAB/run.sh" 8.5 php /lab/profile/fold.php "/lab/results/$(basename "$PWD")/profile/profile.collapsed" --us-per-req "$REF_US"
+  echo '```'
+fi
