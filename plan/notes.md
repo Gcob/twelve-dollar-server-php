@@ -643,9 +643,11 @@ from PHP, and would it really help, or are the bottlenecks elsewhere?
 - **It's our own C:** the line D2 drew, already ❌ on 2026-11-23 19:28. The hybrid stays a possible second entry,
   decided after phase 8 (D76).
 
-**Verdict:** ❌ the C glue (D2, D60: about 1 to 3 %). 🔶 the libraries: a proposal for phase 8's plan, as its first
-scope: a screen of Swoole 6.2's io_uring HTTP server (one pair against phase 7's server, fail fast), and an audit of
-ext-mrloop. OpenSwoole's POLL_ADD reactor and php-uring are left out unless the audit finds a reason.
+**Verdict:** ❌ the C glue (D2, D60: about 1 to 3 %). ✅ the libraries, as phase 8's first scope (Jacob, 2026-11-24
+14:12: "on y va avec ta proposition", promising but to be tested and judged): a screen of Swoole 6.2's io_uring HTTP
+server (one pair against phase 7's server, fail fast), and an audit of ext-mrloop's code before any run. If one wins,
+phase 8 may skip building its own ring on `liburing-ffi`. OpenSwoole's POLL_ADD reactor and php-uring are left out
+unless the audit finds a reason. Phases 6 and 7 still come first (D76).
 
 ### 2026-11-22 18:08 · 💡 Idea: try io_uring anyway, something nobody tried in PHP
 
