@@ -10,7 +10,8 @@ measurement (D5). Then the run stops (D12).
 
 **Plan review:** [PLAN-2026-11-23-2335.md](../reviews/PLAN-2026-11-23-2335.md), NOT_OK (1 🔴, 5 🟠, 9 🟡). Its six
 questions were settled by the project manager with the reviewer's own picks (D71 to D73), and its minor points are
-folded in below. Prediction 9 was revised at 23:37, still before any measurement. The reviewer ran SQLite's JSON
+folded in below. Delta: [PLAN-2026-11-23-2341-delta.md](../reviews/PLAN-2026-11-23-2341-delta.md), NOT_OK (1 🟠: 7a
+would measure a worktree being edited), settled with the reviewer's pick (D74). Prediction 9 was revised at 23:37, still before any measurement. The reviewer ran SQLite's JSON
 against the golden files: the feed and the three posts byte for byte; only U+2028 differs (SQLite raw), which the
 spec allows.
 
@@ -208,7 +209,8 @@ fork), the parent exits non-zero if a child dies (no restart loop). Two addition
 - **When (D72):** in three parts. **7a**, as soon as scope 2 is in, while scopes 3 and 4 are coded (their developers
   run no Docker until the VM is free): the A/A at 24,000, the Mac reconnect pair at 7,500, the PHP 8.4 and 8.6
   screens. **7b**, after scope 3: S1-b's pairs. **7c**, after scopes 4 to 6: the variant screens, confirmations, the
-  profile, the README.
+  profile, the README. 7a and 7b run from a second worktree detached at the commit they measure (D74), so a file
+  edited by the scope being coded never reaches a run; their folders are then copied into the phase's worktree.
 - **The A/A at 24,000 req/s** (the reference against itself, 5 pairs, alternating order): the floor by D71's rule; its
   first pair is also the real-shape smoke of the new order and the host line (D57). **At 12,000 req/s** (for S1-b):
   5a's A/A JSONs at that rate (the bare skeleton, old order: 0.52 by D71's rule) re-read with `--floor-from`, said

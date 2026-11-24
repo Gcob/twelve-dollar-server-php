@@ -357,6 +357,14 @@
   batch, and no locking only matters with threads). The counts are the result, as 5a's `APP_IO` was. The lean parser
   is wired only if its micro bench saves at least 20 % of a parse: a bar of this phase, not of D60 (project manager,
   phase 5b, 2026-11-23 23:37, [PLAN-2026-11-23-2335](reviews/PLAN-2026-11-23-2335.md) items 6 and 10).
+- **D74:** the series that run while other scopes are coded (D72) run from a second worktree, detached at the
+  commit they measure (scope 2's for 7a, scope 3's for 7b), created by the project manager next to the phase's
+  worktree; the measuring developer copies its results folder into the phase's worktree and commits it there. Each
+  run's JSON already carries the commit it ran (`steplab`'s command and the folder), and the README names the
+  measuring worktree's commit. Why: every run starts a fresh server from its worktree's `lab/`, and the developers of
+  scopes 3 and 4 edit `server.php`, `diy-server.php`, `app.php` and `realistic.sh` meanwhile; "no Docker" keeps the
+  VM quiet, not the files (project manager, phase 5b, 2026-11-23 23:41,
+  [PLAN-2026-11-23-2341-delta](reviews/PLAN-2026-11-23-2341-delta.md)).
 
 ## History
 
