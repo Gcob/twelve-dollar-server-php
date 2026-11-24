@@ -1,5 +1,5 @@
 <?php
-// The switches of the S6 variants (APP_FEED_SQL, APP_FETCH, APP_PRAGMAS) and of APP_LOCKING, through the app's public entry point
+// The switches of the S6 variants (APP_FEED_SQL, APP_FETCH, APP_JSON, APP_PRAGMAS) and of APP_LOCKING, through the app's public entry point
 // (handler_handle) on a small database made here: every combination of SQL and fetch must answer the same bytes as the unset one (the
 // feed, each post, a missing post, the feed again after likes), including a feed of fewer than 20 posts and an empty one; a literal
 // answer pins the reference; a bad value is refused at boot; a pragma preset really changes the connection; APP_LOCKING=exclusive keeps
@@ -101,6 +101,12 @@ function same_answers(array $got, array $want): ?string
     return null;
 }
 
+/** Every answer as [status, decoded body]: what APP_JSON=sqlite must keep (its bytes may differ from encode's where SQLite escapes less). */
+function decoded(array $answers): array
+{
+    return array_map(static fn (array $answer): array => [$answer[0], json_decode($answer[1], true, 512, JSON_THROW_ON_ERROR)], $answers);
+}
+
 $fetches = ['assoc', 'num', 'assoc-loop', 'num-loop'];
 $sqls = ['reference', 'join', 'two-step'];
 
@@ -114,6 +120,18 @@ foreach ([30, 3, 0] as $posts) {
             check_case("$posts posts, APP_FEED_SQL=$sql APP_FETCH=$fetch: the same answers as unset", fn () => same_answers(
                 answers($source, ['APP_FEED_SQL' => $sql, 'APP_FETCH' => $fetch], $posts), $want));
         }
+    }
+    foreach ($sqls as $sql) {
+        check_case("$posts posts, APP_JSON=concat APP_FEED_SQL=$sql: the same bytes as unset", fn () => same_answers(
+            answers($source, ['APP_JSON' => 'concat', 'APP_FEED_SQL' => $sql], $posts), $want));
+    }
+    check_case("$posts posts, APP_JSON=sqlite: the same status and the same decoded bodies as unset", fn () => same_answers(
+        decoded(answers($source, ['APP_JSON' => 'sqlite'], $posts)), decoded($want)));
+    check_case("$posts posts, APP_JSON=sqlite: the same bytes as unset (no U+2028 or U+2029 in these rows)", fn () => same_answers(
+        answers($source, ['APP_JSON' => 'sqlite'], $posts), $want));
+    foreach (['concat', 'sqlite'] as $json) {
+        check_case("$posts posts, APP_JSON=$json APP_PRAGMAS=mmap-off: the same decoded answers as unset", fn () => same_answers(
+            decoded(answers($source, ['APP_JSON' => $json, 'APP_PRAGMAS' => 'mmap-off'], $posts)), decoded($want)));
     }
     foreach (APP_PRAGMA_PRESETS as $preset => $values) {
         check_case("$posts posts, APP_PRAGMAS=$preset: the same answers as unset", fn () => same_answers(
@@ -153,9 +171,9 @@ check_case('2 posts: the feed and a post are the literal bytes, with every varia
 });
 
 check_case('unset, empty and the default names are the same switches', function () {
-    $default = ['feed_sql' => 'reference', 'fetch' => 'assoc', 'pragmas' => 'default', 'locking' => 'normal', 'group_commit' => false, 'checkpointer' => 0];
-    foreach ([[], ['APP_FEED_SQL' => '', 'APP_FETCH' => '', 'APP_PRAGMAS' => '', 'APP_LOCKING' => '', 'APP_GROUP_COMMIT' => '', 'APP_CHECKPOINTER' => ''],
-              ['APP_FEED_SQL' => 'reference', 'APP_FETCH' => 'assoc', 'APP_PRAGMAS' => 'default', 'APP_LOCKING' => 'normal', 'APP_GROUP_COMMIT' => '0']] as $env) {
+    $default = ['feed_sql' => 'reference', 'fetch' => 'assoc', 'json' => 'encode', 'pragmas' => 'default', 'locking' => 'normal', 'group_commit' => false, 'checkpointer' => 0];
+    foreach ([[], ['APP_FEED_SQL' => '', 'APP_FETCH' => '', 'APP_JSON' => '', 'APP_PRAGMAS' => '', 'APP_LOCKING' => '', 'APP_GROUP_COMMIT' => '', 'APP_CHECKPOINTER' => ''],
+              ['APP_FEED_SQL' => 'reference', 'APP_FETCH' => 'assoc', 'APP_JSON' => 'encode', 'APP_PRAGMAS' => 'default', 'APP_LOCKING' => 'normal', 'APP_GROUP_COMMIT' => '0']] as $env) {
         if (app_variants($env) !== $default) {
             return 'got ' . json_encode(app_variants($env)) . ' for ' . json_encode($env);
         }
@@ -163,7 +181,7 @@ check_case('unset, empty and the default names are the same switches', function 
     return null;
 });
 
-foreach (['APP_FEED_SQL' => ['joins', 'two-step'], 'APP_FETCH' => ['both', 'num-loop'], 'APP_PRAGMAS' => ['huge', 'mmap-off'], 'APP_LOCKING' => ['shared', 'exclusive']] as $name => [$value, $allowed]) {
+foreach (['APP_FEED_SQL' => ['joins', 'two-step'], 'APP_FETCH' => ['both', 'num-loop'], 'APP_JSON' => ['jsonb', 'concat'], 'APP_PRAGMAS' => ['huge', 'mmap-off'], 'APP_LOCKING' => ['shared', 'exclusive']] as $name => [$value, $allowed]) {
     check_case("$name=$value is refused, and the message names the variable, the value and one allowed value ($allowed)", function () use ($name, $value, $allowed) {
         try {
             app_variants([$name => $value]);
@@ -174,6 +192,112 @@ foreach (['APP_FEED_SQL' => ['joins', 'two-step'], 'APP_FETCH' => ['both', 'num-
         return 'no exception';
     });
 }
+
+// APP_JSON on the rows that stress an encoder: a quote, a backslash, a slash, a tab and other control characters, U+2028 and U+2029, an
+// emoji, in the body and in the author's name. The reference's bytes are written here by hand (PHP's escapes with the app's flags).
+// concat must give them exactly. sqlite must decode to the same values; its bytes differ only where SQLite writes U+2028 and U+2029 raw.
+const STRESS_BODY = "q\" b\\ s/ t\t c\x01\x08\x0c\r\x1f\x7f u\u{2028}\u{2029} e😀 é";
+const STRESS_BODY_JSON = '"q\" b\\\\ s/ t\t c\u0001\b\f\r\u001f' . "\x7f" . ' u\u2028\u2029 e😀 é"';
+const STRESS_AUTHOR = "o\"b\\r/\u{2028}ien";
+const STRESS_AUTHOR_JSON = '"o\"b\\\\r/\u2028ien"';
+function stress_db(string $path): void
+{
+    $db = new PDO('sqlite:' . $path, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+    $db->exec("
+      CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL DEFAULT 'x');
+      CREATE TABLE posts (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, body TEXT NOT NULL, created_at TEXT NOT NULL);
+      CREATE TABLE likes (user_id INTEGER NOT NULL, post_id INTEGER NOT NULL, created_at TEXT NOT NULL DEFAULT 'x', PRIMARY KEY (user_id, post_id));
+      CREATE INDEX posts_created_at_id_idx ON posts (created_at DESC, id DESC);
+      CREATE INDEX likes_post_id_idx ON likes (post_id);
+      INSERT INTO likes (user_id, post_id) VALUES (1, 2), (2, 2), (3, 2);
+    ");
+    $db->prepare('INSERT INTO users (id, username) VALUES (1, ?), (2, \'plain\')')->execute([STRESS_AUTHOR]);
+    $db->prepare('INSERT INTO posts (id, user_id, body, created_at) VALUES (1, 2, \'plain\', \'2025-01-01T00:00:00.000Z\'), (2, 1, ?, \'2025-01-01T00:00:01.000Z\')')->execute([STRESS_BODY]);
+}
+check_case('APP_JSON: concat gives the hand-written bytes of a row full of escapes; sqlite the same values, and only U+2028 and U+2029 written raw', function () use ($dir) {
+    stress_db("$dir/stress.db");
+    $object = '{"id":2,"body":' . STRESS_BODY_JSON . ',"created_at":"2025-01-01T00:00:01.000Z","author":' . STRESS_AUTHOR_JSON . ',"like_count":3}';
+    $first = '{"id":1,"body":"plain","created_at":"2025-01-01T00:00:00.000Z","author":"plain","like_count":0}';
+    $feed = '{"posts":[' . $object . ',' . $first . ']}';
+    $post = '{"post":' . $object . '}';
+    foreach (['encode', 'concat', 'sqlite'] as $json) {
+        app_boot("$dir/stress.db", SECRET, app_variants(['APP_JSON' => $json]));
+        $got = [handler_handle('GET', '/feed', '', ''), handler_handle('GET', '/posts/2', '', '')];
+        if ($json !== 'sqlite') {
+            if ($got !== [[200, $feed], [200, $post]]) {
+                return "$json answered " . json_encode($got, JSON_UNESCAPED_SLASHES);
+            }
+            continue;
+        }
+        $raw = ["\u{2028}", "\u{2029}"];
+        $escaped = ['\u2028', '\u2029'];
+        $bytes = [[$got[0][0], str_replace($raw, $escaped, $got[0][1])], [$got[1][0], str_replace($raw, $escaped, $got[1][1])]];
+        if ($bytes !== [[200, $feed], [200, $post]]) {
+            return 'sqlite answered ' . json_encode($got, JSON_UNESCAPED_SLASHES) . ' (after writing U+2028 and U+2029 as PHP does)';
+        }
+        if (decoded($got) !== decoded([[200, $feed], [200, $post]])) {
+            return 'sqlite decodes to other values';
+        }
+        if (!str_contains($got[0][1], "\u{2028}") || !str_contains($got[1][1], "\u{2029}")) {
+            return 'sqlite no longer writes U+2028 and U+2029 raw: the difference this case names is gone, update the case and the comments';
+        }
+    }
+    return null;
+});
+
+check_case('APP_JSON: an empty feed is {"posts":[]} with each value, and a missing post is the same 404', function () use ($dir) {
+    foreach (['encode', 'concat', 'sqlite'] as $json) {
+        app_boot("$dir/source-0.db", SECRET, app_variants(['APP_JSON' => $json]));
+        $got = [handler_handle('GET', '/feed', '', ''), handler_handle('GET', '/posts/1', '', ''), handler_handle('GET', '/posts/x', '', '')];
+        if ($got !== [[200, '{"posts":[]}'], [404, '{"error":"post not found"}'], [400, '{"error":"invalid post id"}']]) {
+            return "$json answered " . json_encode($got);
+        }
+    }
+    return null;
+});
+
+// Combinations the app refuses at boot, with the reason in the message.
+foreach ([
+    [['APP_JSON' => 'sqlite', 'APP_FEED_SQL' => 'join'], 'APP_FEED_SQL=join'],
+    [['APP_JSON' => 'sqlite', 'APP_FEED_SQL' => 'two-step'], 'APP_FEED_SQL=two-step'],
+    [['APP_JSON' => 'sqlite', 'APP_FETCH' => 'num'], 'APP_FETCH=num'],
+    [['APP_JSON' => 'concat', 'APP_FETCH' => 'num-loop'], 'APP_FETCH=num-loop'],
+    [['APP_JSON' => 'concat', 'APP_FETCH' => 'assoc-loop'], 'APP_FETCH=assoc-loop'],
+] as [$env, $named]) {
+    check_case(implode(' ', array_map(fn ($k, $v) => "$k=$v", array_keys($env), $env)) . ' is refused, and the message names ' . $named, function () use ($env, $named) {
+        try {
+            app_variants($env);
+        } catch (InvalidArgumentException $e) {
+            return str_contains($e->getMessage(), 'APP_JSON=' . $env['APP_JSON']) && str_contains($e->getMessage(), $named) ? null : 'the message is: ' . $e->getMessage();
+        }
+        return 'no exception';
+    });
+}
+check_case('APP_JSON=encode and concat are accepted with every APP_FEED_SQL and APP_FETCH they can work with', function () {
+    foreach (['encode' => [['reference', 'join', 'two-step'], ['assoc', 'num', 'assoc-loop', 'num-loop']], 'concat' => [['reference', 'join', 'two-step'], ['assoc']]] as $json => [$sqls, $fetches]) {
+        foreach ($sqls as $sql) {
+            foreach ($fetches as $fetch) {
+                app_variants(['APP_JSON' => $json, 'APP_FEED_SQL' => $sql, 'APP_FETCH' => $fetch]);
+            }
+        }
+    }
+    return null;
+});
+
+check_case('APP_JSON reaches the app: the value is the one booted, and sqlite prepares SQLite\'s own JSON statements', function () use ($dir) {
+    global $app_db, $app_json;
+    foreach (['encode', 'concat', 'sqlite'] as $json) {
+        app_boot("$dir/source-30.db", SECRET, app_variants(['APP_JSON' => $json]));
+        if ($app_json !== $json) {
+            return "booted $json, the app says '$app_json'";
+        }
+        $builds = str_contains($app_db['feed']->queryString, 'json_group_array') && str_contains($app_db['post']->queryString, 'json_object');
+        if ($builds !== ($json === 'sqlite')) {
+            return "$json: the statements " . ($builds ? 'build' : 'do not build') . ' the JSON in SQLite';
+        }
+    }
+    return null;
+});
 
 // A preset really reaches the connection: the cache and the memory map sizes are read back from it.
 $expected = ['default' => [-65536, 268435456]] + array_map(fn ($values) => [$values['cache_size'], $values['mmap_size']], APP_PRAGMA_PRESETS);

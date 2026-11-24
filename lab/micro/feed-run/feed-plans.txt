@@ -31,3 +31,18 @@ CORRELATED SCALAR SUBQUERY 1
 SEARCH p USING INTEGER PRIMARY KEY (rowid=?)
 SEARCH u USING INTEGER PRIMARY KEY (rowid=?)
 SEARCH l USING COVERING INDEX likes_post_id_idx (post_id=?) LEFT-JOIN
+
+== GET /feed, APP_JSON=sqlite
+CO-ROUTINE (subquery-2)
+  SCAN p USING INDEX posts_created_at_id_idx
+  SEARCH u USING INTEGER PRIMARY KEY (rowid=?)
+  CORRELATED SCALAR SUBQUERY 1
+    SEARCH l USING COVERING INDEX likes_post_id_idx (post_id=?)
+USE TEMP B-TREE FOR json_group_array(ORDER BY)
+SCAN (subquery-2)
+
+== GET /posts/:id, APP_JSON=sqlite
+SEARCH p USING INTEGER PRIMARY KEY (rowid=?)
+SEARCH u USING INTEGER PRIMARY KEY (rowid=?)
+CORRELATED SCALAR SUBQUERY 1
+  SEARCH l USING COVERING INDEX likes_post_id_idx (post_id=?)

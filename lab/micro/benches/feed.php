@@ -3,7 +3,8 @@
 // cases that end in a route run route_feed(), the query and the JSON of the answer; the "query" cases stop at the rows. Format:
 // "Micro benchmarks" in lab/README.md. The EXPLAIN QUERY PLAN of each variant: lab/micro/feed-plans.php.
 //
-// Every case checks its answer against the reference's, computed in the same process by the unset variant: the same rows, the same bytes.
+// Every case checks its answer against the reference's, computed in the same process by the unset variant: the same rows, the same bytes
+// (APP_JSON=sqlite: the same decoded value, its bytes can differ from PHP's on U+2028 and U+2029, which the seed's rows don't hold).
 // The 20 newest posts get 0 to 50 more likes first (the bench's likes go to the newest posts, as a feed's readers see them): the same
 // likes for every case, added once to the copy.
 
@@ -36,11 +37,13 @@ function feed_bench_boot(string $copy, array $env): void
 
 /**
  * One case: the variant's switches in $env, $run the timed call on the booted app, $reference what the unset variant answers to the same call.
+ * With $decoded the answer is compared as [status, decoded body] instead of byte for byte (a route's answer only).
  *
  * @param array<string, string> $env
  */
-function feed_bench_case(array $env, Closure $run): array
+function feed_bench_case(array $env, Closure $run, bool $decoded = false): array
 {
+    $same = static fn (mixed $a, mixed $b): bool => $decoded ? [$a[0], json_decode($a[1], true)] === [$b[0], json_decode($b[1], true)] : $a === $b;
     return [
         'setup' => function () use ($env, $run): array {
             $copy = micro_feed_copy();
@@ -51,7 +54,7 @@ function feed_bench_case(array $env, Closure $run): array
             return ['expected' => $expected];
         },
         'run' => fn (array $ctx) => $run(),
-        'check' => fn ($result, array $ctx) => $result === $ctx['expected'] ? true : 'the answer differs from the reference variant\'s: ' . json_encode($result) . ' against ' . json_encode($ctx['expected']),
+        'check' => fn ($result, array $ctx) => $same($result, $ctx['expected']) ? true : 'the answer differs from the reference variant\'s: ' . json_encode($result) . ' against ' . json_encode($ctx['expected']),
     ];
 }
 
@@ -62,6 +65,9 @@ foreach (APP_FEED_SQL_VARIANTS as $sql) {
         $cases["feed/$sql/$fetch"] = feed_bench_case(['APP_FEED_SQL' => $sql, 'APP_FETCH' => $fetch], $feed);
     }
 }
+// The JSON built by concatenation and by SQLite, on the reference's SQL and the keyed rows (encode is the case above).
+$cases['feed/reference/assoc, APP_JSON=concat'] = feed_bench_case(['APP_JSON' => 'concat'], $feed);
+$cases['feed/reference/assoc, APP_JSON=sqlite'] = feed_bench_case(['APP_JSON' => 'sqlite'], $feed, true);
 foreach (APP_PRAGMA_PRESETS as $preset => $values) {
     $cases["feed/reference/assoc, APP_PRAGMAS=$preset"] = feed_bench_case(['APP_PRAGMAS' => $preset], $feed);
 }
@@ -74,4 +80,6 @@ $post = static fn () => route_post_get('500000');
 $cases['post/reference/assoc'] = feed_bench_case([], $post);
 $cases['post/join/assoc'] = feed_bench_case(['APP_FEED_SQL' => 'join'], $post);
 $cases['post/reference/num'] = feed_bench_case(['APP_FETCH' => 'num'], $post);
+$cases['post/reference/assoc, APP_JSON=concat'] = feed_bench_case(['APP_JSON' => 'concat'], $post);
+$cases['post/reference/assoc, APP_JSON=sqlite'] = feed_bench_case(['APP_JSON' => 'sqlite'], $post, true);
 return $cases;

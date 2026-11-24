@@ -25,6 +25,11 @@ const APP_POST_SELECT = 'SELECT p.id, p.body, p.created_at, u.username AS author
 //   APP_FETCH     assoc | num: the rows as arrays keyed by column name, or by position (the JSON is then built from positions)
 //                 assoc-loop | num-loop: the same, with fetch() in a loop instead of fetchAll()
 //   APP_PRAGMAS   a preset of the page cache and the memory map sizes (the other pragmas never change)
+//   APP_JSON      encode | concat | sqlite: how the JSON of the feed and of a post is built. encode is json_encode of the rows (the reference);
+//                 concat builds the same bytes by string concatenation (the numbers cast to int, json_encode only on the strings); sqlite has
+//                 SQLite build the JSON in the statement (json_group_array of json_object), so PHP fetches one string and wraps it.
+//                 sqlite decodes to the same values, but its bytes can differ from encode's on U+2028 and U+2029 (SQLite writes them raw, PHP
+//                 escapes them). concat and sqlite need APP_FETCH=assoc, and sqlite needs APP_FEED_SQL=reference.
 // The variant of S8:
 //   APP_LOCKING   normal | exclusive: with exclusive the connection keeps its locks and, set before the first WAL access, never makes the
 //                 WAL's shared-memory file: the lock calls (fcntl) of every read and write transaction go. Only this process can open the
@@ -43,6 +48,7 @@ const APP_POST_SELECT = 'SELECT p.id, p.body, p.created_at, u.username AS author
 const APP_FEED_SQL_VARIANTS = ['reference', 'join', 'two-step'];
 const APP_FETCH_VARIANTS = ['assoc', 'num', 'assoc-loop', 'num-loop'];
 const APP_LOCKING_VARIANTS = ['normal', 'exclusive'];
+const APP_JSON_VARIANTS = ['encode', 'concat', 'sqlite'];
 // 64 MiB of cache and a 256 MiB map (the seed is 250 MB) are today's. Why each preset:
 //   mmap-off    reads go through pread and the 64 MiB cache: says what the map is worth
 //   cache-256m  the whole seed fits in the page cache, the map is off: the cache against the map
@@ -65,6 +71,7 @@ $app_db = null;
 $app_feed_two_step = false;
 $app_fetch_num = false;
 $app_fetch_loop = false;
+$app_json = 'encode';
 $app_secret = '';
 $app_started_at = 0;
 $app_path = '';
@@ -76,7 +83,7 @@ $app_requests = null;
  * Group commit is a bool and the checkpointer's interval is in milliseconds (0: none).
  *
  * @param array<string, mixed> $env
- * @return array{feed_sql: string, fetch: string, pragmas: string, locking: string, group_commit: bool, checkpointer: int}
+ * @return array{feed_sql: string, fetch: string, json: string, pragmas: string, locking: string, group_commit: bool, checkpointer: int}
  */
 function app_variants(array $env): array
 {
@@ -97,6 +104,7 @@ function app_variants(array $env): array
     $variants = [
         'feed_sql' => $pick('APP_FEED_SQL', 'reference', APP_FEED_SQL_VARIANTS),
         'fetch' => $pick('APP_FETCH', 'assoc', APP_FETCH_VARIANTS),
+        'json' => $pick('APP_JSON', 'encode', APP_JSON_VARIANTS),
         'pragmas' => $pick('APP_PRAGMAS', 'default', ['default', ...array_keys(APP_PRAGMA_PRESETS)]),
         'locking' => $pick('APP_LOCKING', 'normal', APP_LOCKING_VARIANTS),
         'group_commit' => $pick('APP_GROUP_COMMIT', '0', ['0', '1']) === '1',
@@ -104,6 +112,12 @@ function app_variants(array $env): array
     ];
     if ($variants['checkpointer'] > 0 && $variants['locking'] === 'exclusive') {
         throw new InvalidArgumentException('APP_CHECKPOINTER cannot be set with APP_LOCKING=exclusive: the checkpointer is a second process, and with exclusive locking no second process can open the database');
+    }
+    if ($variants['json'] !== 'encode' && $variants['fetch'] !== 'assoc') {
+        throw new InvalidArgumentException("APP_JSON={$variants['json']} cannot be set with APP_FETCH={$variants['fetch']}: it builds the JSON from rows keyed by column name (or has SQLite build it), so APP_FETCH must be assoc");
+    }
+    if ($variants['json'] === 'sqlite' && $variants['feed_sql'] !== 'reference') {
+        throw new InvalidArgumentException("APP_JSON=sqlite cannot be set with APP_FEED_SQL={$variants['feed_sql']}: its statement is built on the reference's, and one SQL shape is enough");
     }
     return $variants;
 }
@@ -178,10 +192,32 @@ function app_post_sql(string $feedSql): string
     return APP_POST_SELECT . ' WHERE p.id = ?';
 }
 
+/**
+ * APP_JSON=sqlite: the feed as one row of one column, the JSON array of the 20 newest posts built by SQLite (the reference's statement is the subquery).
+ * Why the object is built inside the aggregate: json_group_array quotes as a string a json_object computed in a subquery (the value loses its JSON
+ * subtype), so the subquery gives the columns and json_object runs here. Why the ORDER BY inside the aggregate: the order of a subquery's rows is not
+ * promised to the aggregate that reads them; this one is. An empty feed gives '[]'.
+ */
+function app_feed_json_sql(): string
+{
+    return "SELECT json_group_array(json_object('id', id, 'body', body, 'created_at', created_at, 'author', author, 'like_count', like_count)
+                                    ORDER BY created_at DESC, id DESC)
+              FROM (" . app_feed_sql('reference') . ')';
+}
+
+/** APP_JSON=sqlite: one post by id as one column, its json_object (no row for a post that is not there). */
+function app_post_json_sql(): string
+{
+    return "SELECT json_object('id', p.id, 'body', p.body, 'created_at', p.created_at, 'author', u.username,
+                               'like_count', (SELECT count(*) FROM likes l WHERE l.post_id = p.id))
+              FROM posts p JOIN users u ON u.id = p.user_id
+             WHERE p.id = ?";
+}
+
 /** Opens the database at $path (it must exist: SQLite would create an empty one) and prepares every statement once. */
 function app_boot(string $path, string $secret, ?array $variants = null): void
 {
-    global $app_db, $app_secret, $app_started_at, $app_path, $app_feed_two_step, $app_fetch_num, $app_fetch_loop, $app_group, $app_group_stats;
+    global $app_db, $app_secret, $app_started_at, $app_path, $app_feed_two_step, $app_fetch_num, $app_fetch_loop, $app_json, $app_group, $app_group_stats;
     if (!is_file($path)) {
         throw new RuntimeException("the database file does not exist: $path");
     }
@@ -206,11 +242,12 @@ function app_boot(string $path, string $secret, ?array $variants = null): void
     $app_feed_two_step = $variants['feed_sql'] === 'two-step';
     $app_fetch_num = str_starts_with($variants['fetch'], 'num');
     $app_fetch_loop = str_ends_with($variants['fetch'], '-loop');
+    $app_json = $variants['json'];
     $app_db = [
         'db' => $db,
-        'feed' => $db->prepare(app_feed_sql($variants['feed_sql'])),
+        'feed' => $db->prepare($app_json === 'sqlite' ? app_feed_json_sql() : app_feed_sql($variants['feed_sql'])),
         'feed_likes' => $app_feed_two_step ? $db->prepare(app_feed_likes_sql()) : null,
-        'post' => $db->prepare(app_post_sql($variants['feed_sql'])),
+        'post' => $db->prepare($app_json === 'sqlite' ? app_post_json_sql() : app_post_sql($variants['feed_sql'])),
         'post_insert' => $db->prepare('INSERT INTO posts (user_id, body) VALUES (?, ?) RETURNING id, created_at'),
         'post_exists' => $db->prepare('SELECT 1 FROM posts WHERE id = ?'),
         'like_insert' => $db->prepare('INSERT INTO likes (user_id, post_id) VALUES (?, ?) ON CONFLICT (user_id, post_id) DO NOTHING'),
@@ -376,21 +413,34 @@ function route_health(): array
 
 function route_feed(): array
 {
-    global $app_fetch_num;
+    global $app_fetch_num, $app_json;
+    if ($app_json === 'sqlite') {
+        return response_json(200, '{"posts":' . feed_query_json() . '}');
+    }
     $rows = feed_query();
+    if ($app_json === 'concat') {
+        return response_json(200, feed_json_concat($rows));
+    }
     return response_json(200, $app_fetch_num ? feed_json_positions($rows) : feed_json($rows));
 }
 
 function route_post_get(string $id): array
 {
-    global $app_fetch_num;
+    global $app_fetch_num, $app_json;
     $id = id_validate($id);
     if ($id === null) {
         return response_error(400, 'invalid post id');
     }
+    if ($app_json === 'sqlite') {
+        $object = post_query_json($id);
+        return $object === null ? response_error(404, 'post not found') : response_json(200, '{"post":' . $object . '}');
+    }
     $post = post_query($id);
     if ($post === null) {
         return response_error(404, 'post not found');
+    }
+    if ($app_json === 'concat') {
+        return response_json(200, '{"post":' . post_object_json_concat($post) . '}');
     }
     return response_json(200, $app_fetch_num ? post_json_positions($post) : post_json($post));
 }
@@ -564,6 +614,27 @@ function feed_query(): array
     return $rows;
 }
 
+/** APP_JSON=sqlite: the JSON array of the feed's posts, as SQLite built it ('[]' when there are none). */
+function feed_query_json(): string
+{
+    global $app_db;
+    $feed = $app_db['feed'];
+    $feed->execute();
+    $json = $feed->fetchColumn();
+    $feed->closeCursor();
+    return $json;
+}
+
+/** APP_JSON=sqlite: the JSON object of one post as SQLite built it, or null when there is no such post. */
+function post_query_json(int $id): ?string
+{
+    global $app_db;
+    $app_db['post']->execute([$id]);
+    $json = $app_db['post']->fetchColumn();
+    $app_db['post']->closeCursor();
+    return $json === false ? null : $json;
+}
+
 /** @return array<string|int, mixed>|null */
 function post_query(int $id): ?array
 {
@@ -640,6 +711,26 @@ function feed_json_positions(array $posts): string
     $objects = [];
     foreach ($posts as $post) {
         $objects[] = post_object_json($post);
+    }
+    return '{"posts":[' . implode(',', $objects) . ']}';
+}
+
+// With APP_JSON=concat the rows keyed by column name become the same bytes by concatenation: the two numbers cast to int and appended, and
+// json_encode (the same flags) only on the three strings, which is where escaping can happen.
+
+/** @param array<string, mixed> $post */
+function post_object_json_concat(array $post): string
+{
+    return '{"id":' . (int) $post['id'] . ',"body":' . json_encode($post['body'], APP_JSON_FLAGS) . ',"created_at":' . json_encode($post['created_at'], APP_JSON_FLAGS)
+        . ',"author":' . json_encode($post['author'], APP_JSON_FLAGS) . ',"like_count":' . (int) $post['like_count'] . '}';
+}
+
+/** @param list<array<string, mixed>> $posts */
+function feed_json_concat(array $posts): string
+{
+    $objects = [];
+    foreach ($posts as $post) {
+        $objects[] = post_object_json_concat($post);
     }
     return '{"posts":[' . implode(',', $objects) . ']}';
 }

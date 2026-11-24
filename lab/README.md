@@ -570,16 +570,17 @@ variant of every step of a request, on purpose: later work measures the alternat
   here. No published image was used for the four tools: building them from the pinned Ubuntu is less to trust than a third-party
   image.
 
-### The S6 variants (SQL, fetch and pragmas)
+### The S6 variants (SQL, fetch, JSON and pragmas)
 
-Three switches on `lab/app/server.php`, read once at boot by `app_variants` (`lab/app/app.php`). Unset (or empty) is the reference: the
+Four switches on `lab/app/server.php`, read once at boot by `app_variants` (`lab/app/app.php`). Unset (or empty) is the reference: the
 same statements and the same bytes as before. A value that is not a name is refused (exit 1, the message names the variable and the
-names). When one is set, the boot prints `app variants: feed_sql=... fetch=... pragmas=...`.
+names). When one is set, the boot prints `app variants: feed_sql=... fetch=... json=... pragmas=...`.
 
 | Switch | Values | What it does |
 | --- | --- | --- |
 | `APP_FEED_SQL` | `reference`, `join`, `two-step` | `reference`: the like count is a correlated subquery per post. `join`: the 20 newest posts come from a subquery with the `LIMIT`, then `JOIN users`, `LEFT JOIN likes`, `GROUP BY p.created_at, p.id` (`GET /posts/:id` gets a `LEFT JOIN ... GROUP BY p.id` too). `two-step`: the 20 posts with their authors, then one `SELECT post_id, count(*) FROM likes WHERE post_id IN (20 ids) GROUP BY post_id` with that request's own ids, merged in PHP (both statements are the request's own: nothing is read for another request). `GET /posts/:id` reads as the reference in `two-step`: splitting one id into two statements is the reference with one more call. |
 | `APP_FETCH` | `assoc`, `num`, `assoc-loop`, `num-loop` | The rows as arrays keyed by column name, or by position (`FETCH_NUM`, the JSON then built from positions: `feed_json_positions`, `post_json_positions`). `-loop` reads with `fetch()` in a loop instead of `fetchAll()`. |
+| `APP_JSON` | `encode`, `concat`, `sqlite` | How the JSON of the feed and of one post is built. `encode`: `json_encode` of the rows (the reference). `concat`: the same bytes by string concatenation, the two numbers cast to int and appended, `json_encode` (same flags) only on `body`, `created_at` and `author`, the posts joined with `implode` (`feed_json_concat`, `post_object_json_concat`). `sqlite`: SQLite builds the JSON in the statement: the feed is one row of one column, `json_group_array(json_object('id', ..., 'like_count', ...) ORDER BY created_at DESC, id DESC)` over the reference's 20-post subquery (`app_feed_json_sql`), and PHP wraps it in `{"posts":` and `}`; a post is its `json_object` (`app_post_json_sql`) wrapped in `{"post":` and `}`. Writes, likes, health and errors are `json_encode` as before. `sqlite` decodes to the same values as `encode`; its bytes differ only where SQLite escapes less than PHP's flags do: U+2028 and U+2029 (SQLite writes them raw, PHP writes `\u2028` and `\u2029`), and the spec allows both. Control characters (`\b \f \n \r \t`, the others as `\u00xx` in lower case) and `/` come out the same. `concat` and `sqlite` need `APP_FETCH=assoc`, and `sqlite` needs `APP_FEED_SQL=reference` (one SQL shape is enough); the app refuses the other combinations at boot with the reason. |
 | `APP_PRAGMAS` | `default`, `mmap-off`, `cache-256m`, `cache-8m` | Today's: `cache_size` 64 MiB and `mmap_size` 256 MiB (the seed is 250 MB). `mmap-off`: reads go through `pread` and the 64 MiB cache. `cache-256m`: the whole seed fits in the page cache and the map is off (the cache against the map). `cache-8m`: a cache too small for the data and the map on (how much the cache matters when the map does the reading). |
 
 `bash lab/challenge-test.sh --image 8.5 --env APP_FEED_SQL=join --env APP_FETCH=num` runs the 42 checks on a variant.
@@ -587,9 +588,9 @@ names). When one is set, the boot prints `app variants: feed_sql=... fetch=... p
 one (and with a literal answer).
 
 **The micro bench:** `lab/micro/benches/feed.php` (`bash lab/micro.sh lab/micro/benches/feed.php --images 8.5 --jit on`) times `route_feed()`
-(the query and the JSON) for every SQL and fetch pair, the query alone for each SQL, the pragmas on the reference, and `GET /posts/:id`, on a
+(the query and the JSON) for every SQL and fetch pair, `APP_JSON` on the reference, the query alone for each SQL, the pragmas on the reference, and `GET /posts/:id` (with `APP_JSON` too), on a
 warm copy of the seed whose 20 newest posts got 0 to 50 more likes first. Each case checks its answer against the reference's, computed in
-the same process. `lab/micro/feed-plans.php` prints the `EXPLAIN QUERY PLAN` of every statement (`bash lab/run.sh 8.5 php
+the same process (the same bytes; `APP_JSON=sqlite`: the same decoded value). `lab/micro/feed-plans.php` prints the `EXPLAIN QUERY PLAN` of every statement (`bash lab/run.sh 8.5 php
 /lab/micro/feed-plans.php`); `lab/micro/feed-run/` has one run's rows (`feed-8.5-jit-on.txt` and its JSON) and the plans
 (`feed-plans.txt`, which `lab/check.sh` regenerates and compares). That run is a developer's look at the variants, not a result: the
 macro pairs are `lab/results/`'s.

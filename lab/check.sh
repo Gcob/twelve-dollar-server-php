@@ -509,22 +509,24 @@ check_app_cases() {
   return 0
 }
 
-# The S6 variants (APP_FEED_SQL, APP_FETCH, APP_PRAGMAS) through the app's entry point on a small database: every combination answers the
-# same bytes as the unset one, and the literal answers, the refused values, the presets and the join's plan hold (65 cases).
+# The S6 variants (APP_FEED_SQL, APP_FETCH, APP_JSON, APP_PRAGMAS) through the app's entry point on a small database: every combination answers
+# the same bytes as the unset one (APP_JSON=sqlite: the same decoded values, and the same bytes but for U+2028 and U+2029), and the literal answers,
+# the refused values and combinations, the presets and the join's plan hold (96 cases).
 check_app_variants_cases() {
   local out ok rc=0
   out="$(bash "$LAB/run.sh" 8.5 php /lab/check/app-variants-test.php 2>&1)" || rc=$?
   [ "$rc" = 0 ] || { echo "app-variants-test.php exited $rc: ${out//$'\n'/ | }"; return 1; }
   ok="$(grep -c '^ok  ' <<<"$out")"
-  [ "$ok" = 65 ] || { echo "expected 65 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
+  [ "$ok" = 96 ] || { echo "expected 96 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
   ! grep -q 'FAIL' <<<"$out" || { echo "a case failed: ${out//$'\n'/ | }"; return 1; }
 }
 
-# The challenge's 42 checks (the golden feed byte for byte) against the server with each non-default value of the S6 switches, and with
-# three of them together.
+# The challenge's 42 checks (the golden feed byte for byte) against the server with each non-default value of the S6 switches (APP_JSON
+# included: concat and sqlite each give the golden feed and posts), and with three of them together.
 check_challenge_test_passes_each_s6_variant() {
   local out env left rc
   for env in APP_FEED_SQL=join APP_FEED_SQL=two-step APP_FETCH=num APP_FETCH=assoc-loop APP_FETCH=num-loop \
+             APP_JSON=concat APP_JSON=sqlite "APP_JSON=sqlite APP_PRAGMAS=mmap-off" "APP_JSON=concat APP_FEED_SQL=join APP_PRAGMAS=mmap-off" \
              APP_PRAGMAS=mmap-off APP_PRAGMAS=cache-256m APP_PRAGMAS=cache-8m "APP_FEED_SQL=join APP_FETCH=num-loop APP_PRAGMAS=cache-8m"; do
     rc=0
     # shellcheck disable=SC2046 # one --env per word on purpose
@@ -542,7 +544,7 @@ check_s6_switches_reach_the_server() {
   start_app_for_check lab-check-variants 18164 0 APP_FEED_SQL=join APP_FETCH=num APP_PRAGMAS=mmap-off || return 1
   log="$(docker logs lab-check-variants 2>&1)"
   docker rm -f lab-check-variants >/dev/null 2>&1
-  grep -qx 'app variants: feed_sql=join fetch=num pragmas=mmap-off locking=normal group_commit=off checkpointer=off' <<<"$log" || { echo "the boot lines do not name the variants: ${log//$'\n'/ | }"; return 1; }
+  grep -qx 'app variants: feed_sql=join fetch=num json=encode pragmas=mmap-off locking=normal group_commit=off checkpointer=off' <<<"$log" || { echo "the boot lines do not name the variants: ${log//$'\n'/ | }"; return 1; }
   start_app_for_check lab-check-variants 18164 0 || return 1
   log="$(docker logs lab-check-variants 2>&1)"
   docker rm -f lab-check-variants >/dev/null 2>&1
@@ -550,6 +552,14 @@ check_s6_switches_reach_the_server() {
   log="$(start_app_for_check lab-check-variants 18164 0 APP_FETCH=both)" && { docker rm -f lab-check-variants >/dev/null 2>&1; echo "a bad APP_FETCH was accepted"; return 1; }
   docker rm -f lab-check-variants >/dev/null 2>&1
   grep -q 'APP_FETCH must be one of assoc, num, assoc-loop, num-loop, got "both"' <<<"$log" || { echo "the refusal does not say why: $log"; return 1; }
+  # APP_JSON shows in the boot line, and a combination it cannot work with is refused at boot with the reason.
+  start_app_for_check lab-check-variants 18164 0 APP_JSON=sqlite || return 1
+  log="$(docker logs lab-check-variants 2>&1)"
+  docker rm -f lab-check-variants >/dev/null 2>&1
+  grep -qx 'app variants: feed_sql=reference fetch=assoc json=sqlite pragmas=default locking=normal group_commit=off checkpointer=off' <<<"$log" || { echo "the boot lines do not name APP_JSON: ${log//$'\n'/ | }"; return 1; }
+  log="$(start_app_for_check lab-check-variants 18164 0 APP_JSON=sqlite APP_FEED_SQL=join)" && { docker rm -f lab-check-variants >/dev/null 2>&1; echo "APP_JSON=sqlite with APP_FEED_SQL=join was accepted"; return 1; }
+  docker rm -f lab-check-variants >/dev/null 2>&1
+  grep -q 'APP_JSON=sqlite cannot be set with APP_FEED_SQL=join' <<<"$log" || { echo "the refusal does not say why: $log"; return 1; }
 }
 
 # The 42 checks against the server with APP_LOCKING=exclusive, and no container left behind.
@@ -571,7 +581,7 @@ check_app_locking_reaches_the_server() {
     log="$(docker logs lab-check-locking 2>&1)"
     # Unset (or the default name) the server says nothing about variants.
     if [ "$value" = exclusive ]; then
-      grep -qx 'app variants: feed_sql=reference fetch=assoc pragmas=default locking=exclusive group_commit=off checkpointer=off' <<<"$log" \
+      grep -qx 'app variants: feed_sql=reference fetch=assoc json=encode pragmas=default locking=exclusive group_commit=off checkpointer=off' <<<"$log" \
         || { docker rm -f lab-check-locking >/dev/null 2>&1; echo "the boot lines do not name the variant: ${log//$'\n'/ | }"; return 1; }
     else
       ! grep -q 'app variants' <<<"$log" || { docker rm -f lab-check-locking >/dev/null 2>&1; echo "the default names a variant: ${log//$'\n'/ | }"; return 1; }
@@ -719,14 +729,14 @@ check_app_workers_in_a_container() {
   [ "$code" = 0 ] || { echo "after SIGTERM the container exited $code, not 0"; return 1; }
 }
 
-# The feed bench times every case of the S6 variants and none is skipped (each case checked its answer against the reference's), and the
+# The feed bench times every case of the S6 variants (APP_JSON's too) and none is skipped (each case checked its answer against the reference's), and the
 # plans saved next to its output are what SQLite says today.
 check_micro_feed_bench() {
   local out rows plans
   out="$(bash "$LAB/micro.sh" "$LAB/micro/benches/feed.php" --images 8.5 --jit on --quick --procs 1 --out "$(mktemp -d)/micro.json" 2>&1)" || { echo "lab/micro.sh failed: ${out//$'\n'/ | }"; return 1; }
   ! grep -q 'SKIPPED' <<<"$out" || { echo "a case was skipped: $(grep 'SKIPPED' <<<"$out" | head -3 | tr '\n' '|')"; return 1; }
   rows="$(grep -c -E '^8\.5 +8\.5\.[0-9]+ +on +.* [0-9.]+ +[0-9.]+ \.\. [0-9.]+ +[0-9]+( +UNSTABLE.*)?$' <<<"$out")"
-  [ "$rows" = 22 ] || { echo "expected 22 rows (21 cases and the empty loop), got $rows: ${out//$'\n'/ | }"; return 1; }
+  [ "$rows" = 26 ] || { echo "expected 26 rows (25 cases and the empty loop), got $rows: ${out//$'\n'/ | }"; return 1; }
   plans="$(bash "$LAB/run.sh" 8.5 php /lab/micro/feed-plans.php 2>&1)" || { echo "feed-plans.php failed: ${plans//$'\n'/ | }"; return 1; }
   [ "$plans" = "$(cat "$LAB/micro/feed-run/feed-plans.txt")" ] || { echo "lab/micro/feed-run/feed-plans.txt is not what lab/micro/feed-plans.php prints: regenerate it"; return 1; }
 }

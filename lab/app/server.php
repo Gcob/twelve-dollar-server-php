@@ -82,7 +82,7 @@ if ($workers >= 2) {
                 echo "soft connection limit: $softLimit per process\n";
             }
             if ($variants !== app_variants([])) {
-                echo 'app variants: feed_sql=' . $variants['feed_sql'] . ' fetch=' . $variants['fetch'] . ' pragmas=' . $variants['pragmas'] . ' locking=' . $variants['locking']
+                echo 'app variants: feed_sql=' . $variants['feed_sql'] . ' fetch=' . $variants['fetch'] . ' json=' . $variants['json'] . ' pragmas=' . $variants['pragmas'] . ' locking=' . $variants['locking']
                     . ' group_commit=' . ($variants['group_commit'] ? 'on' : 'off') . ' checkpointer=off' . "\n";
             }
             echo "loop: $loop\n";
@@ -110,7 +110,7 @@ if ($softLimit !== null) {
     echo "soft connection limit: $softLimit\n";
 }
 if ($variants !== app_variants([])) {
-    echo 'app variants: feed_sql=' . $variants['feed_sql'] . ' fetch=' . $variants['fetch'] . ' pragmas=' . $variants['pragmas'] . ' locking=' . $variants['locking']
+    echo 'app variants: feed_sql=' . $variants['feed_sql'] . ' fetch=' . $variants['fetch'] . ' json=' . $variants['json'] . ' pragmas=' . $variants['pragmas'] . ' locking=' . $variants['locking']
         . ' group_commit=' . ($variants['group_commit'] ? 'on' : 'off') . ' checkpointer=' . ($checkpointerPid === null ? 'off' : $variants['checkpointer']) . "\n";
 }
 if ($checkpointerPid !== null) {
