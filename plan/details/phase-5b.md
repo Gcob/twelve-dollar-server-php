@@ -52,7 +52,7 @@ In [decisions.md](../decisions.md):
 | 5   | `feat(app): parser and event-loop variants`                             | a micro bench prints ns per parse of k6's real request heads, today's parser against the lean one; the lean one is wired as `APP_PARSE=lean` only if it saves at least 20 % of a parse, and then passes every DIY parser check (the smuggling cases) and 42/42; `APP_LOOP=<preset>` (at most 3 presets of libevent's base flags) each pass 42/42 with its `syscalls.sh` count beside the reference's (D73), and the bake-off's DIY checks stay green; `lab/check.sh` all `ok` |
 | 6   | `feat(app): an FFI driver to libsqlite3`                                | the feed micro bench prints ns per feed for `pdo` and `ffi` with `APP_JSON=encode` and `sqlite`; if `ffi` with `sqlite` is not under `pdo` with `sqlite` there, the scope stops at the micro (committed, the reason in the hand-back); otherwise `APP_DRIVER=ffi` passes 42/42 alone and with `APP_JSON=sqlite`, and a write whose 201 was received is still there after `kill -9`; `lab/check.sh` all `ok` |
 | 7   | `docs(lab): the CPU steps of 5b and S1-b, measured on the Mac`          | `lab/results/<date>-cpu-steps-5b/README.md`: predictions copied unchanged, the A/A floor at 24,000 in the new order, each variant's screen and confirmation, the Mac's reconnect pair at 7,500, S1-b against S1-a at 12,000, the micro numbers beside the macro ones, the profile of the chosen variants, each prediction marked, a choice per step; every counted run's host line; `summarize.sh` regenerates its tables |
-| 8   | `docs(lab): the chosen variants together, 5b`                           | `lab/results/<date>-step-lab-together-5b/README.md`: a short staircase, then 3 holds of 5 minutes of 5b's configuration interleaved with 3 of 5a's, µs/req and held rate of each, the profile step by step against 5a's; `summarize.sh` regenerates its tables |
+| 8   | `docs(lab): the chosen variants together, 5b` (**skipped, D75:** no CPU variant chosen) | `lab/results/<date>-step-lab-together-5b/README.md`: a short staircase, then 3 holds of 5 minutes of 5b's configuration interleaved with 3 of 5a's, µs/req and held rate of each, the profile step by step against 5a's; `summarize.sh` regenerates its tables |
 | 9   | `docs(lab): S1-b and the reconnect on x86`                              | only with Jacob's go: on one `c5.2xlarge` as in 5a, a second reconnect pair, S1-b against S1-a (3 pairs), and 5b's configuration against 5a's (3 pairs) at 7,500 req/s; the S1 choice by the rule below; the bench estimate; the instance terminated and nothing tagged left |
 
 Vertical slices: scopes 1 and 2 are the instrument every measurement after them uses. Scopes 3 to 6 are the variants,
@@ -245,7 +245,8 @@ fork), the parent exits non-zero if a child dies (no restart loop). Two addition
   (`lab/lib.sh`'s 8-vCPU layout, the factory's `aws/` scripts), one `c5.2xlarge`, server on one vCPU with its sibling
   idle, `cgroupfs` for Docker's probe.
 - **Runs at 7,500 req/s with 60,000 idle:** S1-a against S1-d with every request reconnecting, one pair (the second
-  x86 reconnect pair); S1-b (`APP_WORKERS=2`) against S1-a, 3 pairs; 5b's configuration against 5a's, 3 pairs.
+  x86 reconnect pair); S1-b (`APP_WORKERS=2`) against S1-a, 3 pairs. (5b's configuration against 5a's: dropped, D75:
+  they are the same.)
 - **The S1 rule:** with the x86 reconnect price, S1-d's added µs at 100,000 and 150,000 users (5a's model: a share
   `1 - 64,000 / N` of the requests reconnect); S1-b's added µs is its measured cost (2 workers hold 131,000
   connections; at 150,000 users, 2 workers each with S1-d past 64,000, or 3 workers, projected from the 2-worker

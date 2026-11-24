@@ -364,6 +364,13 @@
   scopes 3 and 4 edit `server.php`, `diy-server.php`, `app.php` and `realistic.sh` meanwhile; "no Docker" keeps the
   VM quiet, not the files (project manager, phase 5b, 2026-11-23 23:41,
   [PLAN-2026-11-23-2341-delta](reviews/PLAN-2026-11-23-2341-delta.md); the commit in `stages.json`: [delta 2](reviews/PLAN-2026-11-23-2342-delta.md)).
+- **D75:** phase 5b chose no new CPU variant on the Mac, so scope 8 (5b's configuration against 5a's) is skipped: the
+  two are the same configuration, and 5a's held rate and profile stand (24,000 req/s passed on a quiet VM; 7c's profile
+  of the reference shows the same shares within 3 points). Scope 9 keeps only S1: the second x86 reconnect pair and
+  S1-b against S1-a, about 45 minutes of one instance. What 5b found on the CPU: `APP_JSON=sqlite` +0.62 µs in its
+  pair (micro -1.3 % a feed), the FFI driver no faster than PDO (SQLite's own work is 98 % of a feed), the lean parse
+  -18 % of a parse (about 0.05 µs a request), the loop presets nothing to remove, PHP 8.4 and 8.6 no better than 8.5
+  (project manager, phase 5b, 2026-11-24 04:39).
 
 ## History
 
