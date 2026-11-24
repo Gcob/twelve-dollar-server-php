@@ -1,23 +1,21 @@
 # $12 server challenge in PHP
 
-**Status:** 🏁 Phase 5b delivered: scopes 1 to 7 and 9 (8 skipped, D75), both final reviews OK, branch `phase-5b-claude` pushed at `afffbb4`, not merged · approved on 2026-11-21 · snapshot 2026-11-21-0920 ·
+**Status:** 🏁 Phase 5b merged (the step lab, second run; merge `c19fb66`); phase 6 next, to plan with Jacob · approved on 2026-11-21 · snapshot 2026-11-21-0920 ·
 **Round:** 6
 **Since your last read:** scope 9 ran on x86 (one `c5.2xlarge`, 43 minutes, everything tagged removed): **S1-b is
 chosen** (D77, 2 processes on `SO_REUSEPORT`, the soft limit in each). It costs +7.44 µs/req (+14.8 %) on the Xeon and adds
 10.90 µs at 150,000 users, against S1-d's 13.51 (26.9 %, over the 15 % line); at 100,000 users the two are 1.04 µs
 apart, a tie in practice. The second reconnect pair gave 23.44 µs (5a's 23.69). The bench estimate is 79.0 µs/req
 without S1's cost (5a: 83.9) and 96.1 at 150,000 users with S1-b. Results:
-`lab/results/2026-11-24-x86-s1b/` on the branch. Earlier: phase 5b's Mac work (scopes 1 to 7, D75) found no new CPU
-variant beyond the noise, and D76 put the pure ring phase after phase 7. Progress in [run.md](run.md).
+`lab/results/2026-11-24-x86-s1b/`. Earlier: phase 5b's Mac work (scopes 1 to 7, D75) found no new CPU
+variant beyond the noise, and D76 put the pure ring phase after phase 7. Merged on Jacob's go (`c19fb66`). Delivery
+and headline numbers in [runs/phase-5b/run.md](runs/phase-5b/run.md) ("Delivery").
 **Project:** this repo, `plan/` · **Submission:** `submissions/php-<runtime>-Gcob/` · **Jira:** none
 
 ## 👉 Your turn
 
 > **Answer freely:** a letter or `ok`, your own choice (`other: …`), `?` if it's unclear, or
 > `badly framed: …` if an option is missing or the question doesn't hold.
-
-**🟠 Review and merge `phase-5b-claude`** (or tell the project manager to): the delivery and the merge command are in
-[run.md](run.md#delivery).
 
 **🟠 Delete the AWS policy `twelve-dollar-x86-calibration`** (detach it from your CLI user, then delete it): scope 9
 is done and `teardown.sh --verify` shows nothing tagged left (only the terminated instance).
@@ -110,7 +108,7 @@ step's choice backed by a measurement.
 **Decisions:** 77 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
 is a prediction we re-measure, not an answer.
 
-### Phase 5b scopes (1 to 7 and 9 done, 8 skipped)
+### Phase 5b scopes (merged, 8 skipped)
 
 Detail, seams, cases and the predictions in [details/phase-5b.md](details/phase-5b.md). One commit each, on branch
 `phase-5b-claude` (D14). Scopes 7 and 8 measure, so they need a quiet Docker VM (D15); scope 9 needs your go for AWS.
@@ -211,5 +209,5 @@ You don't need to read this part: it's the index of the execution details, in `d
 - [Phase 4](details/phase-4.md): the realistic baseline's scopes, their seams and cases, and the predictions.
 - [Phase 5](details/phase-5.md): the step lab's first run (5a): scopes, seams, cases and the predictions.
 - [Phase 5b](details/phase-5b.md): the step lab's second run: scopes, seams, cases and the predictions.
-- [Phase 2's run](runs/phase-2/run.md), [phase 3's](runs/phase-3/run.md), [phase 4's](runs/phase-4/run.md) and [phase 5a's](runs/phase-5a/run.md): progress, reviews and retro, with
+- [Phase 2's run](runs/phase-2/run.md), [phase 3's](runs/phase-3/run.md), [phase 4's](runs/phase-4/run.md), [phase 5a's](runs/phase-5a/run.md) and [phase 5b's](runs/phase-5b/run.md): progress, reviews and retro, with
   their `state/`.
