@@ -80,10 +80,12 @@ mode_pre_push() {
   while read -r _ local_sha _ remote_sha; do
     [ -z "${local_sha:-}" ] && continue
     [[ "$local_sha" =~ ^0+$ ]] && continue
+    # Why: a commit already reachable from a remote-tracking ref is already public, since origin (the public repo) is
+    # the only remote: scanning it again blocks nothing. A second remote means revisiting this rule.
     if [[ "$remote_sha" =~ ^0+$ ]]; then
       range=("$local_sha" --not --remotes)
     else
-      range=("$remote_sha..$local_sha")
+      range=("$remote_sha..$local_sha" --not --remotes)
     fi
     for sha in $(git -C "$REPO" rev-list "${range[@]}"); do
       out="$(
