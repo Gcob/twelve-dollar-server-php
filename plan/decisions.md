@@ -431,6 +431,20 @@
   and 7 still come first (D76) (Jacob, 2026-11-24 14:12: "Let's go, on y va avec ta proposition. [...] Faudra tester
   puis évaluer"; [notes.md](notes.md), 2026-11-24 14:05).
 
+- **D85:** `lab/submission-test.sh` also emulates the challenge's CI runner (`--ci`): Ubuntu's PHP 8.3 installed
+  before `install.sh`, `install.sh` run through `sudo`'s secure `PATH`, `test/run.sh` on `127.0.0.1:3000` as a normal
+  user. `install.sh` calls every PHP tool (`phpize`, `php-config`, `php`) by its full path under `/opt/php-gcob`. Why: a
+  bare `phpize` on the runner builds the extensions against its PHP 8.3, the server then exits at boot, and the failure
+  would first show on the public PR at phase 9 (plan review, settled by the project manager, phase 6, 2026-11-24,
+  [PLAN-2026-11-24-1840](reviews/PLAN-2026-11-24-1840.md) item 1).
+- **D86:** if the parity pair (D83) lands outside the floor, 2 more pairs (3 in all), then a one-process profile of each
+  side: the lab's server with `APP_PRAGMAS=mmap-off,APP_SOFT_CONN_LIMIT=64000` and `APP_PROFILE`, the submission's code
+  through a lab-only entry file under `lab/` that loads it in one process with the profiler. Neither side can be
+  profiled as it runs in the pair (the copy has no profiler, the lab refuses `APP_PROFILE` with 2 workers). Built only if
+  needed. The verdict is read two-sided, `|sub − lab|` under 0.864 µs/req, since the step lab's one-pair screen is
+  one-sided (plan review, settled by the project manager, phase 6, 2026-11-24,
+  [PLAN-2026-11-24-1840](reviews/PLAN-2026-11-24-1840.md) items 2 and 7).
+
 ## History
 
 Nothing yet.

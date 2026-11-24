@@ -102,7 +102,7 @@ step's choice backed by a measurement.
 | 8 | Ring (D76, D84) | First a screen of off-the-shelf io_uring (Swoole's `uring_socket`, an audit of ext-mrloop); then, unless one wins, an io_uring loop in pure PHP through FFI to `liburing-ffi`; a SQLite built with PGO, the single-post plan checked | Each lever's µs/req against phase 7's; a new score if they win |
 | 9 | Submit          | The PR to the challenge repo                                | CI green                                                |
 
-**Decisions:** 84 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
+**Decisions:** 86 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
 is a prediction we re-measure, not an answer.
 
 ### Phase 6 scopes (planned, paused)
@@ -113,9 +113,9 @@ Detail, seams, cases and the predictions in [details/phase-6.md](details/phase-6
 | # | Commit                                                                   | Done when (short)                                                        |
 |---|--------------------------------------------------------------------------|--------------------------------------------------------------------------|
 | 1 | `feat(submission): php-Gcob, the chosen variants in a clean copy`         | 42/42 in the lab's image with no switch; 2 workers, soft limit 64,000, `mmap` off; `check_submission` green (D79) |
-| 2 | `feat(submission): install.sh builds PHP 8.5 and its extensions from pinned sources` | `lab/submission-test.sh`: clean `ubuntu:24.04`, `install.sh` as root, `test/run.sh` 42/42 as `deploy` on port 80, `nofile` 65535, healthy under 60 s (D78, D81, D82) |
+| 2 | `feat(submission): install.sh builds PHP 8.5 and its extensions from pinned sources` | `lab/submission-test.sh`: clean `ubuntu:24.04`, `install.sh` as root, `test/run.sh` 42/42 as `deploy` on port 80, `nofile` 65535, healthy under 60 s; `--ci` the same on a runner-like box (D78, D81, D82, D85) |
 | 3 | `docs(submission): the README and the rules audit`                       | the table, direct, the optimizations with their numbers and links, rules 5, 6, 7, 10, 11 audited; links resolve; the guard passes |
-| 4 | `docs(lab): the submission against the lab, one pair`                    | one pair at 24,000 req/s within the floor (0.864 µs/req), or the reason found (D83) |
+| 4 | `docs(lab): the submission against the lab, one pair`                    | one pair at 24,000 req/s within the floor (0.864 µs/req), read two-sided, or the reason found (D83, D86) |
 
 ### Phase 5b scopes (merged, 8 skipped)
 

@@ -9,6 +9,13 @@ what `lab/app` costs with the same configuration, within the floor (0.864 µs/re
 arm64 container on the Mac is enough here: phase 7 runs `install.sh` natively on x86 (D7). The predictions below were
 written before any measurement (D5). Then the run stops (D12).
 
+**Plan review:** [PLAN-2026-11-24-1840.md](../reviews/PLAN-2026-11-24-1840.md), NOT_OK (2 🟠, 10 🟡; a first try at
+13:45 was stopped by Jacob's pause before its report). Both 🟠 settled by the project manager with the reviewer's own
+picks (D85: a CI-runner mode in `lab/submission-test.sh` and full paths for every PHP tool; D86: how a pair outside the
+floor is explained), the 🟡 folded in below. Delta: [PLAN-2026-11-24-1855-delta.md](../reviews/PLAN-2026-11-24-1855-delta.md),
+OK (2 🟡 folded in: the `--ci` run and the two-sided reading in the scope rows; `sudo` installed in the `--ci`
+container, which the pinned image lacks).
+
 **Where (D14):** code on branch `phase-6-claude`, in its worktree. `plan/` stays on `main`. The factory's working
 files (`run.md`, `state/`, `reviews/`) are private (D48).
 
@@ -37,6 +44,13 @@ In [decisions.md](../decisions.md):
   one CPU and 2 GiB, `deploy` dropped to with `setpriv` and only `CAP_NET_BIND_SERVICE` as an ambient capability, the
   container's unprivileged port floor put back at 1,024 so that the capability is what lets port 80 bind (project
   manager).
+- **D85, the CI runner too:** `lab/submission-test.sh --ci` installs Ubuntu's PHP 8.3 first (as the runner image has),
+  then `install.sh` with `sudo`'s `PATH`, then `test/run.sh` on `127.0.0.1:3000` as a normal user; `install.sh` calls
+  every PHP tool by its full path under `/opt/php-gcob` (project manager, plan review item 1).
+- **D86, a pair outside the floor:** 2 more pairs (3 in all), then a one-process profile of each side: the lab's
+  server with `APP_PRAGMAS=mmap-off,APP_SOFT_CONN_LIMIT=64000` and `APP_PROFILE`, the submission's code through a
+  lab-only entry file under `lab/` that loads its files in one process with the profiler. Built only if needed
+  (project manager, plan review item 2).
 - **D83, parity:** one `steplab.sh` pair at 24,000 req/s, the lab's server with `APP_WORKERS=2`,
   `APP_SOFT_CONN_LIMIT=64000`, `APP_PRAGMAS=mmap-off` against the submission's server file, same image, same flags
   (project manager).
@@ -46,13 +60,14 @@ In [decisions.md](../decisions.md):
 | #   | Commit                                                                   | Done when |
 |-----|--------------------------------------------------------------------------|-----------|
 | 1   | `feat(submission): php-Gcob, the chosen variants in a clean copy`         | `bash lab/challenge-test.sh --image 8.5 --server submissions/php-Gcob/server.php --ext pcntl --ext sockets --ext event` (no `--env`) prints `passed=42 failed=0`; the boot lines say 2 workers, the soft limit 64000 per process and `mmap_size=0`; a check sees both pids answer over 200 connections; `check_submission` in `lab/check.sh` passes (below) and fails on its fixtures; `git diff main -- lab/app lab/servers` is empty; a real-shape smoke pair (lab against submission, 24,000 req/s, 60,000 idle, `--allow-busy`) has both runs valid; `lab/check.sh` all `ok` |
-| 2   | `feat(submission): install.sh builds PHP 8.5 and its extensions from pinned sources` | `bash lab/submission-test.sh` on a clean `ubuntu:24.04` prints the install's time, `build.sh` ok as `deploy`, `passed=42 failed=0` from the challenge's `test/run.sh` run as `deploy` on port 80, then a second start on `0.0.0.0:80` healthy in under 60 s and answering on the container's own address, every server process owned by `deploy` with `Max open files 65535`, and a negative check (port 80 refused to `deploy` without the capability); exits 0; `check_submission` also refuses an unpinned download; `lab/check.sh` all `ok` |
+| 2   | `feat(submission): install.sh builds PHP 8.5 and its extensions from pinned sources` | `bash lab/submission-test.sh` on a clean `ubuntu:24.04` prints the install's time, `build.sh` ok as `deploy`, `passed=42 failed=0` from the challenge's `test/run.sh` run as `deploy` on port 80, then a second start on `0.0.0.0:80` healthy in under 60 s and answering on the container's own address, every server process owned by `deploy` with `Max open files 65535`, and a negative check (port 80 refused to `deploy` without the capability); exits 0; `bash lab/submission-test.sh --ci` prints `passed=42 failed=0` on `127.0.0.1:3000` (D85); `check_submission` also refuses an unpinned download; `lab/check.sh` all `ok` |
 | 3   | `docs(submission): the README and the rules audit`                       | `submissions/php-Gcob/README.md` has the table (language, PHP and its flags, framework none, ext-event and libevent, `pdo_sqlite` and SQLite, dependencies, **direct**), how to run it, the optimizations each with its measured number and a link to its `lab/results/` folder, the rules audit (5, 6, 7, 10, 11: what the code does and where), what isn't measured yet (the score, phase 7); every link resolves to a file of this repo (`check_submission`); `bash tools/public-guard.sh tree` passes |
-| 4   | `docs(lab): the submission against the lab, one pair`                    | `lab/results/<date>-submission-parity/README.md`: the predictions copied unchanged, one pair at 24,000 req/s (quiet VM, `stages.sh`, `--floor-from` 5b's A/A), both runs valid, the verdict against 0.864 µs/req; within it, parity; outside it, the reason found before delivery; `summarize.sh` regenerates its tables; `lab/check.sh` all `ok` |
+| 4   | `docs(lab): the submission against the lab, one pair`                    | `lab/results/<date>-submission-parity/README.md`: the predictions copied unchanged, one pair at 24,000 req/s (quiet VM, `stages.sh`, `--floor-from` 5b's A/A), both runs valid, `|sub − lab|` printed by `summarize.sh` and read against 0.864 µs/req (D86); within it, parity; outside it, the reason found before delivery; `summarize.sh` regenerates its tables; `lab/check.sh` all `ok` |
 
 Vertical slices: scope 1 is the code and how the lab runs it (42/42 in the lab's image, the parity pair's
 plumbing), scope 2 the bench's way in (a bare Ubuntu, `deploy`, port 80), scope 3 the claims, scope 4 the one
-measurement. Scopes 2 and 3 don't need each other; scope 4 needs scope 1 and a quiet VM.
+measurement. Scope 3 comes after scope 2 (it cites the install's versions and healthy time); scope 4 needs scope 1
+and a quiet VM.
 
 **Quiet VM (D15):** only scope 4 measures. Jacob's other containers run again since this morning: the project
 manager never stops or starts them. When scope 4 is ready, a 🔴 item in 👉 asks Jacob for a quiet VM; scopes 2 and 3
@@ -98,19 +113,25 @@ go on meanwhile. Scope 1's smoke pair and scope 2's container are not measuremen
   same file with the same flags.
 - **`build.sh`:** `php -l` on every PHP file with D81's PHP, nothing written. **`.gitignore`:** what a run can leave
   in the folder (none expected; at least `*.log`).
-- **The lab's hook:** a server file may also be under the repo's `submissions/` (mounted read-only at
+- **The lab's hook:** a server file may also be under the repo's `submissions/` (mounted only when the server file is
+  there, so no empty folder appears elsewhere; read-only at
   `/submissions` in the server's container); an unknown path is refused as today.
 - **`check_submission` (lab/check.sh):** the submission's PHP calls `getenv` only for the four SPEC.md variables;
-  it holds none of `APP_`, `FFI`, `Excimer`, `telemetry`, `checkpointer`, `group_commit`; `start.sh`'s `-d` flags are
+  it holds none of the lab's switch names (`APP_WORKERS`, `APP_PRAGMAS`, `APP_SOFT_CONN_LIMIT`, `APP_TELEMETRY`,
+  `APP_PROFILE`, `APP_JSON`, `APP_FEED_SQL`, `APP_FETCH`, `APP_DRIVER`, `APP_LOCKING`, `APP_GROUP_COMMIT`,
+  `APP_CHECKPOINTER`, `APP_LOOP`) and none of `FFI`, `Excimer`, `DiyTelemetry`, `DiyProfile`, `checkpointer`,
+  `group_commit` (a constant like `APP_JSON_FLAGS` or a function `app_boot` stays: the ban is on switches, not on the
+  `APP_` prefix, plan review item 3); `start.sh`'s `-d` flags are
   the three extensions plus `LAB_SERVER_PHP_FLAGS`, in order; `php -l` passes in the lab's image; the folder holds no
   file outside the list above. Fixtures make each part fail once.
 - **The smoke (D57):** one `steplab.sh` pair at 24,000 req/s, `s = 0.02`, 60,000 idle, 60 s plateau, telemetry off,
   `--ext pcntl --ext sockets --ext event` on both sides: `lab` = `lab/app/server.php` with
   `APP_WORKERS=2,APP_SOFT_CONN_LIMIT=64000,APP_PRAGMAS=mmap-off`; `sub` = `--server-variant
   sub=submissions/php-Gcob/server.php`, no env. `--allow-busy`: a check of the plumbing, never a number.
-- **Cases:** 42/42; the boot lines; both pids answer; `SQLITE_PATH` unset, `JWT_SECRET` unset, a missing database:
-  exit 1 with a message, nothing listening; `HOST`/`PORT` unset: `0.0.0.0:80` (checked in a container where binding
-  80 is allowed); `Connection: close` past the limit (a check with a small limit isn't possible without a switch:
+- **Cases:** 42/42; the boot lines; both pids answer (the copy has no telemetry to name them: hold 200 connections
+  open and count each child's sockets in `/proc/<pid>/fd`, both above 0, plan review item 4); `SQLITE_PATH` unset, `JWT_SECRET` unset, a missing database:
+  exit 1 with a message, nothing listening; `HOST`/`PORT` unset: `0.0.0.0:80` (checked as root in a container with its own
+  network, not the host network: another project publishes port 80 on the VM, plan review item 5); `Connection: close` past the limit (a check with a small limit isn't possible without a switch:
   the developer proves the 64,000 line's path with a unit-level check that builds the connection with a small count,
   or says why it can't, without adding an env var); `check_submission`'s fixtures.
 
@@ -132,7 +153,8 @@ go on meanwhile. Scope 1's smoke pair and scope 2's container are not measuremen
   would let anyone bind 80) and `--ulimit nofile=65535:65535`. In it: the submission folder copied in (not mounted:
   `deploy` must own it, as a checkout would be), the challenge's `test/` copied unchanged, `lab/data/feed.db` as
   `seed/feed.db`; `install.sh` as root, timed; `curl jq openssl` installed for the test suite **after** `install.sh`
-  (so `install.sh` proves it brings its own `curl`); `useradd -m deploy`; `build.sh` as `deploy`; then, as `deploy`
+  (so `install.sh` proves it brings its own `curl`); `useradd -m deploy`, the folder at `/srv/php-Gcob` owned by `deploy` (the guard refuses home paths in a
+  committed script, plan review item 11); `build.sh` as `deploy`; then, as `deploy`
   through `setpriv --reuid deploy --regid deploy --init-groups --inh-caps +net_bind_service --ambient-caps
   +net_bind_service` (what systemd's `AmbientCapabilities=` gives), `PORT=80 bash test/run.sh <folder>`; then a second
   start, `HOST=0.0.0.0 PORT=80 bash start.sh` on a fresh seed copy, the seconds until `/health` answers, `/health`
@@ -140,6 +162,12 @@ go on meanwhile. Scope 1's smoke pair and scope 2's container are not measuremen
   `/proc/<pid>/limits`; a negative check: as `deploy` without the capability, binding port 80 is refused (it proves
   the sysctl). Prints one summary line per check and exits 0 only if all pass. The container is removed unless
   `--keep`. The `nofile` limit in the container emulates systemd's `LimitNOFILE=65535`; said so in its header.
+- **`--ci` (D85):** the same container, but first `apt-get install php8.3-cli php8.3-dev` (what the runner image
+  has), then `apt-get install sudo` (the pinned image has none) and `sudo bash install.sh`, the CI's own command, so it runs
+  with `sudo`'s secure `PATH` (`/opt/php-gcob/bin` not on it), then `test/run.sh` as a normal
+  user other than `deploy` on its defaults (`127.0.0.1:3000`), with the runner's own `nofile`; it proves the extensions
+  were built against 8.5 (the server's boot would exit 1 otherwise). `install.sh` names `/opt/php-gcob/bin/phpize`,
+  `php-config` and `php` by full path everywhere.
 - **`check_submission` grows:** every `curl` in `install.sh` is followed by a `sha256sum -c` of what it fetched;
   shellcheck runs on the submission's three scripts (pinned shellcheck, as for the lab).
 - **Cases:** the run above; `install.sh` fails cleanly on a wrong sha256 (a fixture copy with one digit changed,
@@ -158,6 +186,8 @@ go on meanwhile. Scope 1's smoke pair and scope 2's container are not measuremen
   and why (the fd wall, S1-b against S1-d, D77, x86 numbers); `mmap` off (D66, the pairs); what was measured and **not**
   kept (group commit, exclusive locking, the JSON variants, the FFI driver, the lean parser, PHP 8.4 and 8.6), one line
   each with its number; the method in one paragraph (µs of CPU per request, the A/A floor, link to the lab's README).
+- **The supervisor's choice:** one child that ends stops the other and the parent exits 1, no restart: named in the
+  README, with why (a crash shows instead of a half server; systemd decides what follows) (plan review item 9).
 - **Rules audit:** rule 5 (each request runs its own statements; nothing kept between requests but the prepared
   statements; every JWT's HMAC checked with `hash_equals` on every request; where in `app.php`); rule 6 (WAL,
   `synchronous = NORMAL`, autocommit, the `INSERT ... RETURNING` row fetched and the cursor closed before the 201);
@@ -168,8 +198,9 @@ go on meanwhile. Scope 1's smoke pair and scope 2's container are not measuremen
 - **Links:** to this repo on GitHub (`https://github.com/Gcob/twelve-dollar-server-php/...`, the branch `main`), since
   the folder will be read in the challenge's repo; `check_submission` checks each such link's path exists in the
   tree.
-- **Not claimed:** a score. "Results" says phase 7 will score it; the bench estimate (79 µs/req for one process, 96 at
-  150,000 users with S1-b) is labelled an estimate.
+- **Not claimed:** a score, or the bench estimate (79 µs/req, 96 at 150,000 users): an estimate in the PR's README
+  reads as a claim, so "Results" says only that phase 7 will score it; the measured µs/req on the Mac and the Xeon,
+  each with its machine named, stay (plan review item 12).
 
 ## Scope 4: parity, one pair
 
@@ -183,9 +214,13 @@ go on meanwhile. Scope 1's smoke pair and scope 2's container are not measuremen
   `sub` = `submissions/php-Gcob/server.php`, no env.
 - **The floor's caveat:** 5b's A/A ran one process; this pair runs two on one CPU. The README says so; no new A/A
   (D60: one pair is a screen).
-- **The verdict:** within the floor (the difference's absolute value under 0.864): parity, delivered. Outside it,
-  either way: the reason is found before delivery (a second pair, then the profile of each side, `lab/profile.sh`,
-  one process each if Excimer can't profile 2), and the copy is fixed or the difference explained in the README.
+- **The verdict, two-sided:** `steplab`'s one-pair screen reads one side only ("not better"), so the README computes
+  `|sub − lab|` itself (in `summarize.sh`): under 0.864, parity, delivered. Round 1 runs `sub` first (D71), which adds
+  about 0.2 to 0.3 µs to its number: said beside it. Outside the floor, either way: D86 (2 more pairs, then a
+  one-process profile of each side), and the copy is fixed or the difference explained before delivery (plan review
+  items 2 and 7).
+- **`sub`'s run JSONs** say `soft_limit: null` and a VU cap "bound by file descriptors": the harness reads the limit
+  from the environment, which the copy doesn't use. Harmless at 24,000 req/s; the README says so (item 10).
 - **Run on:** the phase's worktree at the scope's starting commit; `stages.json` records the commit and that no
   tracked file is dirty.
 
