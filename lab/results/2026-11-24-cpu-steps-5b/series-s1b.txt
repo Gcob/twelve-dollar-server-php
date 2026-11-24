@@ -1,0 +1,4 @@
+# S1-b against S1-a on the Mac, run by `bash lab/stages.sh lab/results/2026-11-24-cpu-steps-5b/series-s1b.txt --out <a folder>`; the driver's stages file is kept here as stages-s1b.json.
+# PHP 8.5, think scale 0.02, 60,000 idle connections, a 60 s plateau at 12,000 req/s, 3 pairs, the alternating order. Both sides load pcntl so the only difference is APP_WORKERS=2.
+# The floor is the A/A at 12,000 req/s of the S1 series (the bare skeleton in the old order).
+s1b-12000 --image 8.5 --rate 12000 --think-scale 0.02 --idle 60000 --seconds 60 --pairs 3 --ext sockets --ext event --ext pcntl --variant s1a=APP_PRAGMAS=mmap-off,APP_TELEMETRY=1 --variant s1b=APP_PRAGMAS=mmap-off,APP_TELEMETRY=1,APP_WORKERS=2 --floor-from lab/results/2026-11-23-s1-fd-wall/aa-12000

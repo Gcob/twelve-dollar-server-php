@@ -108,3 +108,74 @@ screen_section() { # folder title variant
 }
 screen_section php-8.6 "PHP 8.6 against 8.5 at 24,000 req/s (\`APP_PRAGMAS=mmap-off\` on both, 8.6 through \`--variant-args\`, the A/A's floor, one pair)" php86
 screen_section php-8.4 "PHP 8.4 against 8.5 at 24,000 req/s (\`APP_PRAGMAS=mmap-off\` on both, 8.4 through \`--variant-args\`, the A/A's floor, one pair)" php84
+
+# --------------------------------------------------------------------------------------------------------------------------------
+# S1-b (two processes on one port) against S1-a (one process) at 12,000 req/s on the Mac.
+S1AA="$LAB/results/2026-11-23-s1-fd-wall/aa-12000"
+echo
+echo "### S1-b on the Mac: the series, as the driver recorded it (\`stages-s1b.json\`)"
+echo
+jq -r '"The lab'"'"'s commit when the file started: `\(.commit[0:7])`, tracked files changed since: \(.dirty). Gap between series: \(.gap_s) s; `--allow-busy`: \(.allow_busy)."' stages-s1b.json
+echo
+echo "| Series | start (UTC) | end (UTC) | exit code | other containers at the quiet check | busy | refused |"
+echo "|---|---|---|---|---|---|---|"
+jq -r '.series[] | "| \(.name) | \(.start) | \(.end) | \(.exit_code) | \(.other_containers) | \(.busy) | \(.refused) |"' stages-s1b.json
+
+echo
+echo "### S1-b on the Mac: S1-b against S1-a at 12,000 req/s (\`APP_WORKERS=2\` against one process, \`APP_PRAGMAS=mmap-off\`, telemetry on, \`s = 0.02\`, 60,000 idle, 3 pairs)"
+echo
+runs_table s1b-12000
+echo
+host_table s1b-12000
+echo
+runs_of s1b-12000 | jq -r "$PRELUDE"'map(select(counted)) as $c | [$c[] | .host.plateau.load1] as $l | [$c[] | .host.plateau.cpu_busy_pct] as $b | [$c[] | .host.fsync_ms] as $f | [$c[] | .host.plateau.steal_pct] as $s
+  | "Over the \($c | length) runs: load on the plateau \($l | min) to \($l | max), the VM'"'"'s CPU busy \($b | min) to \($b | max) %, steal \($s | min) to \($s | max) %, `fsync` \($f | min) to \($f | max) ms."'
+echo
+echo "The pairs (S1-b minus S1-a, the order alternates: round 1 runs S1-b first, round 2 S1-a first, round 3 S1-b first):"
+echo
+echo "| Round | order | S1-a µs/req | S1-b µs/req | S1-b minus S1-a µs | as a share of S1-a |"
+echo "|---|---|---|---|---|---|"
+runs_of s1b-12000 | jq -r "$PRELUDE"'map(select(counted)) | group_by(.steplab.round)[] | select(length == 2) | (.[] | select(.steplab.variant == "s1a")) as $a | (.[] | select(.steplab.variant == "s1b")) as $b
+  | "| \($a.steplab.round) | \(if $a.steplab.position == 0 then "s1a then s1b" else "s1b then s1a" end) | \($a | us | r2) | \($b | us | r2) | \(($b | us) - ($a | us) | sgn) | \((($b | us) / ($a | us) - 1) * 100 | sgn) % |"'
+echo
+runs_of s1b-12000 | jq -r "$PRELUDE"'map(select(counted)) as $c | ([$c[] | select(.steplab.variant == "s1a") | us] | med) as $ma | ([$c[] | select(.steplab.variant == "s1b") | us] | med) as $mb
+  | ($c | group_by(.steplab.round) | map(select(length == 2) | ((.[] | select(.steplab.variant == "s1b") | us) - (.[] | select(.steplab.variant == "s1a") | us)))) as $d
+  | "Medians: S1-a \($ma | r2) µs/req, S1-b \($mb | r2) µs/req. Paired differences \($d | map(sgn) | join(", ")), **median \($d | med | sgn) µs/req, \(($d | med) / $ma * 100 | sgn) % of the median S1-a**. Achieved over offered: \([$c[] | ratio] | min | r1) % to \([$c[] | ratio] | max | r1) %; runs under the 97 % rule: \([$c[] | select(.results.steps[0].pass | not)] | length) of \($c | length)."'
+echo
+echo "Both processes served, from the server's own log (the telemetry line each process prints every second, \`requests\` summed over the run's whole life: the warm-up, the plateau and one request per idle connection):"
+echo
+echo "| Run | processes | requests counted by each process | seconds in which each counted a request | share of the first |"
+echo "|---|---|---|---|---|"
+jq -r '.[] | if (.processes | length) == 0 then "| \(.run) | not followed | - | - | - |"
+  else "| \(.run) | \(.processes | length) | \(.processes | map(.requests) | join(" and ")) | \(.processes | map(.seconds_with_requests) | join(" and ")) | \(.processes[0].requests / (.processes | map(.requests) | add) * 100 * 10 | round / 10) % |" end' s1b-12000/served.json
+echo
+echo "Memory of one run of each variant, with the sampler on (\`--no-series\` off; 12,000 req/s for 60 s after the warm-up, 60,000 idle; not a pair, not counted):"
+echo
+echo "| Variant | valid | achieved req/s | µs CPU/req | memory.current peak MiB | Pss_Anon peak MiB | file descriptors peak | processes |"
+echo "|---|---|---|---|---|---|---|---|"
+for v in s1a s1b; do
+  jq -r "$PRELUDE"'"| \(input_filename | sub("^.*/"; "") | sub("\\.json$"; "")) | \(.valid) | \(.results.steps[0].achieved_rps | r1) | \(us | r2) | \(.results.server_memory_current_peak_mib | r1) | \(.results.server_pss_anon_peak_mib | r1) | \(.server_connections.fds_peak) | \(.server_connections.telemetry.processes // 1) |"' "s1b-12000/memory/$v.json"
+done
+echo
+summary_block s1b-12000 --floor-from "$S1AA"
+echo
+echo "The same series against this folder's own floor (the A/A at 24,000 req/s above), the more cautious reading:"
+echo
+summary_block s1b-12000 --floor-from "$AA"
+
+echo
+echo "### S1-b on the Mac: what S1-b and S1-d add at the bench's sizes (soft limit 64,000; share of requests that reconnect = 1 - 64,000 / N)"
+echo
+MAC_RECON12="$(jq '.variants[] | select(.variant == "s1d") | .median_difference_us' "$S1/s1-12000/summary.json")"
+RECON7500="$(runs_of reconnect-7500 | jq "$PRELUDE"'map(select(counted)) | ((map(select(.steplab.variant == "s1d-every") | us)[0]) - (map(select(.steplab.variant == "skeleton") | us)[0]))')"
+S1B_ADD="$(runs_of s1b-12000 | jq "$PRELUDE"'map(select(counted)) | group_by(.steplab.round) | map(select(length == 2) | ((.[] | select(.steplab.variant == "s1b") | us) - (.[] | select(.steplab.variant == "s1a") | us))) | med')"
+S1A_US="$(runs_of s1b-12000 | jq "$PRELUDE"'map(select(counted and .steplab.variant == "s1a") | us) | med')"
+echo "| Users N | share that reconnect | S1-d at 7,500 req/s's reconnect ($(jq -n "$PRELUDE $RECON7500 | r2") µs) adds | S1-d at 12,000 req/s's reconnect ($(jq -n "$PRELUDE $MAC_RECON12 | r2") µs) adds | S1-b adds (any N) | S1-b over S1-d (12,000 figure) |"
+echo "|---|---|---|---|---|---|"
+for n in 100000 150000; do
+  jq -rn "$PRELUDE"'(1 - 64000 / $n) as $share | "| \($n) | \($share * 100 | r1) % | \($share * $r75 | sgn) µs (\($share * $r75 / $a * 100 | r1) % of S1-a) | \($share * $r12 | sgn) µs (\($share * $r12 / $a * 100 | r1) % of S1-a) | \($b | sgn) µs (\($b / $a * 100 | r1) % of S1-a) | \(if $b < $share * $r12 then "cheaper by \($share * $r12 - $b | r2) µs" else "dearer by \($b - $share * $r12 | r2) µs" end) |"' \
+    --argjson n "$n" --argjson r75 "$RECON7500" --argjson r12 "$MAC_RECON12" --argjson b "$S1B_ADD" --argjson a "$S1A_US"
+done
+echo
+jq -rn "$PRELUDE"'"S1-b and S1-d add the same at a share of \($b / $r12 * 100 | r1) % of requests reconnecting (S1-d at the 12,000 req/s figure), that is N = \(64000 / (1 - $b / $r12) | round) users; with the 7,500 req/s figure, \($b / $r75 * 100 | r1) % and N = \(64000 / (1 - $b / $r75) | round). Below that size S1-d is cheaper, above it S1-b is."' \
+  --argjson r75 "$RECON7500" --argjson r12 "$MAC_RECON12" --argjson b "$S1B_ADD"

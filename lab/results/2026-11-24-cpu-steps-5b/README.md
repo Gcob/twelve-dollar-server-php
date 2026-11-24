@@ -1,13 +1,13 @@
-# Phase 5b's instrument: the A/A floor in alternating order, the Mac's reconnect at 7,500, the PHP versions
+# Phase 5b's instrument: the A/A floor in alternating order, the Mac's reconnect at 7,500, the PHP versions, and S1-b's cost
 
 The first measurements of phase 5b, on a quiet Docker VM (Docker Desktop on an M3 Pro, arm64, 1 CPU for the server, 2 GiB, PHP 8.5 unless a
-series says otherwise): the noise floor of the new method, the cost of a reconnect on the Mac at the Xeon's rate, and a one-pair screen of
-PHP 8.6 and 8.4 against 8.5. These are arm64 numbers, not a score. This file is written in two steps: the predictions first (below,
+series says otherwise): the noise floor of the new method, the cost of a reconnect on the Mac at the Xeon's rate, a one-pair screen of
+PHP 8.6 and 8.4 against 8.5, and what two processes on one port cost per request against one (S1-b against S1-a). These are arm64 numbers, not a score. This file is written in two steps: the predictions first (below,
 before any run), then the plan, the runs and the reading.
 
 ## Predictions (D5)
 
-Copied unchanged from the phase's plan, section "Predictions (D5)" (all thirteen). This folder judges 1, 2, 3 and 10; the others belong to
+Copied unchanged from the phase's plan, section "Predictions (D5)" (all thirteen). This folder judges 1, 2, 3, 4 and 10; the others belong to
 later folders of the phase.
 
 
@@ -60,8 +60,22 @@ the branch's checkout, so that nothing edited the lab's code while they ran. Eve
 4. **Flags for the TIME_WAIT gates:** none. The defaults of `steplab.sh` were used: k6's addresses wait to hold at most 2,500 TIME_WAIT
    sockets (150 s at most), the idle client's addresses never wait (`--idle-time-wait-max` 100,000, since the idle client binds again on a busy
    port). No `--lag-gate`, no `--warmup`.
-5. **`summarize.sh`** regenerates every table below from the JSON files, `stages.json` and two 5a folders (the Xeon's reconnect pair, the S1
-   series' reconnect at 12,000 req/s).
+5. **`summarize.sh`** regenerates every table below from the JSON files, `stages.json`, `stages-s1b.json`, `s1b-12000/served.json` and three 5a
+   folders (the Xeon's reconnect pair, the S1 series' reconnect at 12,000 req/s and its A/A at 12,000 req/s).
+6. **`s1b-12000`, S1-b against S1-a (added after the four series above, from a detached checkout at commit `4e319b9`, the one that built
+   `APP_WORKERS`; `stages-s1b.json` records it, no tracked file changed).** `series-s1b.txt` holds the call: 12,000 req/s, `s = 0.02`, 60,000
+   idle, a 60 s plateau, 3 pairs, the alternating order, `--ext sockets --ext event --ext pcntl` on both sides (so the only difference is
+   `APP_WORKERS=2`), `s1a` = `APP_PRAGMAS=mmap-off,APP_TELEMETRY=1` and `s1b` the same plus `APP_WORKERS=2`, the quiet check on, never
+   `--allow-busy`. The floor is read twice: from 5a's A/A at 12,000 req/s (`--floor-from lab/results/2026-11-23-s1-fd-wall/aa-12000`: the
+   bare skeleton in the old order, **0.516 µs/req by today's rule**, the floor the series ran with) and, as the more cautious reading, from this
+   folder's A/A at 24,000 req/s (**0.864**). The driver wrote into a scratch folder and `s1b-12000/` was moved here.
+   Two readings the step lab does not make were added, both read only and outside the pairs:
+   - **Which process served.** The series' runs keep no sampler (`--no-series`), so the run files hold only the telemetry summed over the
+     processes. The server's own log was followed from outside (`docker logs -f`, one file a run, started once the series was under way) and
+     each process's `requests` summed into `s1b-12000/served.json`. **Round 1's S1-b log was not followed** (the follower started during
+     the next run): its row says so.
+   - **Memory.** One run of each variant after the series, `lab/realistic.sh --hold 12000,60` with the same flags and the sampler on
+     (`s1b-12000/memory/`): `memory.current` and `Pss_Anon` peaks, file descriptors. One run each, not a pair.
 
 ## What differed from the plan of the runs
 
@@ -73,6 +87,9 @@ the branch's checkout, so that nothing edited the lab's code while they ran. Eve
   skeleton first. The skeleton then waited 54 s for k6's TIME_WAIT sockets (5,303 on its busiest address, above the limit of 2,500) to drain
   before it started: its `waited s` is in the table. The Xeon's pair started both runs with 26,870 and 27,732 on the busiest address and waited 0 s.
 - **No screen beat the floor, so no confirmation pairs were run.**
+- **The S1-b series: nothing run twice and no series failed.** The file exited 0; every one of the 6 runs is valid, 0 other containers, 60,000 idle
+  held at the end and none closed by the server. No run waited for TIME_WAIT sockets. The idle client bound again 175 times in 5 of the 6 runs (0 in
+  the first), the busy ports of the run before, as in 5a. The series took 16.5 minutes.
 - **The host line's CPU share is of the whole VM** (12 CPUs): the server's own CPU is one of them, k6 uses most of the others.
 
 ## Results
@@ -247,6 +264,115 @@ php84             1/1      0      23.4      23.4 to 23.4    16.31  -0.1         
 Floor: 0.864 us, from lab/results/2026-11-24-cpu-steps-5b/aa-24000: |median 0.083| + interquartile range 0.78 of 5 paired differences (quartiles by linear interpolation, inclusive)
 Rule: a variant is beyond the noise when it has at least 2 pairs, every paired difference (its µs CPU/req minus the reference's in the same round) has the same sign and the median paired difference is at least 0.864 µs in absolute value; otherwise it is within the noise. A round where either run is invalid has no pair. One pair with a floor: a screen (beats the floor when lower by at least the floor, else not better), never a verdict. No pair: no verdict. No floor: not judged (the floor comes from an A/A calibration).
 ```
+
+### S1-b on the Mac: the series, as the driver recorded it (`stages-s1b.json`)
+
+The lab's commit when the file started: `4e319b9`, tracked files changed since: false. Gap between series: 60 s; `--allow-busy`: false.
+
+| Series | start (UTC) | end (UTC) | exit code | other containers at the quiet check | busy | refused |
+|---|---|---|---|---|---|---|
+| s1b-12000 | 2026-11-24T07:04:04Z | 2026-11-24T07:20:40Z | 0 | 0 | false | false |
+
+### S1-b on the Mac: S1-b against S1-a at 12,000 req/s (`APP_WORKERS=2` against one process, `APP_PRAGMAS=mmap-off`, telemetry on, `s = 0.02`, 60,000 idle, 3 pairs)
+
+| Run | position in its round | valid | other containers | idle held at the end | closed by the server | achieved req/s | achieved / offered | µs CPU/req | p95 ms | p99 ms | result |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| s1b-1 | 1 | true | 0 | 60000 | 0 | 11923.8 | 99.3 % | 27.04 | 0.95 | 3.68 | pass |
+| s1a-1 | 2 | true | 0 | 60000 | 0 | 11921.7 | 99.3 % | 24.89 | 1.6 | 4.6 | pass |
+| s1a-2 | 1 | true | 0 | 60000 | 0 | 11930.4 | 99.4 % | 24.75 | 1.51 | 4.53 | pass |
+| s1b-2 | 2 | true | 0 | 60000 | 0 | 11914.3 | 99.3 % | 27.04 | 1.01 | 3.96 | pass |
+| s1b-3 | 1 | true | 0 | 60000 | 0 | 11922.4 | 99.3 % | 26.97 | 1.01 | 3.96 | pass |
+| s1a-3 | 2 | true | 0 | 60000 | 0 | 11919.6 | 99.3 % | 24.9 | 1.7 | 4.67 | pass |
+
+| Run | load1 before | load1 on the plateau | CPU busy on the plateau | steal on the plateau | fsync ms | TIME_WAIT on the busiest address before | waited s |
+|---|---|---|---|---|---|---|---|
+| s1b-1 | 0.84 | 3.05 | 9.77 % | 0.00 % | 0.514 | 0 | 0 |
+| s1a-1 | 2.50 | 2.79 | 9.67 % | 0.00 % | 0.456 | 10036 | 0 |
+| s1a-2 | 2.71 | 2.88 | 9.64 % | 0.00 % | 0.456 | 8442 | 0 |
+| s1b-2 | 3.02 | 4.66 | 9.89 % | 0.00 % | 0.491 | 8495 | 0 |
+| s1b-3 | 4.08 | 3.42 | 11.03 % | 0.00 % | 0.443 | 8463 | 0 |
+| s1a-3 | 3.81 | 3.36 | 9.75 % | 0.00 % | 0.496 | 8509 | 0 |
+
+Over the 6 runs: load on the plateau 2.79 to 4.66, the VM's CPU busy 9.64 to 11.03 %, steal 0.00 to 0.00 %, `fsync` 0.443 to 0.514 ms.
+
+The pairs (S1-b minus S1-a, the order alternates: round 1 runs S1-b first, round 2 S1-a first, round 3 S1-b first):
+
+| Round | order | S1-a µs/req | S1-b µs/req | S1-b minus S1-a µs | as a share of S1-a |
+|---|---|---|---|---|---|
+| 1 | s1b then s1a | 24.89 | 27.04 | +2.143 | +8.609 % |
+| 2 | s1a then s1b | 24.75 | 27.04 | +2.289 | +9.247 % |
+| 3 | s1b then s1a | 24.9 | 26.97 | +2.069 | +8.308 % |
+
+Medians: S1-a 24.89 µs/req, S1-b 27.04 µs/req. Paired differences +2.143, +2.289, +2.069, **median +2.143 µs/req, +8.609 % of the median S1-a**. Achieved over offered: 99.3 % to 99.4 %; runs under the 97 % rule: 0 of 6.
+
+Both processes served, from the server's own log (the telemetry line each process prints every second, `requests` summed over the run's whole life: the warm-up, the plateau and one request per idle connection):
+
+| Run | processes | requests counted by each process | seconds in which each counted a request | share of the first |
+|---|---|---|---|---|
+| s1b-1 | not followed | - | - | - |
+| s1b-2 | 2 | 452675 and 467536 | 155 and 154 | 49.2 % |
+| s1b-3 | 2 | 454109 and 466643 | 154 and 153 | 49.3 % |
+| memory/s1b | 2 | 432363 and 410520 | 83 and 82 | 51.3 % |
+
+Memory of one run of each variant, with the sampler on (`--no-series` off; 12,000 req/s for 60 s after the warm-up, 60,000 idle; not a pair, not counted):
+
+| Variant | valid | achieved req/s | µs CPU/req | memory.current peak MiB | Pss_Anon peak MiB | file descriptors peak | processes |
+|---|---|---|---|---|---|---|---|
+| s1a | true | 11921.9 | 23.97 | 591.6 | 107.3 | 62280 | 1 |
+| s1b | true | 11922.9 | 26.22 | 583.4 | 98 | 62303 | 2 |
+
+```text
+runs, in the order they ran (one round runs every variant once, the first variant is the reference; the order alternates: odd rounds run it last, even rounds first)
+round  variant        valid      req/s    us/req   p95 ms   p99 ms   tw/addr  load1 fsync ms  result
+    1  s1b            yes      11923.8        27     0.95     3.68         0   3.05     0.51  pass
+    1  s1a            yes      11921.7      24.9      1.6      4.6     10036   2.79     0.46  pass
+    2  s1a            yes      11930.4      24.8     1.51     4.53      8442   2.88     0.46  pass
+    2  s1b            yes      11914.3        27     1.01     3.96      8495   4.66     0.49  pass
+    3  s1b            yes      11922.4        27     1.01     3.96      8463   3.42     0.44  pass
+    3  s1a            yes      11919.6      24.9      1.7     4.67      8509   3.36      0.5  pass
+tw/addr: the most TIME_WAIT sockets on any one address, k6's or the idle client's, when the run started (- when the runner did not count)
+load1: the VM's 1-minute load average in the middle of the plateau; fsync ms: the median fdatasync of a 4 KiB write before the warm-up (- when a run has no host reading)
+
+variants (us is the server's CPU per request over the plateau)
+variant         valid failed median us        min to max   p99 ms  paired differences us     median  verdict
+s1a               3/3      0      24.9      24.8 to 24.9      4.6  reference                      -  reference
+s1b               3/3      0        27          27 to 27     3.96  +2.1 +2.3 +2.1              +2.1  beyond the noise
+
+Floor: 0.516 us, from lab/results/2026-11-23-s1-fd-wall/aa-12000: |median -0.172| + interquartile range 0.345 of 5 paired differences (quartiles by linear interpolation, inclusive)
+Rule: a variant is beyond the noise when it has at least 2 pairs, every paired difference (its µs CPU/req minus the reference's in the same round) has the same sign and the median paired difference is at least 0.516 µs in absolute value; otherwise it is within the noise. A round where either run is invalid has no pair. One pair with a floor: a screen (beats the floor when lower by at least the floor, else not better), never a verdict. No pair: no verdict. No floor: not judged (the floor comes from an A/A calibration).
+```
+
+The same series against this folder's own floor (the A/A at 24,000 req/s above), the more cautious reading:
+
+```text
+runs, in the order they ran (one round runs every variant once, the first variant is the reference; the order alternates: odd rounds run it last, even rounds first)
+round  variant        valid      req/s    us/req   p95 ms   p99 ms   tw/addr  load1 fsync ms  result
+    1  s1b            yes      11923.8        27     0.95     3.68         0   3.05     0.51  pass
+    1  s1a            yes      11921.7      24.9      1.6      4.6     10036   2.79     0.46  pass
+    2  s1a            yes      11930.4      24.8     1.51     4.53      8442   2.88     0.46  pass
+    2  s1b            yes      11914.3        27     1.01     3.96      8495   4.66     0.49  pass
+    3  s1b            yes      11922.4        27     1.01     3.96      8463   3.42     0.44  pass
+    3  s1a            yes      11919.6      24.9      1.7     4.67      8509   3.36      0.5  pass
+tw/addr: the most TIME_WAIT sockets on any one address, k6's or the idle client's, when the run started (- when the runner did not count)
+load1: the VM's 1-minute load average in the middle of the plateau; fsync ms: the median fdatasync of a 4 KiB write before the warm-up (- when a run has no host reading)
+
+variants (us is the server's CPU per request over the plateau)
+variant         valid failed median us        min to max   p99 ms  paired differences us     median  verdict
+s1a               3/3      0      24.9      24.8 to 24.9      4.6  reference                      -  reference
+s1b               3/3      0        27          27 to 27     3.96  +2.1 +2.3 +2.1              +2.1  beyond the noise
+
+Floor: 0.864 us, from lab/results/2026-11-24-cpu-steps-5b/aa-24000: |median 0.083| + interquartile range 0.78 of 5 paired differences (quartiles by linear interpolation, inclusive)
+Rule: a variant is beyond the noise when it has at least 2 pairs, every paired difference (its µs CPU/req minus the reference's in the same round) has the same sign and the median paired difference is at least 0.864 µs in absolute value; otherwise it is within the noise. A round where either run is invalid has no pair. One pair with a floor: a screen (beats the floor when lower by at least the floor, else not better), never a verdict. No pair: no verdict. No floor: not judged (the floor comes from an A/A calibration).
+```
+
+### S1-b on the Mac: what S1-b and S1-d add at the bench's sizes (soft limit 64,000; share of requests that reconnect = 1 - 64,000 / N)
+
+| Users N | share that reconnect | S1-d at 7,500 req/s's reconnect (5.91 µs) adds | S1-d at 12,000 req/s's reconnect (6.62 µs) adds | S1-b adds (any N) | S1-b over S1-d (12,000 figure) |
+|---|---|---|---|---|---|
+| 100000 | 36 % | +2.128 µs (8.6 % of S1-a) | +2.382 µs (9.6 % of S1-a) | +2.143 µs (8.6 % of S1-a) | cheaper by 0.24 µs |
+| 150000 | 57.3 % | +3.39 µs (13.6 % of S1-a) | +3.793 µs (15.2 % of S1-a) | +2.143 µs (8.6 % of S1-a) | cheaper by 1.65 µs |
+
+S1-b and S1-d add the same at a share of 32.4 % of requests reconnecting (S1-d at the 12,000 req/s figure), that is N = 94662 users; with the 7,500 req/s figure, 36.2 % and N = 100390. Below that size S1-d is cheaper, above it S1-b is.
 <!-- END summarize -->
 
 ### The host's state, every run, in one table
@@ -288,9 +414,35 @@ The run with the slowest `fsync` (b-2, 0.565 ms) read 23.75 µs/req, in the midd
 - **The host stayed quiet in every run** (the table above): a plateau load of 3 to 6, the VM's CPU at about a quarter for 24,000 req/s, no steal,
   `fsync` under 0.6 ms, no other container. Nothing in a host line explains a slow run, and no run was slow.
 
+- **S1-b, two processes on one port, adds 2.14 µs per request over one process (+8.6 %), beyond both floors.** Three pairs, S1-b minus S1-a:
+  +2.143, +2.289, +2.069 µs/req (+8.6, +9.2, +8.3 %), median +2.143 against the S1-a median of 24.89 (S1-b 27.04). Every pair has the same sign
+  and the median is 4.2 times 5a's A/A floor at 12,000 req/s (0.516, the floor the series ran with) and 2.5 times this folder's 24,000 floor
+  (0.864): **beyond the noise under both**. The extra run with the sampler on says the same (S1-a 23.97, S1-b 26.22: +2.24 µs, +9.4 %, one run
+  each, not counted). The S1-a here (24.89) is under 5a's S1 series' skeleton at 12,000 req/s (27.95, another day and the old order), so
+  the percentages are of this series' S1-a. This folder does not say where the 2.14 µs go (two processes share the one CPU the container
+  has). The latency goes the other way: p95 0.95 to 1.01 ms for S1-b against 1.51 to 1.70 for S1-a, p99 3.68 to 3.96 against 4.53 to 4.67
+  (probably because a stalled loop then holds half the connections, not all; not measured).
+- **Both processes served, in every run whose log was followed.** In S1-b's runs 2 and 3 the two processes counted 452,675 and 467,536, then
+  454,109 and 466,643 requests (49.2 and 49.3 % for the first), each in 153 to 155 of the 164 seconds of the run, and in the memory run
+  432,363 and 410,520 (51.3 %). **Round 1's S1-b was not followed**: its summed telemetry says 2 processes printed lines and an open peak of
+  62,268, the same as every other run, and its 27.04 µs/req and p95 0.95 ms read like runs 2 and 3, but a process that printed lines
+  without serving would not show in what was kept. Nothing says it did not serve; the run did not prove that it did.
+- **S1-b holds no more memory than S1-a in the one run of each**: `memory.current` peak 583.4 MiB (S1-a 591.6), `Pss_Anon` peak 98.0 MiB
+  (S1-a 107.3), file descriptors 62,303 against 62,280. One run each cannot tell a difference of 8 MiB from none, so the reading is "no
+  extra memory worth the name", not "less". The 60,000 idle connections cost their kernel memory whichever process holds them, and `Pss`
+  splits the pages two processes share between them (the second process comes from a fork), so the sum does not double what they share.
+- **At the bench's sizes, against S1-d (the table above).** S1-b's cost is the same at every N; S1-d's is a share `1 - 64,000 / N` of a
+  reconnect, 5.91 µs at 7,500 req/s (one pair) or 6.62 at 12,000 (5 pairs). At 100,000 users S1-d adds 2.13 or 2.38 µs and S1-b 2.14: a tie,
+  inside the floors. At 150,000 users S1-d adds 3.39 or 3.79 µs (13.6 or 15.2 % of S1-a) and **S1-b still 2.14 (8.6 %), cheaper by 1.25 to
+  1.65 µs**, beyond the floors. The two cost the same at about 94,700 users (the 12,000 figure) to 100,400 (the 7,500 one): S1-d below, S1-b above.
+  On the Mac the margin is small at 100,000 and about 1.5 µs at 150,000. On a Xeon a reconnect costs about four times the Mac's (23.7 against 5.91 µs
+  at 7,500 req/s), so the same model there makes S1-d about four times dearer, while S1-b's price has to be measured on the Xeon (here it was
+  measured at 12,000 req/s only; 150,000 users ask for about 15,900).
+
+
 ## Did the predictions hold?
 
-Only the four this folder judges; the others are for later folders of the phase.
+Only the five this folder judges; the others are for later folders of the phase.
 
 1. **The host line on a quiet VM at 24,000 req/s: missed on one number.** Load average 3.78 to 5.60 (3 to 7: held), steal 0.00 (held), `fsync_ms`
    0.245 to 0.565 (0.05 to 2: held), but the VM's CPU 23.7 to 26.2 % busy, under the predicted 35 to 60 %. The line counts the VM's 12 CPUs, and the
@@ -299,5 +451,8 @@ Only the four this folder judges; the others are for later folders of the phase.
    0.864 µs/req, just over the 0.3 to 0.8 range (the interquartile range is 0.780 because the differences follow the order).
 3. **The Mac's reconnect at 7,500 req/s: missed.** 5.91 µs, under the 7 to 9.5 predicted; the Xeon over the Mac is 4.01, over the 2.5 to 3.4. The
    19 % the Mac's request rises at 7,500 did show in the skeleton (+16.5 %); the reconnect did not rise with it.
+4. **S1-b on the Mac at 12,000 req/s: held.** +2.14 µs per request over S1-a (the predicted +1.5 to +5), +8.6 % (+5 to +18 %), beyond the floor
+   under both readings: 0.516 (5a's A/A at 12,000) and 0.864 (this folder's 24,000), three pairs all positive. At 150,000 users it is 1.25 to
+   1.65 µs under S1-d's price, at 100,000 a tie.
 10. **PHP 8.6 against 8.5: held; 8.4 0 to 5 % slower: missed.** 8.6 is -0.1 % (within ±3 %, not beyond the floor). 8.4 is -0.4 % (0.4 point on the faster side of
     the predicted 0 to 5 % slower; also inside the floor, so 8.4 is not slower, and not faster either).
