@@ -92,7 +92,7 @@ the branch's checkout, so that nothing edited the lab's code while they ran. Eve
    | `APP_PARSE=lean` | micro bench, ns per head parse | -18.7 % of a feed's head, -9.7 % and -10.2 % of a like's and a post's (about 50 ns of a request that costs about 27 µs) | under the 20 % bar: not wired, so there is no switch to run |
    | `APP_LOOP=nolock` | syscalls per request (`lab/syscalls.sh`) | 5.624 against the reference's 5.623 | a no-op on this image (`event.so` links no `libevent_pthreads`) |
    | `APP_LOOP=changelist` | the same | 5.620 against 5.623; with `APP_GROUP_COMMIT=1` `epoll_ctl` 0.158 to 0.078 a request (-1.6 % of the syscalls) | removes no syscall alone, and group commit, the only thing it pays with, did not beat the floor in 5a |
-   | `APP_LOOP=poll` | the same | 5.511 against 5.623 (-0.11 a request) | counted with no idle connection; with 60,000 idle, `ppoll` passes every descriptor at each call, which the count does not see |
+   | `APP_LOOP=poll` | the same | 5.511 against 5.623 (-0.11 a request: the count did drop, `ppoll` 0.414 a request replacing `epoll_pwait` 0.538) | not paired: that count was taken with 0 idle connections, and the realistic runs hold 60,000, which `ppoll` passes on every call, a cost the count does not see |
 8. **`profile/`, the profile of the chosen combination, from the same detached checkout.** Nothing was chosen, so the combination is the reference
    alone (`APP_PRAGMAS=mmap-off`). One run of `lab/realistic.sh --image 8.5 --think-scale 0.02 --idle 60000 --lag-gate 6 --warmup 2400,60
    --no-series --env APP_PRAGMAS=mmap-off --env APP_TELEMETRY=0 --profile <file> --hold 24000,60`: 5a's skeleton profile, with the pragma. The fold's
@@ -576,7 +576,7 @@ The run with the slowest `fsync` (b-2, 0.565 ms) read 23.75 µs/req, in the midd
 - **The variants that were not run each read their gate, and the gates agree with the macro's floor.** `concat` costs 9.4 % more per feed than `encode` (33,755 against 30,842 ns): at the
   macro that would be about +1.4 µs a request (2,914 ns more a feed and 31 more a post, over a loop of 2.17 requests), the wrong way. The FFI driver with `sqlite` is 50 ns from PDO's per feed (+0.2 %, spreads that overlap) and even raw FFI, with no class, saves at most
   467 ns of a feed (-1.5 %), 0.4 µs a request at most: of the order of the floor, and the class as written is not under PDO. The lean parser saves about 50 ns of a request that costs 23.5 µs
-  (0.2 %). The loop's `nolock` and `changelist` remove no syscall alone and `poll`'s -0.11 syscalls a request was counted with no idle connection. No gate said "worth a pair".
+  (0.2 %). The loop's `nolock` and `changelist` remove no syscall alone and `poll`'s count did drop (-0.11 syscalls a request) but was taken with 0 idle connections, where the runs hold 60,000 that `ppoll` passes on every call. No gate said "worth a pair".
 - **The profile of the reference (the chosen combination: nothing beat the floor): 23.51 µs/req** (median of the 13 reference runs of this folder at 24,000 req/s, 23.16 to 23.91; the
   profiled run itself read 24.01, the sampler costs CPU), **32 % of the CPU in the kernel**, 53,093 samples that cover 99 % of the cgroup's CPU, 0 % unclassified. By step:
   S6 (the query) 48.4 % (11.4 µs; the feed's query alone 35.3 %, 8.3 µs), S8 (the response) 21.5 % (5.1 µs), S7 (the JSON) 10.9 % (2.6 µs), S2 (read and parse) 8.8 % (2.1 µs),
@@ -590,7 +590,7 @@ The run with the slowest `fsync` (b-2, 0.565 ms) read 23.75 µs/req, in the midd
 
 ## Did the predictions hold?
 
-The ten this folder judges (4 and 10 were judged whole in the S1-b and PHP-version sections; 5 to 9 are new); 11 to 13 are for later folders of the phase.
+The ten this folder judges (4 and 10 were judged whole in the S1-b and PHP-version sections; 5 to 9 are new). 11 and 13 are not applicable: no CPU variant was chosen, so the together run and the x86 configuration pair were dropped. 12 is for a later folder of the phase.
 
 1. **The host line on a quiet VM at 24,000 req/s: missed on one number.** Load average 3.78 to 5.60 (3 to 7: held), steal 0.00 (held), `fsync_ms`
    0.245 to 0.565 (0.05 to 2: held), but the VM's CPU 23.7 to 26.2 % busy, under the predicted 35 to 60 %. The line counts the VM's 12 CPUs, and the

@@ -13,9 +13,11 @@
 // with APP_LOCKING=exclusive; don't use it as it is: under a steady writer the WAL never restarts and grows without bound), and
 // APP_WORKERS=<n> (off by default; n of 2 or more needs `--ext pcntl`): n processes serve on the one port with SO_REUSEPORT, each with its own
 // loop, its own connection to the database and its own file descriptors (lab/app/workers.php). Each one's telemetry line says its pid, and
-// APP_SOFT_CONN_LIMIT counts each process's own connections. Refused with APP_LOCKING=exclusive, APP_CHECKPOINTER and APP_PROFILE, and
-// APP_LOOP=nolock|changelist|poll (off by default): the event loop's libevent base is built from that preset (diy_loop_presets() in
-// lab/servers/diy-server.php), and the `loop:` boot line says which, and
+// APP_SOFT_CONN_LIMIT counts each process's own connections. n of 2 or more is refused with APP_LOCKING=exclusive, APP_CHECKPOINTER and
+// APP_PROFILE, and
+// APP_LOOP=nolock|changelist|poll (off by default, accepted with any of the above, workers included): the event loop's libevent base is built
+// from that preset (diy_loop_presets() in lab/servers/diy-server.php) and the `loop:` boot line says which; any other value stops the server at
+// boot with `APP_LOOP must be one of nolock, changelist, poll`, and
 // APP_DRIVER=pdo|ffi (off by default; ffi reads only and boots only with APP_DRIVER_BENCH=1, for the micro bench: lab/app/sqlite-ffi.php).
 //
 // It starts with the extensions loaded in this order: `--ext sockets --ext event`. It listens only once the database is open.
