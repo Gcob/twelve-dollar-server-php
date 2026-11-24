@@ -1051,25 +1051,33 @@ Each run is `lab/realistic.sh --hold <rate>,<seconds>` (a fresh seed copy, serve
 rate for 60 s (`--warmup <req/s>,<s>` changes it). `--variant <name>=<K=V,K=V...>` sets environment variables (an empty list is the
 skeleton as it is); `--server-variant <name>=<php file under lab/>` runs another server file; `--variant-args <name>=<arguments>` adds
 arguments to that variant's `lab/realistic.sh` call, split on spaces and given last, so a variant can run on another image and with its own
-extension and `php.ini` (`--variant-args "other=--image 8.3-apt --ext swoole"`). **The first variant is the reference.** Runs are **interleaved by round**: round 1 runs every variant once in the given order, round 2 again, and so on for
-`--pairs` rounds, so a slow drift of the VM hits every variant alike.
+extension and `php.ini` (`--variant-args "other=--image 8.3-apt --ext swoole"`). **The first variant is the reference.** Runs are **interleaved by round**: every round runs every variant once, and `--pairs` rounds follow each other, so a slow drift of the VM hits every variant alike.
 
-**The order inside a round is not rotated.** The reference runs first in every round. The A/A data shows an order effect of about -0.2 µs/req:
-the four A/A pairs at 24,000 req/s that passed the 97 % rule are all negative (-0.26, -0.16, -0.27, -0.06), the second run of an identical pair costing
-a little less, and the Mac's same-rate S1-d pair that never fires is lower in 3 of 3 rounds. The order stays for this phase: the A/A floor
-(0.27 µs/req, from those four pairs) absorbs an effect of that size, so a variant that clears the floor clears it with the bias in. Alternating the
-order of each round (ABBA: reference, variant, then variant, reference) cancels a steady bias and is the fix for a later phase; it needs no change to the
-verdict, only to the order the runner loops in.
+**The order inside a round alternates** (`--order alternate`, the default). Odd rounds run the variants in reverse (B A; C B A with three), even rounds in the order
+given (A B; A B C), counted from the round's own number, so `--first-round` keeps the alternation. **Round 1 runs the reference last**, on purpose: the A/A data
+shows an order effect of about -0.2 µs/req (the four A/A pairs at 24,000 req/s that passed the 97 % rule were all negative: -0.26, -0.16, -0.27, -0.06; the second
+run of an identical pair costs a little less), and a one-pair screen is round 1 alone, where that bias must work against the variant, never for it. Over a
+pair of rounds the bias cancels in the median. `--order fixed` keeps the order given in every round. Each run's `steplab` object records its `position` in the
+round (0-based) and the `order` rule, the progress line says each round's order, and the table lists the runs in the order they ran. `--dry-run` validates the options,
+prints the order of each round (and the floor of `--floor-from`) and runs nothing.
 
 **The judgment** (`lab/steplab-verdict.jq`, a pure function of the run JSON files): the number of a run is the server's CPU per
-request over the plateau (what the aggregator reads from the cgroup). A run counts when its JSON is valid. A variant's **paired
+request over the plateau (what the aggregator reads from the cgroup). A run counts when its JSON is valid and its step has a CPU per request: **a run whose step failed the 97 % rule counts too**, and the table flags it with a `*` next to its µs/req (and a `failed_rule` count per variant in `summary.json`), so a reader sees which numbers rest on such runs; a run the harness marked invalid (lag, k6's memory, idle connections closed) has no pair. A variant's **paired
 differences** are its number minus the reference's of the same round; a round where either run is invalid has no pair. A variant is
 `beyond the noise` when it has at least 2 pairs, **every pair has the same sign** (a zero has none) **and** the median paired difference
 is at least `--floor <us>` in absolute value; otherwise `within the noise`. **One pair is a screen, not a verdict:** with a floor, a
 variant that is lower than the reference by at least the floor is `screen: beats the floor`, any other is `screen: not better in one
 pair` (the first look that decides which variants deserve more pairs). No pair: `no verdict`. Without
-`--floor`: `no floor: not judged` (the floor comes from an A/A calibration: two identical variants, the largest median paired difference
-they show). The rule is printed under the tables.
+a floor: `no floor: not judged`. The rule is printed under the tables.
+
+**The floor** comes from an A/A calibration (two identical variants, `ref=` and a second variant that sets nothing) and one rule for every pair, A/A included:
+`--floor-from <A/A folder>` computes it (`lab/steplab-floor.sh`), `--floor <us>` types it (fixtures, a known value); both together are a usage error. The floor is
+`|median of the A/A's paired differences| + their interquartile range` (q3 - q1, quartiles by linear interpolation, inclusive: numpy's default `percentile`,
+Excel's `QUARTILE.INC`; with 5 differences, the 2nd and 4th sorted values), rounded to 3 decimals, so one outlier does not set it. 5a's A/A at 24,000 req/s: its
+differences -0.260, +2.565, -0.161, -0.267, -0.063 give median -0.161, quartiles -0.260 and -0.063, floor **0.358 µs/req**; the largest absolute difference (2.57) was
+the old floor, set by one run that failed the 97 % rule. At least 2 pairs are needed (`steplab-floor.sh` exits 1 otherwise). `summary.json` records `floor_us`,
+`floor_from` (the folder), `floor_rule`, `floor_detail` and `order`, and `steplab.sh` reads the floor before its first run, so a folder that gives none stops the
+comparison at once. The tables of runs that carry no `order` (5a's results folders, whose READMEs hold them byte for byte) print as they always did.
 
 **TIME_WAIT sockets.** Before each run the runner counts the TIME_WAIT sockets on every source address the lab's clients use, k6's and
 the idle client's (`127.0.0.2` to `127.0.0.254`) (`probe.sh time-wait`, one /24 range per comma-separated item: the VM's
@@ -1092,7 +1100,7 @@ and the most TIME_WAIT sockets on any one address (k6's or the idle client's) be
 
 **What it writes** into `--out` (default `lab/results/steplab-<label>-<image>-<time>/`): `<variant>-<round>.json` (the realistic run's
 JSON with a `steplab` object: variant, index, round, the variant's env and server file, the TIME_WAIT counts), `<variant>-<round>.txt`
-(that run's table; the runner's temp folder is a per-user path on the Mac, so both files hold `<tmp>` where it was), `summary.json` and `summary.txt`. `bash lab/steplab-summary.sh <folder> [--floor <us>] [--json <file>]` rebuilds the
+(that run's table; the runner's temp folder is a per-user path on the Mac, so both files hold `<tmp>` where it was), `summary.json` and `summary.txt`. `bash lab/steplab-summary.sh <folder> [--floor <us> | --floor-from <A/A folder>] [--json <file>]` rebuilds the
 two tables and the verdicts from the JSON files alone, so a results folder's `summarize.sh` calls it. Exit codes: 0 every run ran (an
 invalid run or a failing step is a result), 1 a harness failure, 2 usage. The runs of a comparison take what they take: a 60 s plateau
 with 60,000 idle connections is about 4 minutes a run, plus the drain of the TIME_WAIT sockets.
@@ -1125,7 +1133,7 @@ refusal) and `check_stages_live` cover it; `check_host_cpu_share_parse` and `che
 
 `check_steplab_verdicts` runs the verdict on recorded run files (`lab/check/fixtures/steplab/<case>/`: identical variants, a variant
 1 ms slower in every round, mixed signs, the same sign under the floor, an invalid round of the variant or of the reference, a single
-pair that is slower, lower by less than the floor or lower by more than it, and no pair), and `check_steplab_live` runs two variants for two rounds at a low rate and reads the tables' shape.
+pair that is slower, lower by less than the floor or lower by more than it, and no pair), `check_steplab_order` reads the order of rounds 1 to 4 (two and three variants, `--first-round`, `--order fixed`) from `steplab.sh --dry-run`, `check_steplab_floor` the floor of two fixture A/A folders worked out by hand (5a's five differences, and an even count with an invalid run) and the `*` flag, and `check_steplab_live` runs two variants for two rounds at a low rate and reads the tables' shape and the order.
 
 ### `lab/syscalls.sh`: syscalls per request
 

@@ -1483,6 +1483,97 @@ check_steplab_verdicts() {
   grep -qE '^ +1 +ref +.* +[0-9-]+ +pass$' <<<"$out" || { echo "the table of runs without host readings changed shape: ${out//$'\n'/ | }"; return 1; }
 }
 
+# steplab_order <variants and options...>: the order of each round that `lab/steplab.sh --dry-run` prints, one `round <n>: <names>` per line
+# joined with `|`, without starting a server.
+steplab_order() {
+  local out
+  out="$(bash "$LAB/steplab.sh" --dry-run --image 8.5 --rate 100 --think-scale 0.2 --seconds 6 "$@" 2>&1)" || { echo "steplab.sh --dry-run failed: ${out//$'\n'/ | }"; return 1; }
+  grep '^round ' <<<"$out" | paste -sd'|' -
+}
+
+# The order of the rounds: round 1 runs the reference last (a one-pair screen is round 1 alone, and the second run of a pair reads about 0.2 us
+# lower, which must work against the variant), the rounds alternate from there, counted from the folder's round number so that adding rounds with
+# --first-round keeps the alternation; with 3 variants the odd rounds run them in reverse; `--order fixed` is the order given in every round.
+check_steplab_order() {
+  local got out rc=0
+  got="$(steplab_order --pairs 4 --variant a= --variant b=)" || { echo "$got"; return 1; }
+  [ "$got" = "round 1: b a|round 2: a b|round 3: b a|round 4: a b" ] || { echo "2 variants, 4 rounds: $got"; return 1; }
+  got="$(steplab_order --pairs 4 --variant a= --variant b= --variant c=)" || { echo "$got"; return 1; }
+  [ "$got" = "round 1: c b a|round 2: a b c|round 3: c b a|round 4: a b c" ] || { echo "3 variants, 4 rounds: $got"; return 1; }
+  got="$(steplab_order --pairs 2 --first-round 2 --variant a= --variant b=)" || { echo "$got"; return 1; }
+  [ "$got" = "round 2: a b|round 3: b a" ] || { echo "--first-round 2: $got"; return 1; }
+  got="$(steplab_order --pairs 3 --first-round 5 --variant a= --variant b= --variant c=)" || { echo "$got"; return 1; }
+  [ "$got" = "round 5: c b a|round 6: a b c|round 7: c b a" ] || { echo "--first-round 5, 3 variants: $got"; return 1; }
+  got="$(steplab_order --pairs 3 --order fixed --variant a= --variant b=)" || { echo "$got"; return 1; }
+  [ "$got" = "round 1: a b|round 2: a b|round 3: a b" ] || { echo "--order fixed: $got"; return 1; }
+  got="$(steplab_order --pairs 2 --order alternate --variant a=)" || { echo "$got"; return 1; }
+  [ "$got" = "round 1: a|round 2: a" ] || { echo "one variant: $got"; return 1; }
+  out="$(bash "$LAB/steplab.sh" --dry-run --image 8.5 --rate 100 --think-scale 0.2 --seconds 6 --pairs 1 --order sideways --variant a= 2>&1)" || rc=$?
+  [ "$rc" = 2 ] || { echo "--order sideways: expected exit 2, got $rc: ${out//$'\n'/ | }"; return 1; }
+  rc=0
+  out="$(bash "$LAB/steplab.sh" --dry-run --image 8.5 --rate 100 --think-scale 0.2 --seconds 6 --pairs 1 --floor 3 --floor-from "$LAB/check/fixtures/steplab/aa-outlier" --variant a= 2>&1)" || rc=$?
+  [ "$rc" = 2 ] || { echo "--floor with --floor-from: expected exit 2, got $rc: ${out//$'\n'/ | }"; return 1; }
+  rc=0
+  out="$(bash "$LAB/steplab.sh" --dry-run --image 8.5 --rate 100 --think-scale 0.2 --seconds 6 --pairs 1 --floor-from "$LAB/check/fixtures/steplab/no-such-folder" --variant a= 2>&1)" || rc=$?
+  [ "$rc" = 2 ] || { echo "--floor-from a missing folder: expected exit 2, got $rc: ${out//$'\n'/ | }"; return 1; }
+  # Why a dry run reads the floor too: a folder that gives none must stop the comparison before hours of runs, not after them.
+  rc=0
+  out="$(bash "$LAB/steplab.sh" --dry-run --image 8.5 --rate 100 --think-scale 0.2 --seconds 6 --pairs 1 --floor-from "$LAB/check/fixtures/steplab/one-pair" --variant a= 2>&1)" || rc=$?
+  [ "$rc" = 1 ] || { echo "--floor-from a folder with one pair: expected exit 1, got $rc: ${out//$'\n'/ | }"; return 1; }
+  out="$(bash "$LAB/steplab.sh" --dry-run --image 8.5 --rate 100 --think-scale 0.2 --seconds 6 --pairs 1 --floor-from "$LAB/check/fixtures/steplab/aa-outlier" --variant a= 2>&1)" \
+    || { echo "--floor-from an A/A folder: ${out//$'\n'/ | }"; return 1; }
+  grep -qE '^floor: 0\.358 us ' <<<"$out" || { echo "the dry run does not say the floor: ${out//$'\n'/ | }"; return 1; }
+}
+
+# The floor of an A/A folder, one rule for every pair: |median of the paired differences| + their interquartile range (quartiles by linear
+# interpolation, inclusive), every run counted that is valid with a CPU per request, whether its step passed the 97 % rule or not.
+#  - aa-outlier is 5a's A/A at 24,000 req/s: its differences, in round order, -0.2604 +2.5650 -0.1607 -0.2665 -0.0633 (round 2's run of b failed the
+#    97 % rule). Worked out by hand: sorted -0.2665 -0.2604 -0.1607 -0.0633 +2.5650, median -0.1607, q1 -0.2604 (2nd), q3 -0.0633 (4th), range
+#    0.1971, floor 0.1607 + 0.1971 = 0.3578: neither the largest absolute difference (2.565) nor exclusive quartiles (1.68).
+#  - aa-even has 4 pairs (+1 +2 +3 +10; round 5's b is invalid and has none): median 2.5, q1 at position 0.75 = 1.75, q3 at 2.25 = 3 + 0.25 * 7 = 4.75,
+#    range 3, floor 5.5.
+check_steplab_floor() {
+  local got out rc=0 summary dir="$LAB/check/fixtures/steplab"
+  got="$(bash "$LAB/steplab-floor.sh" "$dir/aa-outlier" 2>&1 | jq -c '[.floor_us, .median_difference_us, .iqr_us, .pairs]')" || { echo "steplab-floor.sh failed on aa-outlier: $got"; return 1; }
+  [ "$got" = "[0.358,-0.161,0.197,5]" ] || { echo "aa-outlier: expected [0.358,-0.161,0.197,5], got $got"; return 1; }
+  got="$(bash "$LAB/steplab-floor.sh" "$dir/aa-even" 2>&1 | jq -c '[.floor_us, .median_difference_us, .iqr_us, .pairs]')" || { echo "steplab-floor.sh failed on aa-even: $got"; return 1; }
+  [ "$got" = "[5.5,2.5,3,4]" ] || { echo "aa-even: expected [5.5,2.5,3,4], got $got"; return 1; }
+  out="$(bash "$LAB/steplab-floor.sh" "$dir/one-pair" 2>&1)" || rc=$?
+  [ "$rc" = 1 ] || { echo "one pair: expected exit 1, got $rc: $out"; return 1; }
+  grep -q 'at least 2' <<<"$out" || { echo "one pair: the message does not say 2 pairs are needed: $out"; return 1; }
+  rc=0
+  out="$(bash "$LAB/steplab-floor.sh" 2>&1)" || rc=$?
+  [ "$rc" = 2 ] || { echo "no folder: expected exit 2, got $rc: $out"; return 1; }
+
+  # The summary reads it with --floor-from, records the folder and the value, and judges a variant against it; both flags together are a usage error.
+  summary="$(mktemp)"
+  out="$(bash "$LAB/steplab-summary.sh" "$dir/beyond" --floor-from "$dir/aa-outlier" --json "$summary" 2>&1)" || { echo "summary.sh --floor-from failed: ${out//$'\n'/ | }"; return 1; }
+  jq -e '.floor_us == 0.358 and (.floor_from | endswith("aa-outlier"))
+         and (.floor_rule | type) == "string" and (.variants[] | select(.variant == "slow") | .verdict) == "beyond the noise"' "$summary" >/dev/null \
+    || { echo "summary.json does not record the floor: $(jq -c '{floor_us, floor_from, floor_rule}' "$summary")"; rm -f "$summary"; return 1; }
+  grep -qE '^Floor: 0\.358 us, from .*aa-outlier' <<<"$out" || { echo "the table does not say where the floor comes from: ${out//$'\n'/ | }"; rm -f "$summary"; return 1; }
+  rc=0
+  out="$(bash "$LAB/steplab-summary.sh" "$dir/beyond" --floor 5 --floor-from "$dir/aa-outlier" 2>&1)" || rc=$?
+  [ "$rc" = 2 ] || { echo "summary.sh --floor with --floor-from: expected exit 2, got $rc: ${out//$'\n'/ | }"; rm -f "$summary"; return 1; }
+
+  # Runs that carry their position: listed in the order they ran, a run whose step failed the 97 % rule counts and is flagged with `*`
+  # (a failed_rule count per variant), and the folder says its order. Runs of 5a, with no position, print what they always printed.
+  out="$(bash "$LAB/steplab-summary.sh" "$dir/aa-outlier" --floor 1 --json "$summary" 2>&1)" || { echo "summary.sh failed on aa-outlier: ${out//$'\n'/ | }"; rm -f "$summary"; return 1; }
+  [ "$(grep -E '^ +[1-5] +[ab] +' <<<"$out" | awk '{ printf "%s%s ", $1, $2 }')" = "1b 1a 2a 2b 3b 3a 4a 4b 5b 5a " ] \
+    || { echo "the rows are not in the order the runs ran: ${out//$'\n'/ | }"; rm -f "$summary"; return 1; }
+  grep -qE '^ +2 +b +yes +[0-9.]+ +28\.5\* +.*FAIL: achieved below 97 % of offered$' <<<"$out" || { echo "the run of b that failed the rule has no * on its us/req: ${out//$'\n'/ | }"; rm -f "$summary"; return 1; }
+  [ "$(grep -cE '^ +[1-5] +[ab] +yes +[0-9.]+ +[0-9.]+\* ' <<<"$out")" = 1 ] || { echo "only that run should have a *: ${out//$'\n'/ | }"; rm -f "$summary"; return 1; }
+  jq -e '.order == "alternate" and .floor_from == null and (.variants | map({(.variant): .failed_rule}) | add) == {a: 0, b: 1}
+         and (.variants[] | select(.variant == "b") | .valid_runs == 5 and (.pairs | length) == 5)' "$summary" >/dev/null \
+    || { echo "summary.json: $(jq -c '{order, floor_from, failed: [.variants[] | {variant, failed_rule, valid_runs}]}' "$summary")"; rm -f "$summary"; return 1; }
+  out="$(bash "$LAB/steplab-summary.sh" "$LAB/results/2026-11-23-s1-fd-wall/aa-24000" --json "$summary" 2>&1)" || { echo "summary.sh failed on 5a's A/A: ${out//$'\n'/ | }"; rm -f "$summary"; return 1; }
+  grep -q '\*' <<<"$out" && { echo "runs without a position print a *: ${out//$'\n'/ | }"; rm -f "$summary"; return 1; }
+  grep -q '^Floor:' <<<"$out" && { echo "runs without a position print a Floor line: ${out//$'\n'/ | }"; rm -f "$summary"; return 1; }
+  [ "$(grep -E '^ +[1-5] +[ab] +' <<<"$out" | awk '{ printf "%s%s ", $1, $2 }')" = "1a 1b 2a 2b 3a 3b 4a 4b 5a 5b " ] || { echo "5a's rows changed order: ${out//$'\n'/ | }"; rm -f "$summary"; return 1; }
+  jq -e '.order == null and (.variants[] | select(.variant == "b") | .failed_rule) == 1' "$summary" >/dev/null || { echo "5a's summary.json: $(jq -c '{order}' "$summary")"; rm -f "$summary"; return 1; }
+  rm -f "$summary"
+}
+
 # The count of lab/syscalls.sh reads strace -c's table (a real one, lab/check/fixtures/strace-c.txt) into `<syscall> <calls> <errors>` lines,
 # whatever the errors column does (strace leaves it blank when a syscall never failed), the time columns dropped, the total last.
 check_syscalls_table_parse() {
@@ -1582,8 +1673,11 @@ check_steplab_live() {
   out="$(bash "$LAB/steplab.sh" --image 8.5 --rate 100 --think-scale 0.2 --idle 200 --seconds 6 --pairs 2 --warmup 20,3 --floor 5 \
     --idle-time-wait-max 0 --variant ref= --variant twin=APP_UNUSED=1 --out "$dir" 2>&1)" || rc=$?
   [ "$rc" = 0 ] || { echo "lab/steplab.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
-  [ "$(grep -E '^ +[12] +(ref|twin) +' <<<"$out" | awk '{ printf "%s%s ", $1, $2 }')" = "1ref 1twin 2ref 2twin " ] \
-    || { echo "the rows are not one per run in round order: ${out//$'\n'/ | }"; return 1; }
+  # Round 1 runs the reference last, round 2 in the order given; the progress line says each round's order.
+  [ "$(grep -E '^ +[12] +(ref|twin) +' <<<"$out" | awk '{ printf "%s%s ", $1, $2 }')" = "1twin 1ref 2ref 2twin " ] \
+    || { echo "the rows are not one per run in the order the runs ran: ${out//$'\n'/ | }"; return 1; }
+  grep -q '^\[1/4\] round 1, twin (position 1 of 2, order: twin ref)$' <<<"$out" && grep -q '^\[3/4\] round 2, ref (position 1 of 2, order: ref twin)$' <<<"$out" \
+    || { echo "the progress lines do not say the order of each round: ${out//$'\n'/ | }"; return 1; }
   grep -qE '^twin +2/2 .* (beyond|within) the noise$' <<<"$out" || { echo "no row for twin with its 2 valid runs and a verdict: ${out//$'\n'/ | }"; return 1; }
   grep -q '^Rule: a variant is beyond the noise when' <<<"$out" || { echo "the rule is not printed: ${out//$'\n'/ | }"; return 1; }
   grep -qE '^ +load1 +fsync ms|load1 +fsync ms' <<<"$out" || { echo "the run table has no load1 and fsync ms columns: ${out//$'\n'/ | }"; return 1; }
@@ -1597,12 +1691,13 @@ check_steplab_live() {
            and .host.fsync_ms > 0 and (.host.plateau.load1 | type) == "number" and .host.plateau.steal_pct >= 0 and (.host.before.cpu_busy_pct | type) == "number"' "$dir/$f.json" >/dev/null \
       || { echo "$f.json does not hold the run as the runner sets it up: $(jq -c '{valid, steplab: .steplab.time_wait, env: .server.env, idle: .idle.held_at_end}' "$dir/$f.json" 2>&1)"; return 1; }
   done
-  # The idle client of the run before left its sockets on the idle addresses: the next run waited for them to go (its 200 connections would
-  # collide with them at random), where the gate once let it through.
-  jq -e '.steplab.time_wait.before.waited_s > 0' "$dir/twin-1.json" >/dev/null || { echo "the run after one with idle connections did not wait for their TIME_WAIT sockets: $(jq -c '.steplab.time_wait.before' "$dir/twin-1.json")"; return 1; }
+  # The idle client of the run before left its sockets on the idle addresses: the next run (ref-1, the second of round 1) waited for them to go
+  # (its 200 connections would collide with them at random), where the gate once let it through.
+  jq -e '.steplab.time_wait.before.waited_s > 0' "$dir/ref-1.json" >/dev/null || { echo "the run after one with idle connections did not wait for their TIME_WAIT sockets: $(jq -c '.steplab.time_wait.before' "$dir/ref-1.json")"; return 1; }
   jq -e '.server.env | index("APP_UNUSED=1") != null' "$dir/twin-1.json" >/dev/null || { echo "the variant's environment did not reach the server"; return 1; }
   jq -e '.server.env | index("APP_UNUSED=1") == null' "$dir/ref-1.json" >/dev/null || { echo "the reference got the variant's environment"; return 1; }
-  jq -e '.steplab.variant_index == 1 and .steplab.round == 2 and .steplab.reference == "ref"' "$dir/twin-2.json" >/dev/null || { echo "the run's steplab object is wrong"; return 1; }
+  jq -e '.steplab.variant_index == 1 and .steplab.round == 2 and .steplab.reference == "ref" and .steplab.position == 1 and .steplab.order == "alternate"' "$dir/twin-2.json" >/dev/null || { echo "the run's steplab object is wrong"; return 1; }
+  jq -e '.steplab.variant_index == 0 and .steplab.round == 1 and .steplab.position == 1 and .steplab.order == "alternate"' "$dir/ref-1.json" >/dev/null || { echo "the reference of round 1 does not say it ran second: $(jq -c '.steplab | {round, position, order}' "$dir/ref-1.json")"; return 1; }
   pairs="$(jq -r '.variants[] | select(.variant == "twin") | .pairs | length' "$dir/summary.json")"
   [ "$pairs" = 2 ] || { echo "summary.json has $pairs pairs for twin, expected 2"; return 1; }
   # Why: the runner's temp folder is a per-user path on the Mac; the files go to a public repository, so they hold <tmp> instead.
@@ -1972,6 +2067,8 @@ CHECKS=(
   check_realistic_profile_smoke
   check_macro_profile
   check_steplab_verdicts
+  check_steplab_order
+  check_steplab_floor
   check_syscalls_table_parse
   check_time_wait_count
   check_cpu_layouts

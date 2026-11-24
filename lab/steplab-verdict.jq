@@ -1,8 +1,10 @@
 # The step lab's verdict, a pure function of the run JSON files of one comparison (lab/steplab.sh writes them, lab/steplab-summary.sh
-# calls this program): `jq -s --argjson floor <µs or null> -f lab/steplab-verdict.jq <run>.json...`.
+# calls this program): `jq -s --argjson floor <µs or null> --argjson floor_info <object or null> -f lab/steplab-verdict.jq <run>.json...`.
+# floor_info says where a floor came from when it was computed from an A/A folder (lab/steplab-floor.sh: {from, median_difference_us,
+# iqr_us, pairs}), null when it was typed or absent.
 #
-# Each run file is a lab/realistic.sh --hold JSON with a `steplab` object (variant, variant_index, round, ...) added by the runner. The
-# variant with index 0 is the reference. A run counts when its JSON says valid and its step has a CPU per request. A variant's paired
+# Each run file is a lab/realistic.sh --hold JSON with a `steplab` object (variant, variant_index, round, position, order, ...) added by the
+# runner (position and order only in runs of 5b and later). The variant with index 0 is the reference. A run counts when its JSON says valid and its step has a CPU per request. A variant's paired
 # differences are its CPU per request minus the reference's, round by round: a round where either run does not count has no pair.
 #
 # The rule: a variant is `beyond the noise` when it has at least 2 pairs, every difference has the same sign (a zero has none) and the
@@ -10,6 +12,9 @@
 # than 2 pairs there is no verdict, except the screen: with exactly 1 pair and a floor, the variant `screen: beats the floor` when it is
 # lower than the reference by at least the floor, else `screen: not better in one pair` (a first look that decides what deserves more
 # pairs, never a verdict of "beyond the noise"). No pair: no verdict.
+#
+# A run whose step failed (the 97 % rule) still counts, and is flagged: `failed_rule` on the run and, per variant, the number of counted runs
+# that failed. A run the harness marked invalid never counts.
 
 def median:
   sort | length as $n
@@ -19,8 +24,10 @@ def median:
 
 def run_row:
   (.results.steps[0] // null) as $s
-  | { variant: .steplab.variant, index: .steplab.variant_index, round: .steplab.round, valid: .valid,
+  | { variant: .steplab.variant, index: .steplab.variant_index, round: .steplab.round, position: .steplab.position, order: .steplab.order,
+      valid: .valid,
       counted: (.valid and $s != null and (($s.cpu_usec_per_request | type) == "number")),
+      failed_rule: (.valid and $s != null and (($s.cpu_usec_per_request | type) == "number") and ($s.pass | not)),
       achieved_rps: $s.achieved_rps, us_per_request: $s.cpu_usec_per_request,
       p95_ms: $s.latency_ms.overall.p95, p99_ms: $s.latency_ms.overall.p99,
       result: (if (.valid | not) then "INVALID: " + (.invalid_reasons | join("; "))
@@ -34,10 +41,18 @@ def rule_text($floor):
   + (if $floor == null then "the floor" else "\($floor) µs" end)
   + " in absolute value; otherwise it is within the noise. A round where either run is invalid has no pair. One pair with a floor: a screen (beats the floor when lower by at least the floor, else not better), never a verdict. No pair: no verdict. No floor: not judged (the floor comes from an A/A calibration).";
 
-(map(run_row) | sort_by(.round, .index)) as $runs
+# Runs sort in the order they ran: by round, then by position in the round (runs of earlier phases have none: the variants' order).
+(map(run_row) | sort_by(.round, (.position // .index))) as $runs
+| ($runs | map(.order) | map(select(. != null)) | unique) as $orders
 | ($runs | map({index, variant}) | unique_by(.index)) as $variants
 | ($runs | map(select(.index == 0 and .counted) | {key: (.round | tostring), value: .us_per_request}) | from_entries) as $ref_us
-| { floor_us: $floor, rule: rule_text($floor), reference: ($variants[0].variant), runs: $runs,
+| { floor_us: $floor, floor_from: ($floor_info.from // null),
+    floor_rule: (if $floor == null then null
+                 elif $floor_info == null then "typed"
+                 else "|median of the paired differences| + their interquartile range (quartiles by linear interpolation, inclusive), of the second variant of an A/A folder against its reference, every valid run counted, whether its step passed the 97 % rule or not" end),
+    floor_detail: $floor_info,
+    order: (if ($orders | length) == 0 then null elif ($orders | length) == 1 then $orders[0] else "mixed" end),
+    rule: rule_text($floor), reference: ($variants[0].variant), runs: $runs,
     variants: [ $variants[] | . as $v
       | ($runs | map(select(.index == $v.index and .counted))) as $ok
       | (if $v.index == 0 then []
@@ -49,6 +64,7 @@ def rule_text($floor):
       | (($diffs | length) > 0 and (($diffs | all(. > 0)) or ($diffs | all(. < 0)))) as $same_sign
       | { variant: $v.variant, index: $v.index, reference: ($v.index == 0),
           runs: ($runs | map(select(.index == $v.index)) | length), valid_runs: ($ok | length),
+          failed_rule: ($ok | map(select(.failed_rule)) | length),
           median_us: ($ok | map(.us_per_request) | median), min_us: ($ok | map(.us_per_request) | min),
           max_us: ($ok | map(.us_per_request) | max), median_p99_ms: ($ok | map(.p99_ms) | median),
           pairs: $pairs, median_difference_us: $med, same_sign: $same_sign }
