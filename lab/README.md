@@ -1097,6 +1097,32 @@ two tables and the verdicts from the JSON files alone, so a results folder's `su
 invalid run or a failing step is a result), 1 a harness failure, 2 usage. The runs of a comparison take what they take: a 60 s plateau
 with 60,000 idle connections is about 4 minutes a run, plus the drain of the TIME_WAIT sockets.
 
+**The host's state.** A slow series with an idle neighbour count of 0 has happened (the Mac ran 25 % slower, the x86 box failed the 97 % rule at
+43 % CPU), so each run's JSON says what the machine was doing, in its `host` object (next to the machine's description), read by the probe
+container: `before` (before the warm-up) and `plateau` (around the middle of the first step's plateau, over 5 s or the plateau if shorter) each hold
+`load1`, `load5` (the VM's `/proc/loadavg`), `cpu_busy_pct` and `steal_pct` (the VM's `/proc/stat`, all its CPUs, over those seconds; busy is
+everything but idle and iowait); `fsync_ms` is the median of 20 writes of 4 KiB each followed by `fdatasync` (`lab/macro/fsync.php`) on the disk
+the server's copy of the seed lives on, before the warm-up only so it does not load the plateau; `other_containers` is the count already in
+`other_containers.count`. Counts and timings only. A reading that fails is `null` with a `before_reason`, `plateau_reason` or `fsync_reason` next to
+it. The run table of `steplab-summary.sh` shows `load1` (plateau) and `fsync ms` when a run has these readings (a folder of earlier runs prints the table it always did).
+
+### `lab/stages.sh`: a file of series, one quiet check each
+
+```bash
+bash lab/stages.sh series.txt --out /tmp/stages            # the series of the file, one after the other, a 60 s gap between them
+bash lab/stages.sh series.txt --dry-run                    # the commands, when each would start and end, the gaps: nothing runs
+```
+
+A series file is plain text, one series per line: a name, then the arguments of one `lab/steplab.sh` call (`--out` is the driver's:
+`<dir>/<name>`); blank lines and `#` lines are skipped, and quotes group a word. For each series the driver counts the running containers on
+the VM that are not the lab's (`lab_other_containers_count`) and **refuses to start it unless there are 0** (`--allow-busy` runs it anyway and
+marks it `busy: true`, for a smoke), notes the start with `date`, runs `steplab.sh`, notes the end and its exit code, then waits `--gap <s>` (default
+60) so the machine settles; none after the last. A series that exits non-zero stops the file and its code is the driver's (`--keep-going` goes on and
+returns the first); a refusal always stops it. `<dir>/stages.json` (default `lab/results/stages-<time>/`) holds `{commit, dirty, gap_s, allow_busy, keep_going,
+series: [{name, command, start, end, exit_code, other_containers, busy, refused}]}`, rewritten after every series, with counts only. `commit` is the checkout's HEAD when the file starts and `dirty` is true when a tracked file differs from it (`git diff --quiet HEAD`: the untracked results folder does not count), so a results folder is tied to its code.
+`check_stages_dry_run`, `check_stages_stops_and_refuses` (it starts an unlabelled `sleep` container of its own, removed whatever happens, to prove the
+refusal) and `check_stages_live` cover it; `check_host_cpu_share_parse` and `check_host_fsync_probe` cover the host's readings.
+
 `check_steplab_verdicts` runs the verdict on recorded run files (`lab/check/fixtures/steplab/<case>/`: identical variants, a variant
 1 ms slower in every round, mixed signs, the same sign under the floor, an invalid round of the variant or of the reference, a single
 pair that is slower, lower by less than the floor or lower by more than it, and no pair), and `check_steplab_live` runs two variants for two rounds at a low rate and reads the tables' shape.

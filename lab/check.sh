@@ -1473,6 +1473,14 @@ check_steplab_verdicts() {
     || { echo "the rows are not one per run in round order: ${out//$'\n'/ | }"; return 1; }
   grep -q '^Rule: a variant is beyond the noise when' <<<"$out" || { echo "the rule is not printed: ${out//$'\n'/ | }"; return 1; }
   grep -qE '^slow +3/3 .*\+1000 \+1000 \+1000 .*beyond the noise' <<<"$out" || { echo "the variant table has no row for slow with its pairs and verdict: ${out//$'\n'/ | }"; return 1; }
+  # The host's state per run: the load average in the middle of the plateau and the fsync median, from each run's `host` object, in columns that only appear when a run has them.
+  grep -qE '^ +2 +slow +yes +[0-9.]+ +[0-9.]+ +[0-9.]+ +[0-9.]+ +[0-9-]+ +1\.6 +2\.5 +pass$' <<<"$out" \
+    || { echo "the run table has no load1 1.6 and fsync ms 2.5 on the row of slow, round 2: ${out//$'\n'/ | }"; return 1; }
+  grep -qE '^ +1 +ref +.* +0\.5 +1\.25 +pass$' <<<"$out" || { echo "the run table has no load1 0.5 and fsync ms 1.25 on the row of ref, round 1: ${out//$'\n'/ | }"; return 1; }
+  out="$(bash "$LAB/steplab-summary.sh" "$LAB/check/fixtures/steplab/identical" --floor 5 2>&1)" || { echo "summary.sh failed on a folder without host objects: ${out//$'\n'/ | }"; return 1; }
+  # Earlier runs have no host readings: their table has no such columns (the results folders' READMEs hold it byte for byte).
+  grep -q 'load1' <<<"$out" && { echo "a folder of runs without host readings prints the load1 column: ${out//$'\n'/ | }"; return 1; }
+  grep -qE '^ +1 +ref +.* +[0-9-]+ +pass$' <<<"$out" || { echo "the table of runs without host readings changed shape: ${out//$'\n'/ | }"; return 1; }
 }
 
 # The count of lab/syscalls.sh reads strace -c's table (a real one, lab/check/fixtures/strace-c.txt) into `<syscall> <calls> <errors>` lines,
@@ -1578,13 +1586,15 @@ check_steplab_live() {
     || { echo "the rows are not one per run in round order: ${out//$'\n'/ | }"; return 1; }
   grep -qE '^twin +2/2 .* (beyond|within) the noise$' <<<"$out" || { echo "no row for twin with its 2 valid runs and a verdict: ${out//$'\n'/ | }"; return 1; }
   grep -q '^Rule: a variant is beyond the noise when' <<<"$out" || { echo "the rule is not printed: ${out//$'\n'/ | }"; return 1; }
+  grep -qE '^ +load1 +fsync ms|load1 +fsync ms' <<<"$out" || { echo "the run table has no load1 and fsync ms columns: ${out//$'\n'/ | }"; return 1; }
   for f in ref-1 ref-2 twin-1 twin-2; do
     jq -e '.steplab.time_wait.before.max >= 0 and .steplab.time_wait.after.max >= 0 and .steplab.time_wait.before.all >= .steplab.time_wait.before.in_range
            and ([.steplab.time_wait.after.per_address | keys[] | select(startswith("127.0.0."))] | length) >= 1
            and .steplab.time_wait.before.limit_per_address == 2500 and .steplab.time_wait.before.idle_limit_per_address == 0
            and .steplab.time_wait.before.idle_max == 0
            and .per_second_probes == false and .valid == true and .idle.held_at_end == 200 and (.server.env | index("APP_TELEMETRY=0") != null)
-           and .load.warmup == "20,3" and .results.steps[0].cpu_usec_per_request > 0' "$dir/$f.json" >/dev/null \
+           and .load.warmup == "20,3" and .results.steps[0].cpu_usec_per_request > 0
+           and .host.fsync_ms > 0 and (.host.plateau.load1 | type) == "number" and .host.plateau.steal_pct >= 0 and (.host.before.cpu_busy_pct | type) == "number"' "$dir/$f.json" >/dev/null \
       || { echo "$f.json does not hold the run as the runner sets it up: $(jq -c '{valid, steplab: .steplab.time_wait, env: .server.env, idle: .idle.held_at_end}' "$dir/$f.json" 2>&1)"; return 1; }
   done
   # The idle client of the run before left its sockets on the idle addresses: the next run waited for them to go (its 200 connections would
@@ -1616,6 +1626,107 @@ check_steplab_cleans_up_after_failure() {
     --server-variant crash="$LAB/check/fixtures/crash-app.php" --out "$(mktemp -d)" 2>&1)" || rc=$?
   [ "$rc" = 1 ] || { echo "expected exit 1 when the server dies, got $rc: ${out//$'\n'/ | }"; return 1; }
   grep -q 'the server container exited' <<<"$out" || { echo "the reason is not reported: ${out//$'\n'/ | }"; return 1; }
+  [ -z "$(lab_containers_left)" ] || { echo "left behind: $(lab_containers_left)"; return 1; }
+}
+
+# probe.sh reads the VM's CPU state from two captures of /proc/stat (a real file's shape: the aggregate line first, then one line per CPU, guest time
+# already inside user time): between the fixtures the aggregate line moved by user 300, system 100, idle 500, iowait 50, softirq 20 and steal 30,
+# 1,000 jiffies in all, so 45.00 % of them were busy (everything but idle and iowait) and 3.00 % were stolen. The CPU lines would give other numbers.
+check_host_cpu_share_parse() {
+  local got want
+  got="$(bash "$LAB/macro/probe.sh" cpu-share "$LAB/check/fixtures/proc-stat-before.txt" "$LAB/check/fixtures/proc-stat-after.txt" 2>&1)" \
+    || { echo "probe.sh failed: ${got//$'\n'/ | }"; return 1; }
+  want=$'host cpu_busy_pct 45.00\nhost steal_pct 3.00'
+  [ "$got" = "$want" ] || { echo "the shares are not the fixtures': ${got//$'\n'/ | }"; return 1; }
+}
+
+# The disk probe, in the lab's own image: the median of 20 writes of 4 KiB each followed by fdatasync is a positive number of milliseconds, and the
+# probe leaves no file behind.
+check_host_fsync_probe() {
+  local out rc=0
+  docker image inspect "$LAB_IMAGE:8.5" >/dev/null 2>&1 || { echo "image $LAB_IMAGE:8.5 is missing (run lab/build.sh 8.5)"; return 1; }
+  out="$(docker run --rm -v "$LAB:/lab:ro" "$LAB_IMAGE:8.5" sh -c 'bash /lab/macro/probe.sh fsync /tmp/fsync-check.dat 20; test ! -e /tmp/fsync-check.dat && echo gone' 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "probe.sh fsync exited $rc: ${out//$'\n'/ | }"; return 1; }
+  grep -qE '^host fsync_ms [0-9]+(\.[0-9]+)?$' <<<"$out" && awk '$1 == "host" && $2 == "fsync_ms" { exit !($3 > 0) }' <<<"$out" \
+    || { echo "no positive fsync_ms line: ${out//$'\n'/ | }"; return 1; }
+  grep -qx gone <<<"$out" || { echo "the probe left its file behind: ${out//$'\n'/ | }"; return 1; }
+}
+
+# The series driver's dry run reads a series file (a comment, a blank line, a quoted argument) and prints each series' command, when it would start and
+# end and the gap, without a container, a folder or a file: the number of containers is the same before and after, and nothing is written.
+check_stages_dry_run() {
+  local out dir before after rc=0
+  dir="$(mktemp -d)/out"
+  before="$(docker ps -a -q | wc -l)"
+  out="$(bash "$LAB/stages.sh" "$LAB/check/fixtures/stages/two-series.txt" --dry-run --out "$dir" --gap 45 2>&1)" || rc=$?
+  after="$(docker ps -a -q | wc -l)"
+  [ "$rc" = 0 ] || { echo "lab/stages.sh --dry-run exited $rc: ${out//$'\n'/ | }"; return 1; }
+  [ "$before" = "$after" ] || { echo "a dry run changed the containers: $before before, $after after"; return 1; }
+  [ ! -e "$dir" ] || { echo "a dry run wrote $dir"; return 1; }
+  grep -qF -e 'command: bash lab/steplab.sh --image 8.5 --rate 100 --think-scale 0.2 --seconds 6 --pairs 1 --variant ref= --variant-args '"'"'ref=--image 8.5'"'"' --out ' <<<"$out" \
+    || { echo "the first series' command is not printed with its quoted argument as one word: ${out//$'\n'/ | }"; return 1; }
+  [ "$(grep -c '^  command: ' <<<"$out")" = 2 ] || { echo "expected 2 commands: ${out//$'\n'/ | }"; return 1; }
+  [ "$(grep -c '^  start: ' <<<"$out")" = 2 ] && [ "$(grep -c '^  end: ' <<<"$out")" = 2 ] || { echo "each series must show its start and end: ${out//$'\n'/ | }"; return 1; }
+  [ "$(grep -c '^  gap: 45 s' <<<"$out")" = 1 ] || { echo "the gap is printed once, after the first series only: ${out//$'\n'/ | }"; return 1; }
+}
+
+# A series that exits non-zero stops the file and its code is returned (a flag steplab does not know: exit 2): stages.json holds the one series that
+# ran, the second never started; with --keep-going both run and the first code is returned. With an unlabelled container on the VM (this check's
+# own `sleep`, removed whatever happens) the driver refuses before starting the series, exits 1 and stages.json says why; --allow-busy runs it
+# and marks it busy.
+check_stages_stops_and_refuses() {
+  local out dir rc=0 stranger=lab-check-stranger
+  dir="$(mktemp -d)"
+  out="$(bash "$LAB/stages.sh" "$LAB/check/fixtures/stages/bad-flags.txt" --allow-busy --gap 0 --out "$dir/stop" 2>&1)" || rc=$?
+  [ "$rc" = 2 ] || { echo "expected steplab's exit 2 to be returned, got $rc: ${out//$'\n'/ | }"; return 1; }
+  jq -e '(.series | length) == 1 and .series[0].name == "broken" and .series[0].exit_code == 2 and .series[0].refused == false' "$dir/stop/stages.json" >/dev/null \
+    || { echo "stages.json does not stop at the failing series: $(jq -c . "$dir/stop/stages.json" 2>&1)"; return 1; }
+  rc=0
+  out="$(bash "$LAB/stages.sh" "$LAB/check/fixtures/stages/bad-flags.txt" --allow-busy --keep-going --gap 0 --out "$dir/keep" 2>&1)" || rc=$?
+  [ "$rc" = 2 ] || { echo "--keep-going: expected the first code, 2, got $rc: ${out//$'\n'/ | }"; return 1; }
+  jq -e '(.series | map(.name)) == ["broken", "after"] and (.series | all(.exit_code == 2))' "$dir/keep/stages.json" >/dev/null \
+    || { echo "--keep-going did not run both series: $(jq -c . "$dir/keep/stages.json" 2>&1)"; return 1; }
+  docker run -d --name "$stranger" --network none "$LAB_IMAGE:8.5" sleep 120 >/dev/null 2>&1 || { echo "cannot start the unlabelled container"; return 1; }
+  rc=0
+  out="$(bash "$LAB/stages.sh" "$LAB/check/fixtures/stages/bad-flags.txt" --gap 0 --out "$dir/refuse" 2>&1)" || rc=$?
+  if [ "$rc" != 1 ]; then docker rm -f "$stranger" >/dev/null 2>&1; echo "expected a refusal (exit 1) with another container running, got $rc: ${out//$'\n'/ | }"; return 1; fi
+  grep -q 'not quiet' <<<"$out" || { docker rm -f "$stranger" >/dev/null 2>&1; echo "the refusal does not say the VM is not quiet: ${out//$'\n'/ | }"; return 1; }
+  jq -e '(.series | length) == 1 and .series[0].refused == true and .series[0].other_containers >= 1 and .series[0].start == null and .series[0].exit_code == null' \
+    "$dir/refuse/stages.json" >/dev/null || { docker rm -f "$stranger" >/dev/null 2>&1; echo "stages.json does not record the refusal: $(jq -c . "$dir/refuse/stages.json" 2>&1)"; return 1; }
+  [ ! -e "$dir/refuse/broken" ] || { docker rm -f "$stranger" >/dev/null 2>&1; echo "the refused series ran anyway"; return 1; }
+  rc=0
+  out="$(bash "$LAB/stages.sh" "$LAB/check/fixtures/stages/bad-flags.txt" --allow-busy --gap 0 --out "$dir/busy" 2>&1)" || rc=$?
+  docker rm -f "$stranger" >/dev/null 2>&1
+  [ "$rc" = 2 ] || { echo "--allow-busy: expected the series to run and exit 2, got $rc: ${out//$'\n'/ | }"; return 1; }
+  jq -e '.series[0].busy == true and .series[0].other_containers >= 1 and .allow_busy == true' "$dir/busy/stages.json" >/dev/null \
+    || { echo "--allow-busy does not mark the series busy: $(jq -c . "$dir/busy/stages.json" 2>&1)"; return 1; }
+  [ -z "$(docker ps -a --format '{{.Names}}' | grep -x "$stranger" || true)" ] || { echo "the unlabelled container is still there"; return 1; }
+}
+
+# Two one-run series live, a second of gap between them: stages.json names the commit (40 hex) and holds both with start before end and exit 0, the second starts at least the gap
+# after the first ended, each series has its folder with the summary, and each run's JSON has the host's state as numbers (--allow-busy: other
+# projects' containers may run during a smoke; the count and the flag agree).
+check_stages_live() {
+  local out dir rc=0 f
+  dir="$(mktemp -d)"
+  out="$(bash "$LAB/stages.sh" "$LAB/check/fixtures/stages/live.txt" --allow-busy --gap 1 --out "$dir" 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "lab/stages.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
+  jq -e '(.commit | test("^[0-9a-f]{40}$")) and (.dirty | type) == "boolean"' "$dir/stages.json" >/dev/null \
+    || { echo "stages.json does not name the commit (40 hex) and say whether a tracked file differs: $(jq -c '{commit, dirty}' "$dir/stages.json" 2>&1)"; return 1; }
+  [ "$(jq -r '.commit' "$dir/stages.json")" = "$(git -C "$REPO" rev-parse HEAD)" ] || { echo "stages.json's commit is not the checkout's HEAD"; return 1; }
+  jq -e '(.series | length) == 2 and (.series | map(.name)) == ["solo-a", "solo-b"] and (.series | all(.exit_code == 0 and .refused == false and (.start < .end)))
+         and (.series | all((.busy == (.other_containers > 0))))
+         and ((.series[1].start | fromdateiso8601) - (.series[0].end | fromdateiso8601)) >= 1 and .gap_s == 1' "$dir/stages.json" >/dev/null \
+    || { echo "stages.json is not as expected: $(jq -c . "$dir/stages.json" 2>&1)"; return 1; }
+  for f in solo-a/ref-1 solo-b/ref-1; do
+    [ -s "$dir/$f.json" ] && [ -s "$dir/${f%/*}/summary.txt" ] || { echo "$f.json or its summary is missing"; return 1; }
+    jq -e '.host as $h | ([$h.before.load1, $h.before.load5, $h.before.cpu_busy_pct, $h.before.steal_pct, $h.plateau.load1, $h.plateau.load5, $h.plateau.cpu_busy_pct,
+              $h.plateau.steal_pct, $h.fsync_ms, $h.other_containers] | all(type == "number")) and $h.fsync_ms > 0 and $h.before.steal_pct >= 0 and $h.plateau.steal_pct >= 0
+           and $h.before.cpu_busy_pct >= 0 and $h.before.cpu_busy_pct <= 100 and $h.plateau.cpu_busy_pct <= 100 and $h.other_containers == .other_containers.count
+           and ($h | has("before_reason") or has("plateau_reason") or has("fsync_reason") | not)' "$dir/$f.json" >/dev/null \
+      || { echo "$f.json has no complete host state: $(jq -c '.host | del(.docker_desktop, .vm_kernel, .limits)' "$dir/$f.json")"; return 1; }
+  done
+  grep -q 'load1' "$dir/solo-a/summary.txt" && grep -q 'fsync' "$dir/solo-a/summary.txt" || { echo "the summary does not print load1 and fsync ms"; return 1; }
   [ -z "$(lab_containers_left)" ] || { echo "left behind: $(lab_containers_left)"; return 1; }
 }
 
@@ -1868,6 +1979,11 @@ CHECKS=(
   check_php_ini_flags
   check_steplab_live
   check_steplab_cleans_up_after_failure
+  check_host_cpu_share_parse
+  check_host_fsync_probe
+  check_stages_dry_run
+  check_stages_stops_and_refuses
+  check_stages_live
   check_syscalls_live
   check_syscalls_cleans_up_after_failure
   check_shellcheck

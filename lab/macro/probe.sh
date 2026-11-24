@@ -17,6 +17,11 @@
 #   probe.sh cgroup-memory <container id>                    memory of any container's cgroup: current, peak, anon, socket buffers and kernel (bytes)
 #   probe.sh time-wait <first ip>-<last ip>[,...] [file]     TIME_WAIT sockets (host network, /proc/net/tcp or <file>) with each address of the range(s)
 #                                                            at either end (`time_wait <ip> <n>`), then max, in_range and all (`time_wait_summary`)
+#   probe.sh host <seconds>                                  the VM's state: `host load1|load5 <n>` (/proc/loadavg, read at the end) and the CPU
+#                                                            shares of /proc/stat over <seconds>, all CPUs (`host cpu_busy_pct|steal_pct <n>`)
+#   probe.sh cpu-share <stat file> <stat file>               the shares between two captures of /proc/stat (the part of `host` that is arithmetic)
+#   probe.sh fsync <file> [count]                            `host fsync_ms <n>`: the median of <count> (default 20) 4 KiB writes, each followed
+#                                                            by fdatasync, on the filesystem of <file> (removed afterwards)
 set -euo pipefail
 
 CG=/sys/fs/cgroup/docker
@@ -157,8 +162,42 @@ case "${1:-}" in
         print "time_wait_summary all", all + 0
       }' "${3:-/proc/net/tcp}"
     ;;
+  cpu-share)
+    # Why the first line only and not the per-CPU ones: the aggregate line sums every CPU of the VM, which is what the host's load is. Its fields
+    # are user nice system idle iowait irq softirq steal guest guest_nice; guest time is already inside user time, so the total stops at steal.
+    # Busy is everything but idle and iowait (a CPU waiting on the disk is not working); steal is time the hypervisor gave to something else.
+    awk '
+      FNR == 1 { n++ }
+      $1 == "cpu" {
+        total = $2 + $3 + $4 + $5 + $6 + $7 + $8 + $9
+        idle[n] = $5 + $6; steal[n] = $9; sum[n] = total
+      }
+      END {
+        d = sum[2] - sum[1]
+        if (n != 2 || d <= 0) { print "cpu-share: the two captures do not hold a later aggregate cpu line" > "/dev/stderr"; exit 1 }
+        printf "host cpu_busy_pct %.2f\n", (d - (idle[2] - idle[1])) / d * 100
+        printf "host steal_pct %.2f\n", (steal[2] - steal[1]) / d * 100
+      }' "$2" "$3"
+    ;;
+  host)
+    # Why the container's own /proc: /proc/stat and /proc/loadavg are not namespaced, so inside this container they are the VM's (the probe has
+    # --pid host), never the Mac's.
+    secs="${2:-5}"
+    a="$(mktemp)" b="$(mktemp)"
+    trap 'rm -f "$a" "$b"' EXIT
+    grep -m 1 '^cpu ' /proc/stat >"$a"
+    sleep "$secs"
+    grep -m 1 '^cpu ' /proc/stat >"$b"
+    read -r l1 l5 _ </proc/loadavg
+    echo "host load1 $l1"
+    echo "host load5 $l5"
+    bash "$0" cpu-share "$a" "$b"
+    ;;
+  fsync)
+    php "$(dirname "$0")/fsync.php" "$2" "${3:-20}"
+    ;;
   *)
-    echo "usage: probe.sh cpu|memory|memory-now|connections|memory-events|fresh-request|port-open|http-answers|poll|fds|client-ips|cgroup-memory|time-wait ..." >&2
+    echo "usage: probe.sh cpu|memory|memory-now|connections|memory-events|fresh-request|port-open|http-answers|poll|fds|client-ips|cgroup-memory|time-wait|host|cpu-share|fsync ..." >&2
     exit 2
     ;;
 esac
