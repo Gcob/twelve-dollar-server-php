@@ -8,10 +8,11 @@ cd "$(dirname "$0")"
 LAB="$(cd ../.. && pwd)"
 XEON="$LAB/results/2026-11-23-x86-calibration"
 MACAA="$LAB/results/2026-11-24-cpu-steps-5b/aa-24000"
-# Four numbers no file of this folder holds: the soft limit of the S1 series' model (its README states it as text), the bytes a connection costs
+# Five numbers no file of this folder holds: the soft limit of the S1 series' model (its README states it as text), the bytes a connection costs
 # on x86 (5a's S1 series: the DIY server's 1.48 KiB of Pss plus 5.19 KiB of kernel memory a connection, 6.67 KiB), the Xeon-to-bench factor of
-# 5a (its Swoole pairs: the leaderboard's 94 and 101 µs/req over the Xeon's two entries, mean 1.57) and 5a's bench estimate of the skeleton
-# (the Xeon's skeleton median 53.57 times that factor, 83.9, in ../2026-11-23-x86-calibration/README.md).
+# 5a (its Swoole pairs: the leaderboard's 94 and 101 µs/req over the Xeon's two entries, mean 1.5653, shown as 1.57; this folder uses the rounded
+# 1.57), 5a's bench estimate of the skeleton (83.9 = the Xeon's skeleton median 53.57 times the unrounded 1.5653, in
+# ../2026-11-23-x86-calibration/README.md) and the 2 GiB box the lab limits the server to (BOX_MIB).
 SOFT_LIMIT=64000
 KIB_PER_CONNECTION=6.67
 XEON_TO_BENCH=1.57
