@@ -591,6 +591,28 @@ shows the ring through `liburing-ffi` is the pure lever left (D76, phase 8).
 
 **Verdict:** 👀 a forecast, not a decision.
 
+### 2026-11-24 13:38 · ❓ Question: the shape of phase 6, the submission
+
+**Context:** phase 5b is merged (`c19fb66`). Phase 6 puts the chosen variants together as a submission that passes
+the challenge's `test/run.sh` 42/42. The challenge's rules: `install.sh` runs once as root on a clean Ubuntu 24.04,
+`build.sh` as a normal user, `start.sh` in the foreground configured only by SPEC.md's env vars, built from source
+with pinned versions, healthy within 60 s; the bench starts it with systemd as `deploy`, `LimitNOFILE=65535`.
+
+**Jacob's three choices (decision menu, 13:38):**
+
+- **PHP:** 8.5 built from source in `install.sh`, with the lab's flags, plus ext-event from PECL, sha256 pinned. Every
+  number since phase 3 was measured on it; the cost is about 10 to 15 minutes of compiling on the droplet. Ubuntu's apt
+  8.3 was the other option, never measured with our server.
+- **Code:** a clean copy with only the chosen variants built in (S1-b's 2 processes, the soft limit at 64,000,
+  `mmap` off). The lab's switches, the FFI driver, the profiler and the checkpointer stay in `lab/app` for phase 8.
+  The risk is drift between two copies, so one pair shows the copy costs what the lab's configuration costs, and
+  phase 8 ports its wins by hand.
+- **Name:** `php-Gcob` (his own answer; the options were `php-epoll-Gcob`, `php-diy-Gcob`, `php-event-Gcob`). The
+  challenge asks for `submissions/<language>-<framework>-<github-username>/`; one of 211 entries (`jww-fiber`) has
+  two parts. Phase 6 uses `php-Gcob`; the name is checked again at phase 9, before the PR (a `git mv`).
+
+**Verdict:** ✅ the brief of phase 6's project manager.
+
 ### 2026-11-22 18:08 · 💡 Idea: try io_uring anyway, something nobody tried in PHP
 
 **Jacob:** "do you think we could still even try it? […] to be at the top, we need to do some, let's say, gray hat
