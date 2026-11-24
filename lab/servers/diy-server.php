@@ -19,6 +19,9 @@
 // response, parses what waited behind it (which may queue another write) and has its events set again. The flush repeats until nothing is
 // queued. Without $commit the loop is dispatch(), as it always was.
 //
+// The loop's libevent configuration (the constructor's $loopPreset, optional; lab/app/server.php reads it from APP_LOOP): null is `new EventBase()`;
+// a name of diy_loop_presets() builds the base from an EventConfig with that preset's flags or avoided method. Nothing else changes.
+//
 // A server starts with the extensions loaded in this order: `--ext sockets --ext event` (sockets before event, which depends on
 // it; sockets also sets TCP_NODELAY and reads it back).
 
@@ -42,6 +45,54 @@ final class DiyPeer
     public function __construct(public readonly DiyConnection $conn, public readonly mixed $stream)
     {
     }
+}
+
+/**
+ * The presets of APP_LOOP: what the event loop's base is built from, for one thread that watches a few thousand sockets. Each is a name,
+ * the libevent flags (EventBase::*) or the method it avoids, how it is shown in the boot line, and why it could save CPU. Whether it does is
+ * for the syscall counts and the macro runs.
+ *
+ * @return array<string, array{flags: int, avoid: ?string, shown: string, why: string}>
+ */
+function diy_loop_presets(): array
+{
+    return [
+        'nolock' => [
+            'flags' => EventBase::NOLOCK,
+            'avoid' => null,
+            'shown' => 'flags NOLOCK',
+            'why' => 'libevent takes no lock around its calls: one thread needs none (the lab image\'s event.so never asks libevent for locks, so there may be none to drop)',
+        ],
+        'changelist' => [
+            'flags' => EventBase::EPOLL_USE_CHANGELIST,
+            'avoid' => null,
+            'shown' => 'flags EPOLL_USE_CHANGELIST',
+            'why' => 'epoll_ctl calls wait for the next epoll_wait and merge: a read event deleted and added again in one turn (group commit) costs none',
+        ],
+        'poll' => [
+            'flags' => 0,
+            'avoid' => 'epoll',
+            'shown' => 'avoids epoll',
+            'why' => 'poll(2) needs no epoll_ctl when a connection opens or closes, at the price of passing every descriptor at each wake-up',
+        ],
+    ];
+}
+
+/** The EventConfig of a preset. Throws InvalidArgumentException for a name that is not one. */
+function diy_loop_config(string $preset): EventConfig
+{
+    $presets = diy_loop_presets();
+    if (!isset($presets[$preset])) {
+        throw new InvalidArgumentException('the loop preset must be one of ' . implode(', ', array_keys($presets)) . ", got \"$preset\"");
+    }
+    $config = new EventConfig();
+    if ($presets[$preset]['avoid'] !== null && !$config->avoidMethod($presets[$preset]['avoid'])) {
+        throw new RuntimeException("libevent cannot avoid the method {$presets[$preset]['avoid']}");
+    }
+    if ($presets[$preset]['flags'] !== 0 && !$config->setFlags($presets[$preset]['flags'])) {
+        throw new RuntimeException("libevent refused the flags of the loop preset $preset");
+    }
+    return $config;
 }
 
 final class DiyServer
@@ -71,12 +122,14 @@ final class DiyServer
      * @param (Closure(list<Closure>): list<array{int, string}>)|null $commit when given, group commit: it receives the writes of one turn (each a
      *                                Closure that runs its statement and returns its response) and returns their responses, in order,
      *                                once they are committed; null: handlers answer at once and the loop is dispatch()
+     * @param string|null $loopPreset a name of diy_loop_presets(): the event loop's base is built from that preset's configuration;
+     *                                null: `new EventBase()`
      */
-    public function __construct($listener, private readonly ?object $telemetry = null, private readonly ?object $profile = null, private readonly ?int $softConnLimit = null, private readonly ?Closure $commit = null)
+    public function __construct($listener, private readonly ?object $telemetry = null, private readonly ?object $profile = null, private readonly ?int $softConnLimit = null, private readonly ?Closure $commit = null, private readonly ?string $loopPreset = null)
     {
         $this->count = new DiyConnectionCount($softConnLimit);
         $telemetry?->watchConnections($this->count);
-        $this->base = new EventBase();
+        $this->base = $loopPreset === null ? new EventBase() : new EventBase(diy_loop_config($loopPreset));
         // Why: a first-class callable of a method shows in a profile as `{closure:file(line)}`, whose line moves with every edit; the
         // callable array shows as `DiyServer::onReadable`, which a profile's rules can name.
         $onReadable = [$this, 'onReadable'];
@@ -103,6 +156,12 @@ final class DiyServer
     public function loopMethod(): string
     {
         return $this->base->getMethod();
+    }
+
+    /** The boot line's `loop:` value: the method libevent chose, and the preset with what it sets when there is one. */
+    public function loopLine(): string
+    {
+        return $this->base->getMethod() . ($this->loopPreset === null ? '' : ", preset {$this->loopPreset} (" . diy_loop_presets()[$this->loopPreset]['shown'] . ')');
     }
 
     public function run(): void

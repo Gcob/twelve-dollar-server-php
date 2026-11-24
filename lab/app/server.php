@@ -13,7 +13,9 @@
 // with APP_LOCKING=exclusive; don't use it as it is: under a steady writer the WAL never restarts and grows without bound), and
 // APP_WORKERS=<n> (off by default; n of 2 or more needs `--ext pcntl`): n processes serve on the one port with SO_REUSEPORT, each with its own
 // loop, its own connection to the database and its own file descriptors (lab/app/workers.php). Each one's telemetry line says its pid, and
-// APP_SOFT_CONN_LIMIT counts each process's own connections. Refused with APP_LOCKING=exclusive, APP_CHECKPOINTER and APP_PROFILE.
+// APP_SOFT_CONN_LIMIT counts each process's own connections. Refused with APP_LOCKING=exclusive, APP_CHECKPOINTER and APP_PROFILE, and
+// APP_LOOP=nolock|changelist|poll (off by default): the event loop's libevent base is built from that preset (diy_loop_presets() in
+// lab/servers/diy-server.php), and the `loop:` boot line says which.
 //
 // It starts with the extensions loaded in this order: `--ext sockets --ext event`. It listens only once the database is open.
 // lab/challenge-test.sh starts it on a fresh copy of the seed.
@@ -49,6 +51,13 @@ if ($softLimitValue !== false && $softLimitValue !== '') {
     }
     $softLimit = (int) $softLimitValue;
 }
+$loopPreset = getenv('APP_LOOP');
+if ($loopPreset === false || $loopPreset === '') {
+    $loopPreset = null;
+} elseif (!isset(diy_loop_presets()[$loopPreset])) {
+    fwrite(STDERR, 'server: APP_LOOP must be one of ' . implode(', ', array_keys(diy_loop_presets())) . ", got \"$loopPreset\"\n");
+    exit(1);
+}
 if ($workers >= 2) {
     if (!extension_loaded('pcntl')) {
         fwrite(STDERR, "server: APP_WORKERS=$workers needs ext-pcntl (start with --ext sockets --ext event --ext pcntl)\n");
@@ -61,7 +70,7 @@ if ($workers >= 2) {
     require __DIR__ . '/workers.php';
     exit(app_workers_supervise(
         $workers,
-        static function (Closure $ready) use ($path, $secret, $variants, $host, $port, $backlog, $softLimit): never {
+        static function (Closure $ready) use ($path, $secret, $variants, $host, $port, $backlog, $softLimit, $loopPreset): never {
             app_boot($path, $secret, $variants);
             $listener = diy_listen($host, $port, $backlog, true);
             $telemetry = null;
@@ -70,8 +79,8 @@ if ($workers >= 2) {
                 $pid = getmypid();
                 $telemetry = new DiyTelemetry(static fn (): array => ['pid' => $pid] + app_telemetry_fields());
             }
-            $server = new DiyServer($listener, $telemetry, null, $softLimit, $variants['group_commit'] ? app_group_commit(...) : null);
-            $ready($server->loopMethod() . "\t" . diy_socket_line($listener, $backlog));
+            $server = new DiyServer($listener, $telemetry, null, $softLimit, $variants['group_commit'] ? app_group_commit(...) : null, $loopPreset);
+            $ready($server->loopLine() . "\t" . diy_socket_line($listener, $backlog));
             $server->run();
             exit(0);
         },
@@ -104,7 +113,7 @@ $profile = null;
 if ((string) getenv('APP_PROFILE') !== '') {
     $profile = new DiyProfile((string) getenv('APP_PROFILE'), (float) (getenv('APP_PROFILE_PERIOD') ?: 0.001));
 }
-$server = new DiyServer($listener, $telemetry, $profile, $softLimit, $variants['group_commit'] ? app_group_commit(...) : null);
+$server = new DiyServer($listener, $telemetry, $profile, $softLimit, $variants['group_commit'] ? app_group_commit(...) : null, $loopPreset);
 echo "listening on $host:$port\n";
 if ($softLimit !== null) {
     echo "soft connection limit: $softLimit\n";
@@ -116,6 +125,6 @@ if ($variants !== app_variants([])) {
 if ($checkpointerPid !== null) {
     echo "checkpointer: {$variants['checkpointer']} ms (process $checkpointerPid)\n";
 }
-echo 'loop: ' . $server->loopMethod() . "\n";
+echo 'loop: ' . $server->loopLine() . "\n";
 echo diy_socket_line($listener, $backlog) . "\n";
 $server->run();

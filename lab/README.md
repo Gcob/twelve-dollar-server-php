@@ -595,6 +595,18 @@ the same process (the same bytes; `APP_JSON=sqlite`: the same decoded value). `l
 (`feed-plans.txt`, which `lab/check.sh` regenerates and compares). That run is a developer's look at the variants, not a result: the
 macro pairs are `lab/results/`'s.
 
+**The parse bench:** `lab/micro/benches/parse.php` (`bash lab/micro.sh lab/micro/benches/parse.php --images 8.5 --jit both`) times
+`DiyConnection::parseHead()` (the request line and the header lines of one request, before the handler) against a leaner parse written in the
+bench file (`ParseBenchLean`: the same rules and refusals, but it walks the head by offsets instead of `explode`-ing it into lines, and reads the
+request line by offsets too). The heads are k6's own (captured from its requests to a listening socket: `GET /feed` with `Host` and `User-Agent`,
+`POST /posts/<id>/like` and `POST /posts` with `Content-Length`, `Authorization` and `Content-Type`; the token is the seed's first, 179 characters).
+Each case checks, outside the timing, that the two parses find the same method, target, body length, authorization and close flag, and give the
+same verdict on a battery of 55 heads that holds every refusal of the server's parser (a space or a tab before the colon, a line fold, two
+`Content-Length`, a non-digit one, over 1 MiB, `Transfer-Encoding`, no colon, a colon only in the next line, a head ending in a line break, bad
+request lines). The lean parse is **not wired** into the server: on JIT on (the server's mode) it saves 18.7 % of the `GET /feed` head and about 10 % of
+the heads with an `Authorization`, under the 20 % a variant needed (and about 50 ns of a request that costs about 27 us). One run's rows are in
+`lab/micro/parse-run/` (`parse-8.5.txt` and its JSON), on a VM with no other container.
+
 ### The S8 variant (locking)
 
 `APP_LOCKING=normal|exclusive` on `lab/app/server.php`, read once at boot by `app_variants` (unset or empty is `normal`: the same pragmas, the
@@ -695,6 +707,26 @@ boot lines, a database connection and a listening socket per child and none in t
 writes each committed before its 201, a child killed with SIGKILL, SIGTERM, the refusals, no pcntl, no database), `check_challenge_test_passes_with_workers`
 (the 42 checks, also with `APP_PRAGMAS=mmap-off`), `check_app_workers_in_a_container` (the same where the server is the container's first process:
 exit codes 1 and 0), `check_realistic_workers_run` (a realistic run with the telemetry summed), and the cases of `series-test.php`.
+
+### The event loop's presets (`APP_LOOP`)
+
+`APP_LOOP=nolock|changelist|poll` on `lab/app/server.php` (unset or empty: `new EventBase()`, the loop as it always was, and the `loop:` boot
+line says the method alone, `loop: epoll`). A name builds the loop's libevent base from an `EventConfig` (`diy_loop_presets()` and `diy_loop_config()`
+in `lab/servers/diy-server.php`, the constructor's last argument `$loopPreset`); any other value is refused at boot with the list. The boot line
+then says the method libevent chose, which is the proof the configuration reached the base, and the preset: `loop: epoll (with changelist), preset
+changelist (flags EPOLL_USE_CHANGELIST)`. It composes with the other switches, and with workers each process builds its own base. The bake-off's
+`bake-diy.php` never sets it.
+
+| Preset | What it builds | Why it could save CPU on one thread |
+| --- | --- | --- |
+| `nolock` | `EventBase::NOLOCK` | libevent takes no lock around its calls. The lab image's `event.so` never asks libevent for lock callbacks (no `evthread` symbol), so there may be none to drop: the preset is there to be counted, not expected to move anything. |
+| `changelist` | `EventBase::EPOLL_USE_CHANGELIST` | The `epoll_ctl` calls wait for the next `epoll_wait` and merge. Persistent read events cost none per request, but group commit deletes a connection's read event and adds it back in one turn, which the list drops. |
+| `poll` | `EventConfig::avoidMethod('epoll')` | `poll(2)` needs no `epoll_ctl` when a connection opens or closes, at the price of passing every descriptor at each wake-up. |
+
+The count that decides whether a preset gets a macro pair is `lab/syscalls.sh` (2,000 req/s) with the preset against the reference.
+**Checks:** `diy-loop-test.php` (each preset's base and boot line, a server on it serving, the unknown name), `diy-group-commit-test.php` run on
+each preset (its first argument), `check_challenge_test_passes_with_loop_presets` (42 checks, with and without group commit) and
+`check_app_loop_reaches_the_server` (the boot line, with workers, the refusal).
 
 ## The realistic mode
 

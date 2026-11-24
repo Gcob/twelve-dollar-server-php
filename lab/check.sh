@@ -642,6 +642,65 @@ check_diy_group_commit() {
   ! grep -q 'FAIL' <<<"$out" || { echo "a case failed: ${out//$'\n'/ | }"; return 1; }
 }
 
+# The loop presets (APP_LOOP) on the DIY server in the test's process: each builds the base it names (libevent's own method text proves it), a
+# server on it serves requests, an unknown name is refused (9 cases); then the group commit's own cases (the order of the responses, the
+# writes of a turn in one commit) on each preset.
+check_diy_loop_presets() {
+  local out ok rc=0 preset
+  out="$(bash "$LAB/run.sh" 8.5 php -d extension=sockets -d extension=event /lab/check/diy-loop-test.php 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "diy-loop-test.php exited $rc: ${out//$'\n'/ | }"; return 1; }
+  ok="$(grep -c '^ok  ' <<<"$out")"
+  [ "$ok" = 9 ] || { echo "expected 9 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
+  ! grep -q 'FAIL' <<<"$out" || { echo "a case failed: ${out//$'\n'/ | }"; return 1; }
+  for preset in nolock changelist poll; do
+    rc=0
+    out="$(bash "$LAB/run.sh" 8.5 php -d extension=sockets -d extension=event /lab/check/diy-group-commit-test.php "$preset" 2>&1)" || rc=$?
+    [ "$rc" = 0 ] || { echo "$preset: diy-group-commit-test.php exited $rc: ${out//$'\n'/ | }"; return 1; }
+    ok="$(grep -c '^ok  ' <<<"$out")"
+    [ "$ok" = 9 ] || { echo "$preset: expected 9 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
+    ! grep -q 'FAIL' <<<"$out" || { echo "$preset: a case failed: ${out//$'\n'/ | }"; return 1; }
+  done
+}
+
+# The challenge's 42 checks against the server with each loop preset, and with each of them and group commit, and no container left behind.
+check_challenge_test_passes_with_loop_presets() {
+  local out preset left group rc extra
+  for preset in nolock changelist poll; do
+    for group in 0 1; do
+      extra=()
+      [ "$group" = 0 ] || extra=(--env APP_GROUP_COMMIT=1)
+      rc=0
+      out="$(bash "$LAB/challenge-test.sh" --image 8.5 --env "APP_LOOP=$preset" "${extra[@]+"${extra[@]}"}" 2>&1)" || rc=$?
+      [ "$rc" = 0 ] || { echo "$preset (group commit $group): lab/challenge-test.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
+      grep -qx 'passed=42 failed=0' <<<"$out" || { echo "$preset (group commit $group): the summary is not 'passed=42 failed=0': ${out//$'\n'/ | }"; return 1; }
+    done
+  done
+  left="$(docker ps -a --format '{{.Names}}' | grep '^lab-challenge-' || true)"
+  [ -z "$left" ] || { echo "containers left behind: ${left//$'\n'/ }"; return 1; }
+}
+
+# APP_LOOP reaches the server: the `loop:` line says the method alone when it is unset (as it always did) and the preset with its flags when
+# it is set (alone, and with 2 workers), and a name that is not a preset is refused at boot with the list.
+check_app_loop_reaches_the_server() {
+  local log
+  start_app_for_check lab-check-loop 18166 0 || return 1
+  log="$(docker logs lab-check-loop 2>&1)"
+  docker rm -f lab-check-loop >/dev/null 2>&1
+  grep -qx 'loop: epoll' <<<"$log" || { echo "unset, the loop line is not 'loop: epoll': ${log//$'\n'/ | }"; return 1; }
+  start_app_for_check lab-check-loop 18166 0 APP_LOOP=changelist || return 1
+  log="$(docker logs lab-check-loop 2>&1)"
+  docker rm -f lab-check-loop >/dev/null 2>&1
+  grep -qx 'loop: epoll (with changelist), preset changelist (flags EPOLL_USE_CHANGELIST)' <<<"$log" || { echo "the loop line does not name the preset: ${log//$'\n'/ | }"; return 1; }
+  ! grep -q 'app variants' <<<"$log" || { echo "a loop preset is named as an app variant: ${log//$'\n'/ | }"; return 1; }
+  CHECK_APP_EXT_EXTRA=pcntl start_app_for_check lab-check-loop 18166 0 APP_LOOP=poll APP_WORKERS=2 || return 1
+  log="$(docker logs lab-check-loop 2>&1)"
+  docker rm -f lab-check-loop >/dev/null 2>&1
+  grep -qx 'loop: poll, preset poll (avoids epoll)' <<<"$log" || { echo "with workers the loop line does not name the preset: ${log//$'\n'/ | }"; return 1; }
+  log="$(start_app_for_check lab-check-loop 18166 0 APP_LOOP=epoll)" && { docker rm -f lab-check-loop >/dev/null 2>&1; echo "a bad APP_LOOP was accepted"; return 1; }
+  docker rm -f lab-check-loop >/dev/null 2>&1
+  grep -q 'APP_LOOP must be one of nolock, changelist, poll, got "epoll"' <<<"$log" || { echo "the refusal does not say why: $log"; return 1; }
+}
+
 # The S9 switches through the app: the values and their refusals, the writes of a batch each in a savepoint (one that fails rolls back
 # alone and answers 500), a DiyServer in the test's process with the real app (two writes in one turn, a like then a read pipelined, two
 # likes pipelined), and lab/app/server.php as a process (a 201 survives SIGKILL, the checkpointer copies the WAL back and ends with the server,
@@ -749,6 +808,16 @@ check_micro_feed_bench() {
   [ "$rows" = 26 ] || { echo "expected 26 rows (25 cases and the empty loop), got $rows: ${out//$'\n'/ | }"; return 1; }
   plans="$(bash "$LAB/run.sh" 8.5 php /lab/micro/feed-plans.php 2>&1)" || { echo "feed-plans.php failed: ${plans//$'\n'/ | }"; return 1; }
   [ "$plans" = "$(cat "$LAB/micro/feed-run/feed-plans.txt")" ] || { echo "lab/micro/feed-run/feed-plans.txt is not what lab/micro/feed-plans.php prints: regenerate it"; return 1; }
+}
+
+# The parse bench times today's head parse and the lean one on k6's heads, and none is skipped: each case's check found the same five things
+# (method, target, body length, authorization, close flag) in both, and the same verdict on the battery that holds every refusal.
+check_micro_parse_bench() {
+  local out rows
+  out="$(bash "$LAB/micro.sh" "$LAB/micro/benches/parse.php" --images 8.5 --jit on --quick --procs 1 --out "$(mktemp -d)/micro.json" 2>&1)" || { echo "lab/micro.sh failed: ${out//$'\n'/ | }"; return 1; }
+  ! grep -q 'SKIPPED' <<<"$out" || { echo "a case was skipped: $(grep 'SKIPPED' <<<"$out" | head -3 | tr '\n' '|')"; return 1; }
+  rows="$(grep -c -E '^8\.5 +8\.5\.[0-9]+ +on +.* [0-9.]+ +[0-9.]+ \.\. [0-9.]+ +[0-9]+( +UNSTABLE.*)?$' <<<"$out")"
+  [ "$rows" = 7 ] || { echo "expected 7 rows (6 cases and the empty loop), got $rows: ${out//$'\n'/ | }"; return 1; }
 }
 
 # The challenge app passes the challenge's own test suite (42 checks), twice in a row: the second run starts from a fresh copy of the
@@ -2125,6 +2194,7 @@ CHECKS=(
   check_micro_sample
   check_micro_ffi_bench
   check_micro_feed_bench
+  check_micro_parse_bench
   check_micro_skips_failed_case
   check_micro_skips_case_failing_in_later_process
   check_micro_refuses_wrong_state
@@ -2162,6 +2232,9 @@ CHECKS=(
   check_app_locking_reaches_the_server
   check_app_locking_removes_the_lock_calls
   check_diy_group_commit
+  check_diy_loop_presets
+  check_challenge_test_passes_with_loop_presets
+  check_app_loop_reaches_the_server
   check_app_group_commit_cases
   check_challenge_test_passes_with_group_commit_and_checkpointer
   check_app_workers_cases

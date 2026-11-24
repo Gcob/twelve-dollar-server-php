@@ -19,13 +19,18 @@ final class DiyRig
     private int $port;
     private static int $ports = 0;
 
-    /** @param Closure(list<Closure>): list<array{int, string}>|null $commit the group commit of the server, or null for the plain loop */
-    public function __construct(?Closure $commit = null)
+    /**
+     * @param Closure(list<Closure>): list<array{int, string}>|null $commit the group commit of the server, or null for the plain loop
+     * @param string|null $loop a loop preset (diy_loop_presets()); null: the first argument the test file was started with, if there is one
+     *                          (`php diy-group-commit-test.php nolock` runs every case on that preset), else the default loop
+     */
+    public function __construct(?Closure $commit = null, ?string $loop = null)
     {
+        $loop ??= $_SERVER['argv'][1] ?? null;
         // Why a port for each: a server that went out of scope is only freed by the garbage collector, and it still listens until then.
         $this->port = RIG_FIRST_PORT + self::$ports++;
         $listener = diy_listen('127.0.0.1', $this->port, 128);
-        $this->server = new DiyServer($listener, null, null, null, $commit);
+        $this->server = new DiyServer($listener, null, null, null, $commit, $loop);
         // Why: a turn blocks until an event is ready, and a case that fails would wait forever. A timer that repeats makes every turn end within 50 ms.
         $base = Closure::bind(fn () => $this->base, $this->server, DiyServer::class)();
         $this->heartbeat = new Event($base, -1, Event::TIMEOUT | Event::PERSIST, static function (): void {
