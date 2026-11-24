@@ -1,6 +1,6 @@
 # $12 server challenge in PHP
 
-**Status:** 🔵 Phase 5b running (the step lab, second run) · approved on 2026-11-21 · snapshot 2026-11-21-0920 ·
+**Status:** ⏸️ Phase 5b: scopes 1 to 7 delivered (both final reviews OK, branch `phase-5b-claude` pushed, not merged); scope 9 waits for your AWS go · approved on 2026-11-21 · snapshot 2026-11-21-0920 ·
 **Round:** 6
 **Since your last read:** phase 5b's Mac work is done (scopes 1 to 7, D75): no new CPU variant beats the noise (the
 FFI SQLite driver, SQLite-built JSON, a lean parser, the loop presets, PHP 8.4 and 8.6: SQLite's own work is 98 % of a
@@ -113,7 +113,7 @@ step's choice backed by a measurement.
 **Decisions:** 75 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
 is a prediction we re-measure, not an answer.
 
-### Phase 5b scopes (running)
+### Phase 5b scopes (1 to 7 delivered, 9 waits for your go)
 
 Detail, seams, cases and the predictions in [details/phase-5b.md](details/phase-5b.md). One commit each, on branch
 `phase-5b-claude` (D14). Scopes 7 and 8 measure, so they need a quiet Docker VM (D15); scope 9 needs your go for AWS.
