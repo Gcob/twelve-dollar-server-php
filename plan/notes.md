@@ -569,9 +569,9 @@ competition after all..."
   our profile), then the connections in our own C, then everything in C (HolyPHP, no longer PHP). It would sit on the
   PHP row with a footnote, like HolyPHP.
 
-**Verdict:** 🔶 open, Jacob's call. Claude's recommendation: the pure track has more room than thought (Ruby: 130,000
-with FFI and no C of its own). Finish phases 6 and 7 for a real score, then a ring phase on `liburing-ffi` with the
-three pure levers above. The hybrid stays a possible second, honestly labelled entry, decided after that.
+**Verdict:** ✅ Jacob, 2026-11-24 09:14: "Pure ring first". Phases 6 and 7 first for a real score, then a ring phase
+on `liburing-ffi` with the three pure levers above, all without C of our own. The hybrid stays a possible second,
+honestly labelled entry, decided after that ring phase.
 
 ### 2026-11-22 18:08 · 💡 Idea: try io_uring anyway, something nobody tried in PHP
 
