@@ -572,6 +572,40 @@ check_s6_switches_reach_the_server() {
   grep -q 'APP_JSON=sqlite cannot be set with APP_FEED_SQL=join' <<<"$log" || { echo "the refusal does not say why: $log"; return 1; }
 }
 
+# APP_DRIVER=ffi reads the feed and the posts through FFI straight to libsqlite3, on a small database: the same bytes as PDO's for every APP_JSON value
+# and pragma preset, rows with escapes and a NUL byte, the PDO pragmas on the connection, the boot refusing another SQLite version than PDO's, no
+# statement left un-reset, and the switch refused without the bench flag and with the SQL and fetch shapes it cannot read (31 cases).
+check_app_ffi_cases() {
+  local out ok rc=0
+  out="$(bash "$LAB/run.sh" 8.5 php /lab/check/app-ffi-test.php 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "app-ffi-test.php exited $rc: ${out//$'\n'/ | }"; return 1; }
+  ok="$(grep -c '^ok  ' <<<"$out")"
+  [ "$ok" = 31 ] || { echo "expected 31 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
+  ! grep -q 'FAIL' <<<"$out" || { echo "a case failed: ${out//$'\n'/ | }"; return 1; }
+}
+
+# APP_DRIVER reaches the server: unset it says nothing about a driver, ffi alone is refused with the reason, and with the bench flag the boot says the
+# driver and SQLite's version and the feed and a post come out as PDO's bytes.
+check_app_driver_reaches_the_server() {
+  local log pdo ffi json
+  start_app_for_check lab-check-driver 18167 0 || return 1
+  log="$(docker logs lab-check-driver 2>&1)"
+  pdo="$(docker exec lab-check-driver sh -c 'curl -s http://127.0.0.1:18167/feed; curl -s http://127.0.0.1:18167/posts/250000')"
+  docker rm -f lab-check-driver >/dev/null 2>&1
+  ! grep -q 'driver:' <<<"$log" || { echo "the default names a driver: ${log//$'\n'/ | }"; return 1; }
+  log="$(start_app_for_check lab-check-driver 18167 0 APP_DRIVER=ffi)" && { docker rm -f lab-check-driver >/dev/null 2>&1; echo "APP_DRIVER=ffi without the bench flag was accepted"; return 1; }
+  docker rm -f lab-check-driver >/dev/null 2>&1
+  grep -q 'APP_DRIVER_BENCH=1' <<<"$log" || { echo "the refusal does not say why: $log"; return 1; }
+  for json in APP_JSON=encode APP_JSON=sqlite; do
+    start_app_for_check lab-check-driver 18167 0 APP_DRIVER=ffi APP_DRIVER_BENCH=1 "$json" || return 1
+    log="$(docker logs lab-check-driver 2>&1)"
+    ffi="$(docker exec lab-check-driver sh -c 'curl -s http://127.0.0.1:18167/feed; curl -s http://127.0.0.1:18167/posts/250000')"
+    docker rm -f lab-check-driver >/dev/null 2>&1
+    grep -Eqx 'driver: ffi \(SQLite [0-9.]+, reads only: for the micro bench\)' <<<"$log" || { echo "the boot lines do not name the driver: ${log//$'\n'/ | }"; return 1; }
+    [ "$ffi" = "$pdo" ] || { echo "$json: the feed and a post differ from PDO's: ${ffi:0:200}"; return 1; }
+  done
+}
+
 # The 42 checks against the server with APP_LOCKING=exclusive, and no container left behind.
 check_challenge_test_passes_with_exclusive_locking() {
   local out left rc=0
@@ -798,14 +832,14 @@ check_app_workers_in_a_container() {
   [ "$code" = 0 ] || { echo "after SIGTERM the container exited $code, not 0"; return 1; }
 }
 
-# The feed bench times every case of the S6 variants (APP_JSON's too) and none is skipped (each case checked its answer against the reference's), and the
+# The feed bench times every case of the S6 variants (APP_JSON's and APP_DRIVER's too, and the raw FFI floor) and none is skipped (each case checked its answer against the reference's), and the
 # plans saved next to its output are what SQLite says today.
 check_micro_feed_bench() {
   local out rows plans
   out="$(bash "$LAB/micro.sh" "$LAB/micro/benches/feed.php" --images 8.5 --jit on --quick --procs 1 --out "$(mktemp -d)/micro.json" 2>&1)" || { echo "lab/micro.sh failed: ${out//$'\n'/ | }"; return 1; }
   ! grep -q 'SKIPPED' <<<"$out" || { echo "a case was skipped: $(grep 'SKIPPED' <<<"$out" | head -3 | tr '\n' '|')"; return 1; }
   rows="$(grep -c -E '^8\.5 +8\.5\.[0-9]+ +on +.* [0-9.]+ +[0-9.]+ \.\. [0-9.]+ +[0-9]+( +UNSTABLE.*)?$' <<<"$out")"
-  [ "$rows" = 26 ] || { echo "expected 26 rows (25 cases and the empty loop), got $rows: ${out//$'\n'/ | }"; return 1; }
+  [ "$rows" = 34 ] || { echo "expected 34 rows (33 cases and the empty loop), got $rows: ${out//$'\n'/ | }"; return 1; }
   plans="$(bash "$LAB/run.sh" 8.5 php /lab/micro/feed-plans.php 2>&1)" || { echo "feed-plans.php failed: ${plans//$'\n'/ | }"; return 1; }
   [ "$plans" = "$(cat "$LAB/micro/feed-run/feed-plans.txt")" ] || { echo "lab/micro/feed-run/feed-plans.txt is not what lab/micro/feed-plans.php prints: regenerate it"; return 1; }
 }
@@ -2228,6 +2262,8 @@ CHECKS=(
   check_challenge_test_passes_with_soft_limit_zero
   check_challenge_test_passes_each_s6_variant
   check_s6_switches_reach_the_server
+  check_app_ffi_cases
+  check_app_driver_reaches_the_server
   check_challenge_test_passes_with_exclusive_locking
   check_app_locking_reaches_the_server
   check_app_locking_removes_the_lock_calls

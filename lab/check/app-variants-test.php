@@ -171,7 +171,7 @@ check_case('2 posts: the feed and a post are the literal bytes, with every varia
 });
 
 check_case('unset, empty and the default names are the same switches', function () {
-    $default = ['feed_sql' => 'reference', 'fetch' => 'assoc', 'json' => 'encode', 'pragmas' => 'default', 'locking' => 'normal', 'group_commit' => false, 'checkpointer' => 0];
+    $default = ['feed_sql' => 'reference', 'fetch' => 'assoc', 'json' => 'encode', 'driver' => 'pdo', 'pragmas' => 'default', 'locking' => 'normal', 'group_commit' => false, 'checkpointer' => 0];
     foreach ([[], ['APP_FEED_SQL' => '', 'APP_FETCH' => '', 'APP_JSON' => '', 'APP_PRAGMAS' => '', 'APP_LOCKING' => '', 'APP_GROUP_COMMIT' => '', 'APP_CHECKPOINTER' => ''],
               ['APP_FEED_SQL' => 'reference', 'APP_FETCH' => 'assoc', 'APP_JSON' => 'encode', 'APP_PRAGMAS' => 'default', 'APP_LOCKING' => 'normal', 'APP_GROUP_COMMIT' => '0']] as $env) {
         if (app_variants($env) !== $default) {

@@ -71,7 +71,7 @@ function run_group(array $writes): array
 // The switches.
 
 check_case('unset, empty and the default values are the same switches (no group commit, no checkpointer)', function () {
-    $default = ['feed_sql' => 'reference', 'fetch' => 'assoc', 'json' => 'encode', 'pragmas' => 'default', 'locking' => 'normal', 'group_commit' => false, 'checkpointer' => 0];
+    $default = ['feed_sql' => 'reference', 'fetch' => 'assoc', 'json' => 'encode', 'driver' => 'pdo', 'pragmas' => 'default', 'locking' => 'normal', 'group_commit' => false, 'checkpointer' => 0];
     foreach ([[], ['APP_GROUP_COMMIT' => '', 'APP_CHECKPOINTER' => ''], ['APP_GROUP_COMMIT' => '0']] as $env) {
         if (app_variants($env) !== $default) {
             return 'got ' . json_encode(app_variants($env)) . ' for ' . json_encode($env);

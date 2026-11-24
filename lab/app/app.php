@@ -30,6 +30,10 @@ const APP_POST_SELECT = 'SELECT p.id, p.body, p.created_at, u.username AS author
 //                 SQLite build the JSON in the statement (json_group_array of json_object), so PHP fetches one string and wraps it.
 //                 sqlite decodes to the same values, but its bytes can differ from encode's on U+2028 and U+2029 (SQLite writes them raw, PHP
 //                 escapes them). concat and sqlite need APP_FETCH=assoc, and sqlite needs APP_FEED_SQL=reference.
+//   APP_DRIVER    pdo | ffi: PDO runs the statements (the reference), or PHP's FFI calls the system's libsqlite3 directly (lab/app/sqlite-ffi.php:
+//                 the same SQL, the same pragmas, the same answers; the boot refuses a libsqlite3 that is not the SQLite version PDO runs).
+//                 ffi reads only (the feed and the posts) and boots only with APP_DRIVER_BENCH=1, which lab/micro/benches/feed.php sets: the
+//                 micro bench found it saves nothing against PDO, so it was not taken to the writes. It needs the reference's SQL and APP_FETCH=assoc.
 // The variant of S8:
 //   APP_LOCKING   normal | exclusive: with exclusive the connection keeps its locks and, set before the first WAL access, never makes the
 //                 WAL's shared-memory file: the lock calls (fcntl) of every read and write transaction go. Only this process can open the
@@ -49,6 +53,7 @@ const APP_FEED_SQL_VARIANTS = ['reference', 'join', 'two-step'];
 const APP_FETCH_VARIANTS = ['assoc', 'num', 'assoc-loop', 'num-loop'];
 const APP_LOCKING_VARIANTS = ['normal', 'exclusive'];
 const APP_JSON_VARIANTS = ['encode', 'concat', 'sqlite'];
+const APP_DRIVER_VARIANTS = ['pdo', 'ffi'];
 // 64 MiB of cache and a 256 MiB map (the seed is 250 MB) are today's. Why each preset:
 //   mmap-off    reads go through pread and the 64 MiB cache: says what the map is worth
 //   cache-256m  the whole seed fits in the page cache, the map is off: the cache against the map
@@ -66,6 +71,8 @@ $app_checkpointer = null;
 $app_group = null;
 /** @var array{commits: int, writes: int, max: int} the commits made since the last telemetry line, and the writes in them */
 $app_group_stats = ['commits' => 0, 'writes' => 0, 'max' => 0];
+/** @var SqliteFfi|null the connection of APP_DRIVER=ffi (lab/app/sqlite-ffi.php); null (the default) when PDO runs the statements */
+$app_ffi = null;
 /** @var array{db: PDO, feed: PDOStatement, feed_likes: ?PDOStatement, post: PDOStatement, post_insert: PDOStatement, post_exists: PDOStatement, like_insert: PDOStatement, health: PDOStatement}|null */
 $app_db = null;
 $app_feed_two_step = false;
@@ -83,7 +90,7 @@ $app_requests = null;
  * Group commit is a bool and the checkpointer's interval is in milliseconds (0: none).
  *
  * @param array<string, mixed> $env
- * @return array{feed_sql: string, fetch: string, json: string, pragmas: string, locking: string, group_commit: bool, checkpointer: int}
+ * @return array{feed_sql: string, fetch: string, json: string, driver: string, pragmas: string, locking: string, group_commit: bool, checkpointer: int}
  */
 function app_variants(array $env): array
 {
@@ -105,6 +112,7 @@ function app_variants(array $env): array
         'feed_sql' => $pick('APP_FEED_SQL', 'reference', APP_FEED_SQL_VARIANTS),
         'fetch' => $pick('APP_FETCH', 'assoc', APP_FETCH_VARIANTS),
         'json' => $pick('APP_JSON', 'encode', APP_JSON_VARIANTS),
+        'driver' => $pick('APP_DRIVER', 'pdo', APP_DRIVER_VARIANTS),
         'pragmas' => $pick('APP_PRAGMAS', 'default', ['default', ...array_keys(APP_PRAGMA_PRESETS)]),
         'locking' => $pick('APP_LOCKING', 'normal', APP_LOCKING_VARIANTS),
         'group_commit' => $pick('APP_GROUP_COMMIT', '0', ['0', '1']) === '1',
@@ -119,7 +127,28 @@ function app_variants(array $env): array
     if ($variants['json'] === 'sqlite' && $variants['feed_sql'] !== 'reference') {
         throw new InvalidArgumentException("APP_JSON=sqlite cannot be set with APP_FEED_SQL={$variants['feed_sql']}: its statement is built on the reference's, and one SQL shape is enough");
     }
+    if ($variants['driver'] === 'ffi' && ($env['APP_DRIVER_BENCH'] ?? '') !== '1') {
+        throw new InvalidArgumentException('APP_DRIVER=ffi is a read-only driver, for lab/micro/benches/feed.php: it does not write, so it boots only with APP_DRIVER_BENCH=1');
+    }
+    if ($variants['driver'] === 'ffi' && ($variants['feed_sql'] !== 'reference' || $variants['fetch'] !== 'assoc')) {
+        $other = $variants['feed_sql'] !== 'reference' ? 'APP_FEED_SQL=' . $variants['feed_sql'] : 'APP_FETCH=' . $variants['fetch'];
+        throw new InvalidArgumentException("APP_DRIVER=ffi cannot be set with $other: the driver reads the reference's statement into rows keyed by column name, and one shape is enough");
+    }
     return $variants;
+}
+
+/**
+ * The boot line of the driver: null for PDO (it says nothing, as it always did), the driver and the SQLite it calls for ffi.
+ *
+ * @param array{driver: string} $variants app_variants()
+ */
+function app_driver_line(array $variants): ?string
+{
+    if ($variants['driver'] !== 'ffi') {
+        return null;
+    }
+    require_once __DIR__ . '/sqlite-ffi.php';
+    return 'driver: ffi (SQLite ' . sqlite_ffi_load()->sqlite3_libversion() . ', reads only: for the micro bench)';
 }
 
 const APP_WORKERS_MAX = 64;
@@ -214,55 +243,84 @@ function app_post_json_sql(): string
              WHERE p.id = ?";
 }
 
-/** Opens the database at $path (it must exist: SQLite would create an empty one) and prepares every statement once. */
-function app_boot(string $path, string $secret, ?array $variants = null): void
+/**
+ * The statements that set a connection up, in the order they run (the locking mode first: set before the connection's first WAL access, SQLite keeps
+ * the WAL's index in heap memory and never makes the shared-memory file, and every lock call of a read or a write goes with it). Both drivers run these.
+ *
+ * @param array{cache_size: int, mmap_size: int} $pragmas
+ * @return list<string>
+ */
+function app_connection_pragmas(array $variants, array $pragmas): array
 {
-    global $app_db, $app_secret, $app_started_at, $app_path, $app_feed_two_step, $app_fetch_num, $app_fetch_loop, $app_json, $app_group, $app_group_stats;
+    $statements = [];
+    if ($variants['locking'] === 'exclusive') {
+        $statements[] = 'PRAGMA locking_mode = EXCLUSIVE';
+    }
+    $statements[] = 'PRAGMA journal_mode = WAL';
+    $statements[] = 'PRAGMA synchronous = NORMAL';
+    $statements[] = 'PRAGMA busy_timeout = 5000';
+    $statements[] = 'PRAGMA cache_size = ' . $pragmas['cache_size'];    // KiB when negative: -65536 is 64 MiB
+    $statements[] = 'PRAGMA mmap_size = ' . $pragmas['mmap_size'];      // bytes: 268435456 is 256 MiB
+    $statements[] = 'PRAGMA temp_store = MEMORY';
+    if ($variants['checkpointer'] > 0) {
+        // Why: the second process does the checkpoints, so none of them lands in a request.
+        $statements[] = 'PRAGMA wal_autocheckpoint = 0';
+    }
+    return $statements;
+}
+
+/**
+ * Opens the database at $path (it must exist: SQLite would create an empty one) and prepares every statement once, through PDO or, with
+ * APP_DRIVER=ffi, through FFI (then $pdoVersion, the SQLite version PDO says, is read from PDO unless a test hands one in).
+ */
+function app_boot(string $path, string $secret, ?array $variants = null, ?string $pdoVersion = null): void
+{
+    global $app_db, $app_ffi, $app_secret, $app_started_at, $app_path, $app_feed_two_step, $app_fetch_num, $app_fetch_loop, $app_json, $app_group, $app_group_stats;
     if (!is_file($path)) {
         throw new RuntimeException("the database file does not exist: $path");
     }
     $variants ??= app_variants(getenv());
     $pragmas = APP_PRAGMA_PRESETS[$variants['pragmas']] ?? APP_PRAGMA_DEFAULT;
-    $db = new PDO('sqlite:' . $path, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
-    if ($variants['locking'] === 'exclusive') {
-        // Why first: set before the connection's first WAL access, SQLite keeps the WAL's index in heap memory and never makes the
-        // shared-memory file (every lock call of a read or a write goes with it).
-        $db->exec('PRAGMA locking_mode = EXCLUSIVE');
-    }
-    $db->exec('PRAGMA journal_mode = WAL');
-    $db->exec('PRAGMA synchronous = NORMAL');
-    $db->exec('PRAGMA busy_timeout = 5000');
-    $db->exec('PRAGMA cache_size = ' . $pragmas['cache_size']);    // KiB when negative: -65536 is 64 MiB
-    $db->exec('PRAGMA mmap_size = ' . $pragmas['mmap_size']);      // bytes: 268435456 is 256 MiB
-    $db->exec('PRAGMA temp_store = MEMORY');
-    if ($variants['checkpointer'] > 0) {
-        // Why: the second process does the checkpoints, so none of them lands in a request.
-        $db->exec('PRAGMA wal_autocheckpoint = 0');
-    }
+    $setup = app_connection_pragmas($variants, $pragmas);
     $app_feed_two_step = $variants['feed_sql'] === 'two-step';
     $app_fetch_num = str_starts_with($variants['fetch'], 'num');
     $app_fetch_loop = str_ends_with($variants['fetch'], '-loop');
     $app_json = $variants['json'];
-    $app_db = [
-        'db' => $db,
-        'feed' => $db->prepare($app_json === 'sqlite' ? app_feed_json_sql() : app_feed_sql($variants['feed_sql'])),
-        'feed_likes' => $app_feed_two_step ? $db->prepare(app_feed_likes_sql()) : null,
-        'post' => $db->prepare($app_json === 'sqlite' ? app_post_json_sql() : app_post_sql($variants['feed_sql'])),
-        'post_insert' => $db->prepare('INSERT INTO posts (user_id, body) VALUES (?, ?) RETURNING id, created_at'),
-        'post_exists' => $db->prepare('SELECT 1 FROM posts WHERE id = ?'),
-        'like_insert' => $db->prepare('INSERT INTO likes (user_id, post_id) VALUES (?, ?) ON CONFLICT (user_id, post_id) DO NOTHING'),
-        'health' => $db->prepare('SELECT 1'),
-    ];
     $app_group = null;
     $app_group_stats = ['commits' => 0, 'writes' => 0, 'max' => 0];
-    if ($variants['group_commit']) {
-        $app_group = [
-            'begin' => $db->prepare('BEGIN IMMEDIATE'),
-            'savepoint' => $db->prepare('SAVEPOINT write'),
-            'release' => $db->prepare('RELEASE write'),
-            'rollback_to' => $db->prepare('ROLLBACK TO write'),
-            'commit' => $db->prepare('COMMIT'),
+    if ($variants['driver'] === 'ffi') {
+        require_once __DIR__ . '/sqlite-ffi.php';
+        $app_db = $app_ffi = null;
+        $app_ffi = new SqliteFfi($path, $setup, [
+            'feed' => $app_json === 'sqlite' ? app_feed_json_sql() : app_feed_sql('reference'),
+            'post' => $app_json === 'sqlite' ? app_post_json_sql() : app_post_sql('reference'),
+        ], $pdoVersion);
+        $app_db = ['db' => $app_ffi];
+    } else {
+        $app_ffi = null;
+        $db = new PDO('sqlite:' . $path, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
+        foreach ($setup as $statement) {
+            $db->exec($statement);
+        }
+        $app_db = [
+            'db' => $db,
+            'feed' => $db->prepare($app_json === 'sqlite' ? app_feed_json_sql() : app_feed_sql($variants['feed_sql'])),
+            'feed_likes' => $app_feed_two_step ? $db->prepare(app_feed_likes_sql()) : null,
+            'post' => $db->prepare($app_json === 'sqlite' ? app_post_json_sql() : app_post_sql($variants['feed_sql'])),
+            'post_insert' => $db->prepare('INSERT INTO posts (user_id, body) VALUES (?, ?) RETURNING id, created_at'),
+            'post_exists' => $db->prepare('SELECT 1 FROM posts WHERE id = ?'),
+            'like_insert' => $db->prepare('INSERT INTO likes (user_id, post_id) VALUES (?, ?) ON CONFLICT (user_id, post_id) DO NOTHING'),
+            'health' => $db->prepare('SELECT 1'),
         ];
+        if ($variants['group_commit']) {
+            $app_group = [
+                'begin' => $db->prepare('BEGIN IMMEDIATE'),
+                'savepoint' => $db->prepare('SAVEPOINT write'),
+                'release' => $db->prepare('RELEASE write'),
+                'rollback_to' => $db->prepare('ROLLBACK TO write'),
+                'commit' => $db->prepare('COMMIT'),
+            ];
+        }
     }
     $app_secret = $secret;
     $app_started_at = time();
@@ -584,7 +642,10 @@ function body_validate(string $raw): array
 /** @return list<array<string|int, mixed>> the rows keyed by column name, or by position with APP_FETCH=num (id, body, created_at, author, like_count) */
 function feed_query(): array
 {
-    global $app_db, $app_feed_two_step, $app_fetch_num, $app_fetch_loop;
+    global $app_db, $app_ffi, $app_feed_two_step, $app_fetch_num, $app_fetch_loop;
+    if ($app_ffi !== null) {
+        return $app_ffi->feedRows();
+    }
     $feed = $app_db['feed'];
     $feed->execute();
     if ($app_fetch_loop) {
@@ -617,7 +678,10 @@ function feed_query(): array
 /** APP_JSON=sqlite: the JSON array of the feed's posts, as SQLite built it ('[]' when there are none). */
 function feed_query_json(): string
 {
-    global $app_db;
+    global $app_db, $app_ffi;
+    if ($app_ffi !== null) {
+        return $app_ffi->feedJson();
+    }
     $feed = $app_db['feed'];
     $feed->execute();
     $json = $feed->fetchColumn();
@@ -628,7 +692,10 @@ function feed_query_json(): string
 /** APP_JSON=sqlite: the JSON object of one post as SQLite built it, or null when there is no such post. */
 function post_query_json(int $id): ?string
 {
-    global $app_db;
+    global $app_db, $app_ffi;
+    if ($app_ffi !== null) {
+        return $app_ffi->postJson($id);
+    }
     $app_db['post']->execute([$id]);
     $json = $app_db['post']->fetchColumn();
     $app_db['post']->closeCursor();
@@ -638,7 +705,10 @@ function post_query_json(int $id): ?string
 /** @return array<string|int, mixed>|null */
 function post_query(int $id): ?array
 {
-    global $app_db, $app_fetch_num;
+    global $app_db, $app_ffi, $app_fetch_num;
+    if ($app_ffi !== null) {
+        return $app_ffi->postRow($id);
+    }
     $app_db['post']->execute([$id]);
     $post = $app_fetch_num ? $app_db['post']->fetch(PDO::FETCH_NUM) : $app_db['post']->fetch();
     $app_db['post']->closeCursor();

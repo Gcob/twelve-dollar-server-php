@@ -9,6 +9,7 @@
 // likes for every case, added once to the copy.
 
 require_once __DIR__ . '/../../app/app.php';
+require_once __DIR__ . '/../../app/sqlite-ffi.php';
 
 const FEED_BENCH_SECRET = 'bench-secret';
 // Extra likes of the 20 newest posts, newest first (the seed's own 0 to 18 are still there).
@@ -58,6 +59,45 @@ function feed_bench_case(array $env, Closure $run, bool $decoded = false): array
     ];
 }
 
+/**
+ * The statement of APP_JSON=sqlite run straight on libsqlite3 through FFI, with no class and no route around it: $read false steps it and resets it and
+ * reads nothing (SQLite's own work, and the least any driver costs), true reads the text as well (what a driver adds at least). A fresh handle with the
+ * app's pragmas on the same copy; the read's answer is checked against PDO's.
+ */
+function feed_bench_raw(bool $post, bool $read): array
+{
+    return [
+        'setup' => function () use ($post): array {
+            $copy = micro_feed_copy();
+            feed_bench_likes($copy);
+            feed_bench_boot($copy, ['APP_JSON' => 'sqlite']);
+            $expected = $post ? post_query_json(500000) : feed_query_json();
+            $ffi = sqlite_ffi_load();
+            $db = $ffi->new('sqlite3*');
+            $ffi->sqlite3_open_v2($copy, FFI::addr($db), 0x2, null);
+            foreach (app_connection_pragmas(app_variants([]), APP_PRAGMA_DEFAULT) as $pragma) {
+                $ffi->sqlite3_exec($db, $pragma, null, null, null);
+            }
+            $sql = $post ? app_post_json_sql() : app_feed_json_sql();
+            $statement = $ffi->new('sqlite3_stmt*');
+            $ffi->sqlite3_prepare_v3($db, $sql, strlen($sql), 1, FFI::addr($statement), null);
+            return ['expected' => $expected, 'ffi' => $ffi, 'db' => $db, 'statement' => $statement];
+        },
+        'run' => function (array $ctx) use ($post, $read) {
+            $ffi = $ctx['ffi'];
+            $statement = $ctx['statement'];
+            if ($post) {
+                $ffi->sqlite3_bind_int64($statement, 1, 500000);
+            }
+            $rc = $ffi->sqlite3_step($statement);
+            $json = $read ? $ffi->sqlite3_column_text($statement, 0) : $rc;
+            $ffi->sqlite3_reset($statement);
+            return $json;
+        },
+        'check' => fn ($result, array $ctx) => ($read ? $result === $ctx['expected'] : $result === 100) ? true : 'the raw read answered ' . json_encode($result),
+    ];
+}
+
 $cases = [];
 $feed = static fn () => route_feed();
 foreach (APP_FEED_SQL_VARIANTS as $sql) {
@@ -82,4 +122,15 @@ $cases['post/join/assoc'] = feed_bench_case(['APP_FEED_SQL' => 'join'], $post);
 $cases['post/reference/num'] = feed_bench_case(['APP_FETCH' => 'num'], $post);
 $cases['post/reference/assoc, APP_JSON=concat'] = feed_bench_case(['APP_JSON' => 'concat'], $post);
 $cases['post/reference/assoc, APP_JSON=sqlite'] = feed_bench_case(['APP_JSON' => 'sqlite'], $post, true);
+// The driver: the same routes with PHP's FFI calling libsqlite3 instead of PDO (lab/app/sqlite-ffi.php), with the JSON of encode and of sqlite. The
+// reference's answer is PDO's, so a driver that read a row differently would fail its check (the same bytes: both run the same SQLite and the same SQL).
+$cases['feed/reference/assoc, APP_DRIVER=ffi'] = feed_bench_case(['APP_DRIVER' => 'ffi', 'APP_DRIVER_BENCH' => '1'], $feed);
+$cases['feed/reference/assoc, APP_JSON=sqlite, APP_DRIVER=ffi'] = feed_bench_case(['APP_JSON' => 'sqlite', 'APP_DRIVER' => 'ffi', 'APP_DRIVER_BENCH' => '1'], $feed, true);
+$cases['post/reference/assoc, APP_DRIVER=ffi'] = feed_bench_case(['APP_DRIVER' => 'ffi', 'APP_DRIVER_BENCH' => '1'], $post);
+$cases['post/reference/assoc, APP_JSON=sqlite, APP_DRIVER=ffi'] = feed_bench_case(['APP_JSON' => 'sqlite', 'APP_DRIVER' => 'ffi', 'APP_DRIVER_BENCH' => '1'], $post, true);
+// What the driver can save at most: the statement on libsqlite3 with nothing read, and with the text read, no class and no route around either.
+$cases['feed/APP_JSON=sqlite statement on raw FFI, step and reset only'] = feed_bench_raw(false, false);
+$cases['feed/APP_JSON=sqlite statement on raw FFI, text read'] = feed_bench_raw(false, true);
+$cases['post/APP_JSON=sqlite statement on raw FFI, step and reset only'] = feed_bench_raw(true, false);
+$cases['post/APP_JSON=sqlite statement on raw FFI, text read'] = feed_bench_raw(true, true);
 return $cases;
