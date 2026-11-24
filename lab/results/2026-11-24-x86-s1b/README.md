@@ -31,7 +31,7 @@ and the challenge's repository cloned at the commit the seed was built from. Eve
    reconnects), one pair. The server's `Connection: close` count must be about k6's requests plus the warm-up's.
 2. **`s1b-7500/`, S1-b against S1-a:** `s1a` against `s1b` (the same plus `APP_WORKERS=2`), `--ext sockets --ext event --ext pcntl` on both sides (so the only
    difference is the second process), 3 pairs. The server's own log was followed from outside (`docker logs -f`, one file a run, from before the series started) and each process's `requests`
-   summed into `s1b-7500/served.json`: both pids must have served in every S1-b run.
+   summed into `s1b-7500/served.json`: both pids must have served in every S1-b run. `served.json` is written by hand from those logs, not by `summarize.sh` (the raw logs are not kept): for each log that has a `workers:` line, the `telemetry {...}` lines (one a second a process, fields `pid` and `requests`, an object of route to count) are grouped by `pid`; a process's `requests` is the sum of every route's count over every line, and `seconds_with_requests` the number of lines whose sum is above 0. The logs, in run order, are the series' six runs, then the memory runs; the log of an S1-a run has no `workers:` line and is left out.
 3. **`s1b-7500/memory/`:** one run of each variant after the series with the sampler on (`lab/realistic.sh --hold 7500,60`, the same flags, no `--no-series`):
    `memory.current` and `Pss_Anon` peaks. The step lab's runs keep no sampler, so memory is one run each, not a pair.
 4. **The floor.** The only x86 near-A/A is 5a's skeleton against S1-d that never fired (3 pairs, fixed order): floor **0.386 µs/req**. The Mac's A/A at 24,000 req/s in
@@ -206,35 +206,35 @@ The reconnect price is 23.56 µs (the mean of the two Xeon pairs), S1-a costs 50
 
 - **S1-d:** one process holds all N users, so it adds `share(N) × price`.
 - **S1-b, 2 processes:** the kernel splits the users about in half, so each holds N / 2; it adds the measured 7.44 µs, and a share `1 - 64000 / (N / 2)` of the requests reconnect when N / 2 is over 64000 (S1-d in each process).
-- **S1-b, 3 processes (a projection, not measured):** each extra process adds the measured 7.44 µs, so 3 processes add 14.87 µs; N / 3 stays under 64000 up to 192000 users, so no reconnect.
+- **S1-b, 3 processes (a projection, not measured):** each extra process adds the measured 7.44 µs, so 3 processes add 14.88 µs; N / 3 stays under 64000 up to 192000 users, so no reconnect.
 
 | Users N | S1-d adds | S1-b with 2 processes adds | S1-b with 3 processes adds (projection) |
 |---|---|---|---|
-| 100000 | 8.48 µs (16.9 % of S1-a) | 7.44 µs (14.8 % of S1-a) | 14.87 µs (29.6 % of S1-a) |
-| 150000 | 13.51 µs (26.9 % of S1-a) | 10.89 µs (21.7 % of S1-a) | 14.87 µs (29.6 % of S1-a) |
+| 100000 | 8.48 µs (16.9 % of S1-a) | 7.44 µs (14.8 % of S1-a) | 14.88 µs (29.6 % of S1-a) |
+| 150000 | 13.51 µs (26.9 % of S1-a) | 10.9 µs (21.7 % of S1-a) | 14.88 µs (29.6 % of S1-a) |
 
-At 100000 users S1-b with 2 processes is cheaper than S1-d by 1.05 µs.
-At 150000 users S1-b with 2 processes is cheaper than S1-d by 2.62 µs.
+At 100000 users S1-b with 2 processes is cheaper than S1-d by 1.04 µs.
+At 150000 users S1-b with 2 processes is cheaper than S1-d by 2.61 µs.
 
 S1-d adds 26.9 % at 150,000 users: over the 15 % line.
 
-S1-b break-even against S1-d: the two add the same at a share of 31.6 % of requests reconnecting, that is N = 93518 users.
+S1-b against S1-d: they add the same at about 94000 users (a share of 31.6 % of requests reconnecting); over the three pairs (S1-b's cost 7.44, 6.29, 7.8 µs) anywhere from 87300 to 95600 users. S1-d is cheaper below, S1-b above, up to about 203000 users: past 2 × 64000 a process of S1-b passes its own limit and S1-d is cheaper again.
 
-### Memory at 150,000 users on a 2048 MiB box (from the memory runs above and a connection's 6.67 KiB)
+### Memory at 150,000 users on a 2048 MiB box (from the memory runs above and a connection's 6.67 KiB, the connections held capped by the soft limit)
 
-Each variant's `memory.current` peak with 60,000 idle: S1-a 588.9 MiB (Pss_Anon 102.2), S1-b 582.7 MiB (Pss_Anon 94.9); S1-b minus S1-a -6.21 MiB (one run each, not a pair). 90,000 more connections at 6.67 KiB are 586.2 MiB.
+Each variant's `memory.current` peak with 60,000 idle: S1-a 588.9 MiB (Pss_Anon 102.2), S1-b 582.7 MiB (Pss_Anon 94.9); S1-b minus S1-a -6.21 MiB (one run each, not a pair). Each connection above the 60,000 adds 6.67 KiB. A process holds at most about 64000 connections (its soft limit, under the 65,535 fds), so S1-d holds 64000 at 150000 users and S1-b with 2 processes holds 2 × 64000 (the connections held are counted at the limit, a few hundred more in practice).
 
-| At 150,000 users | memory.current MiB | of the 2048 MiB box |
-|---|---|---|
-| S1-d, 1 process | 1175.2 | 57.4 % |
-| S1-b, 2 processes | 1169 | 57.1 % |
-| S1-b, 3 processes (a projection: a process is counted as the extra memory S1-b measured over S1-a when that is positive, 0 MiB here) | 1169 | 57.1 % |
+| At 150000 users | connections held | memory.current MiB | of the 2048 MiB box |
+|---|---|---|---|
+| S1-d, 1 process | 64000 | 615 | 30 % |
+| S1-b, 2 processes | 128000 | 1025.6 | 50.1 % |
+| S1-b, 3 processes (a projection: no soft limit reached, 50000 each; a process is counted as the extra memory S1-b measured over S1-a when that is positive, 0 MiB here) | 150000 | 1169 | 57.1 % |
 
 ### The bench estimate (S1-a's Xeon µs/req times 1.57, 5a's Xeon-to-bench factor)
 
-S1-a on the Xeon: 50.31 µs/req (median of the 4 S1-a runs of this folder: 50.36). Times 1.57: **79 µs/req on the bench** (79.1 with every S1-a run), against 5a's 83.9 for the skeleton (no `mmap-off`).
+S1-a on the Xeon: 50.31 µs/req (median of the S1-a runs of the S1-b series; 50.36 over the 4 S1-a runs of this folder). Times 1.57: **79 µs/req on the bench** (79.1 with every S1-a run), against 5a's 83.9 for the skeleton (no `mmap-off`).
 
-With the chosen S1 (S1-b, 2 processes, the soft limit in each) on top of S1-a, through the same factor: 90.7 µs/req at 100,000 users (+7.44 µs added) and 96.1 µs/req at 150,000 users (+10.89 µs added).
+With the chosen S1 (S1-b, 2 processes, the soft limit in each) on top of S1-a, through the same factor: 90.7 µs/req at 100,000 users (+7.44 µs added) and 96.1 µs/req at 150,000 users (+10.9 µs added).
 <!-- END summarize -->
 
 ## The reading
@@ -243,22 +243,22 @@ With the chosen S1 (S1-b, 2 processes, the soft limit in each) on top of S1-a, t
   a reconnect**. The close count agrees: 533,314 `Connection: close` responses against k6's 484,222 requests plus the warm-up's nominal 48,750, 342 apart (0.06 %): every request reconnected.
   The two pairs differ by 0.25 µs, two thirds of the 0.386 floor: the price is stable across the two references (with and without `mmap-off`). On the Mac at the same rate a reconnect is 5.91 µs, so the Xeon pays 4.0 times.
 - **S1-b's cost on the Xeon: +7.44 µs a request, +14.8 % of S1-a** (pairs +7.44, +6.29, +7.80, that is +14.8, +12.4 and +15.6 %; S1-a 50.31, S1-b 57.75). Every pair has the same sign and the smallest
-  (6.29) is 16 times the Xeon floor (0.386) and 7.3 times the Mac's cautious one (0.864): "beyond the noise" on both readings. On the Mac the same switch costs +2.14 µs (+8.6 %): the Xeon pays 3.5 times in µs and 1.7 times in share. Both processes served
+  (6.29) is 16 times the Xeon floor (0.386) and 7.3 times the Mac's cautious one (0.864): "beyond the noise" on both readings. On the Mac at 12,000 req/s the same switch costs +2.14 µs (+8.6 %): the Xeon at 7,500 req/s pays 3.5 times in µs and 1.7 times in share (two different rates: the Mac costs about 19 % more a request at 7,500, so the same-rate ratios would be a little lower). Both processes served
   in every S1-b run (49.4 to 50.3 % of the requests in the first process; 51.2 % in the memory run).
-- **Memory: S1-b holds no more than S1-a.** `memory.current` peak 582.7 MiB against 588.9 MiB, `Pss_Anon` 94.9 against 102.2 MiB, file descriptors 61,453 against 61,430, with 60,000 idle connections (one run each, not a
+- **Memory at 60,000 idle: S1-b holds no more than S1-a.** `memory.current` peak 582.7 MiB against 588.9 MiB, `Pss_Anon` 94.9 against 102.2 MiB, file descriptors 61,453 against 61,430, with 60,000 idle connections (one run each, not a
   pair: the 6 MiB difference is not read as a saving). The second process's own memory (its SQLite cache, its loop) is under the run-to-run difference; the kernel's socket memory is the same total, and the database's page cache is the kernel's, shared by both processes.
 - **The S1 rule** (the tables above, `1 - 64,000 / N` of the requests reconnect when a process holds N users, price 23.56 µs):
-  - **100,000 users:** S1-d adds 8.48 µs (16.9 % of S1-a); S1-b with 2 processes adds 7.44 µs (14.8 %), each process holding 50,000 users, under its soft limit, so no reconnect. S1-b is cheaper by 1.05 µs.
-  - **150,000 users:** S1-d adds 13.51 µs (26.9 %). S1-b with 2 processes, each holding 75,000 users and each with the soft limit (so 14.7 % of the requests reconnect), adds 7.44 + 3.45 = 10.89 µs (21.7 %): cheaper by 2.62 µs.
-    Three processes would hold 50,000 each and need no soft limit, but **that is a projection**, not a measurement: each extra process is counted as the measured 7.44 µs, so 14.87 µs (29.6 %), dearer than two processes with the soft limit. It stays a projection because
+  - **100,000 users:** S1-d adds 8.48 µs (16.9 % of S1-a); S1-b with 2 processes adds 7.44 µs (14.8 %), each process holding 50,000 users, under its soft limit, so no reconnect. S1-b is cheaper by 1.04 µs.
+  - **150,000 users:** S1-d adds 13.51 µs (26.9 %). S1-b with 2 processes, each holding 75,000 users and each with the soft limit (so 14.7 % of the requests reconnect), adds 7.44 + 3.46 = 10.90 µs (21.7 %): cheaper by 2.61 µs.
+    Three processes would hold 50,000 each and need no soft limit, but **that is a projection**, not a measurement: each extra process is counted as the measured 7.44 µs, so 14.88 µs (29.6 %), dearer than two processes with the soft limit. It stays a projection because
     the cost of a third process was not measured, and it could be less than the second's.
-  - S1-b and S1-d add the same at N = 93,518 users (a share of 31.6 % of the requests reconnecting); S1-d is cheaper below it, S1-b above.
+  - S1-b and S1-d add the same at about 94,000 users (a share of 31.6 % of the requests reconnecting); over the three pairs (S1-b's cost 6.29 to 7.80 µs) anywhere from about 87,300 to 95,600 users. S1-d is cheaper below, S1-b above, up to about 203,000 users: past 2 × 64,000 a process of S1-b passes its own limit and S1-d is cheaper again.
   - **S1-d adds more than 15 % at 150,000 users (26.9 %), so it does not stay.** S1-b with 2 processes adds fewer µs at both sizes, so it is chosen; it still adds 21.7 % at 150,000 users, over the 15 % line, so the io_uring ring is not made unnecessary by this, but the rule's trigger for asking about it (S1-b dearer than S1-d at both sizes) did not fire.
-- **Memory at 150,000 users on the 2 GiB box:** about 1,175 MiB for S1-d and 1,169 MiB for S1-b (57 % of the box): the 60,000-connection runs' `memory.current` plus 90,000 more connections at 6.67 KiB (5a's DIY figure: 1.48 KiB of the process's Pss and 5.19 KiB of kernel memory).
-  The two are within 1 %: the second process costs no measurable memory, so memory does not separate them; neither is near the box's limit. This is an extrapolation from the 60,000-connection runs, not a measurement at 150,000.
-- **The caveats of the choice.** (1) The margin at 100,000 users is 1.05 µs (2.1 % of S1-a): it rests on a reconnect price from two pairs and an S1-b cost from three, so "S1-b is cheaper at 100,000" is a close call, a tie in practice, and it grows with N (2.62 µs at 150,000).
+- **Memory at 150,000 users on the 2 GiB box:** the soft limit caps what a process holds at about 64,000 connections (under the 65,535 fds), so S1-d holds about 64,000 and S1-b with 2 processes about 128,000: about **615 MiB for S1-d (30 % of the box) and 1,026 MiB for S1-b (50 %)**, from the 60,000-connection runs' `memory.current` plus each connection above 60,000 at 6.67 KiB (5a's DIY figure: 1.48 KiB of the process's Pss and 5.19 KiB of kernel memory).
+  S1-b holds about twice the connections and so costs about 410 MiB more than S1-d; both fit, with room. The 3-process projection (150,000 held, nothing closed) is 1,169 MiB (57 %). All three are extrapolations from the 60,000-connection runs, not measurements at 150,000.
+- **The caveats of the choice.** (1) The margin at 100,000 users is 1.04 µs (2.1 % of S1-a): it rests on a reconnect price from two pairs and an S1-b cost from three, so "S1-b is cheaper at 100,000" is a close call, a tie in practice, and it grows with N (2.61 µs at 150,000).
   (2) The price of a reconnect with two processes is assumed to be the one measured with one; (3) 150,000 users in two processes is a model: each process's soft limit closes a connection after a response when it holds more than 64,000, as S1-d does in one process in 5a's series, and the kernel's split of the users was
-  50.3 % and 49.4 % in the runs here (not forced).
+  50.3 % and 49.4 % in the runs here (not forced). (4) **The soft limit in each of 2 processes never ran on x86** (no run here had `APP_WORKERS=2` with `APP_SOFT_CONN_LIMIT` set): the 150,000-user case is a model, and the phase's full-size run is what measures it.
 - **The bench estimate:** S1-a's 50.31 µs/req on the Xeon times 1.57 is **79.0 µs/req on the bench** (79.1 with the four S1-a runs), against 5a's 83.9 for the skeleton without `mmap-off` (-6 %). With the chosen S1 on top: 90.7 µs/req at 100,000 users and 96.1 at 150,000. The factor 1.57 comes from the two Swoole entries (the leaderboard's 94 and 101 µs over the Xeon's 57.7 and 67.3), not from a reconnecting server: those two lines are an estimate, not a prediction of the bench's score.
 
 ## Did the predictions hold?
@@ -266,11 +266,11 @@ With the chosen S1 (S1-b, 2 processes, the soft limit in each) on top of S1-a, t
 12 is the one this folder judges; 13 is not applicable.
 
 12. **Held on all three parts, with one edge.** The second reconnect pair is 23.44 µs, 1.05 % under 23.69 (inside 10 %). S1-b's 2 workers cost +14.8 % per request (inside +5 to +15 %; the third pair, +15.6 %, is just over, the median is not),
-    less than S1-d's +26.9 % at 150,000 users (the +25 % predicted was a little low), and S1-b is chosen. Two readings the prediction does not make: with the soft limit in each process S1-b adds 21.7 % at 150,000 users, not 14.8 %, and at 100,000 users the two are 1.05 µs apart.
+    less than S1-d's +26.9 % at 150,000 users (the +25 % predicted was a little low), and S1-b is chosen. Two readings the prediction does not make: with the soft limit in each process S1-b adds 21.7 % at 150,000 users, not 14.8 %, and at 100,000 users the two are 1.04 µs apart.
 13. **Not applicable.** 5b chose no CPU variant, so its configuration is 5a's and there is no pair to compare. For the record, S1-a's bench estimate (79.0 µs/req) falls inside the 71 to 80 range, as an estimate of the reference alone.
 
 ## The choice
 
 | Step | Chosen | Why |
 |---|---|---|
-| S1 accept connections, at the bench's sizes (100,000 to 150,000 users) | **S1-b: 2 processes on one port (`APP_WORKERS=2`), each with the soft limit (`APP_SOFT_CONN_LIMIT=64000`)** | it adds 7.44 µs a request at 100,000 users (S1-d 8.48) and 10.89 at 150,000 (S1-d 13.51); S1-d adds 26.9 % at 150,000, over the 15 % line, so it does not stay. Below 93,518 users S1-d would be cheaper. Memory is the same (about 1.17 GiB at 150,000 users, 57 % of the box) |
+| S1 accept connections, at the bench's sizes (100,000 to 150,000 users) | **S1-b: 2 processes on one port (`APP_WORKERS=2`), each with the soft limit (`APP_SOFT_CONN_LIMIT=64000`)** | it adds 7.44 µs a request at 100,000 users (S1-d 8.48) and 10.90 at 150,000 (S1-d 13.51); S1-d adds 26.9 % at 150,000, over the 15 % line, so it does not stay. S1-d is cheaper below about 94,000 users (87,300 to 95,600 over the three pairs), S1-b above, up to about 203,000. Memory: S1-b holds about twice the connections (about 128,000 against 64,000 at 150,000 users), about 1.0 GiB against 0.6 GiB, half of the 2 GiB box: it still fits |

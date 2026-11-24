@@ -8,11 +8,14 @@ cd "$(dirname "$0")"
 LAB="$(cd ../.. && pwd)"
 XEON="$LAB/results/2026-11-23-x86-calibration"
 MACAA="$LAB/results/2026-11-24-cpu-steps-5b/aa-24000"
-# Two numbers no file holds: the soft limit of the S1 series' model (its README states it as text), the bytes a connection costs on x86
-# (5a's S1 series: the DIY server's 1.48 KiB of Pss plus 5.19 KiB of kernel memory a connection, 6.67 KiB) and the Xeon-to-bench factor of 5a.
+# Four numbers no file of this folder holds: the soft limit of the S1 series' model (its README states it as text), the bytes a connection costs
+# on x86 (5a's S1 series: the DIY server's 1.48 KiB of Pss plus 5.19 KiB of kernel memory a connection, 6.67 KiB), the Xeon-to-bench factor of
+# 5a (its Swoole pairs: the leaderboard's 94 and 101 µs/req over the Xeon's two entries, mean 1.57) and 5a's bench estimate of the skeleton
+# (the Xeon's skeleton median 53.57 times that factor, 83.9, in ../2026-11-23-x86-calibration/README.md).
 SOFT_LIMIT=64000
 KIB_PER_CONNECTION=6.67
 XEON_TO_BENCH=1.57
+FIVE_A_BENCH_ESTIMATE=83.9
 BOX_MIB=2048
 
 PRELUDE='
@@ -122,7 +125,8 @@ summary_block s1b-7500 --floor-from "$MACAA"
 echo
 echo "### The S1 rule at the bench's sizes (soft limit $SOFT_LIMIT a process; a share 1 - $SOFT_LIMIT / N of the requests reconnect when a process holds N users)"
 echo
-S1B_ADD="$(runs_of s1b-7500 | jq "$PRELUDE"'map(select(counted)) | group_by(.steplab.round) | map(select(length == 2) | ((.[] | select(.steplab.variant == "s1b") | us) - (.[] | select(.steplab.variant == "s1a") | us))) | med')"
+S1B_ADD="$(runs_of s1b-7500 | jq "$PRELUDE"'map(select(counted)) | group_by(.steplab.round) | map(select(length == 2) | ((.[] | select(.steplab.variant == "s1b") | us) - (.[] | select(.steplab.variant == "s1a") | us))) | med | . * 100 | round / 100')"
+PAIR_DIFFS="$(runs_of s1b-7500 | jq "$PRELUDE"'map(select(counted)) | group_by(.steplab.round) | map(select(length == 2) | ((.[] | select(.steplab.variant == "s1b") | us) - (.[] | select(.steplab.variant == "s1a") | us)))')"
 S1A_US="$(runs_of s1b-7500 | jq "$PRELUDE"'map(select(counted and .steplab.variant == "s1a") | us) | med')"
 RECON="$(jq -n '($first.cost + $second.cost) / 2' --argjson first "$FIRST" --argjson second "$SECOND")"
 jq -rn "$PRELUDE"'
@@ -145,33 +149,38 @@ jq -rn "$PRELUDE"'
   (150000 | share(.) * $r) as $d150
     | "S1-d adds \($d150 / $a * 100 | r1) % at 150,000 users: \(if $d150 / $a <= 0.15 then "15 % or less, so **S1-d stays**" else "over the 15 % line" end).",
   "",
-  "S1-b break-even against S1-d: the two add the same at a share of \($b / $r * 100 | r1) % of requests reconnecting, that is N = \($limit / (1 - $b / $r) | round) users."' \
-  --argjson r "$RECON" --argjson a "$S1A_US" --argjson b "$S1B_ADD" --argjson limit "$SOFT_LIMIT"
+  ($ds | map($limit / (1 - . / $r)) | [min, max]) as $lo
+    | "S1-b against S1-d: they add the same at about \($limit / (1 - $b / $r) | . / 1000 | round * 1000) users (a share of \($b / $r * 100 | r1) % of requests reconnecting); over the three pairs (S1-b'"'"'s cost \($ds | map(r2) | join(", ")) µs) anywhere from \($lo[0] | . / 100 | round * 100) to \($lo[1] | . / 100 | round * 100) users. S1-d is cheaper below, S1-b above, up to about \($limit * $r / $b | . / 1000 | round * 1000) users: past 2 × \($limit) a process of S1-b passes its own limit and S1-d is cheaper again."' \
+  --argjson r "$RECON" --argjson a "$S1A_US" --argjson b "$S1B_ADD" --argjson limit "$SOFT_LIMIT" --argjson ds "$PAIR_DIFFS"
 
 echo
-echo "### Memory at 150,000 users on a $BOX_MIB MiB box (from the memory runs above and a connection's $KIB_PER_CONNECTION KiB)"
+echo "### Memory at 150,000 users on a $BOX_MIB MiB box (from the memory runs above and a connection's $KIB_PER_CONNECTION KiB, the connections held capped by the soft limit)"
 echo
 MEM_A="$(jq '.results.server_memory_current_peak_mib' s1b-7500/memory/s1a.json)"
 MEM_B="$(jq '.results.server_memory_current_peak_mib' s1b-7500/memory/s1b.json)"
 PSS_A="$(jq '.results.server_pss_anon_peak_mib' s1b-7500/memory/s1a.json)"
 PSS_B="$(jq '.results.server_pss_anon_peak_mib' s1b-7500/memory/s1b.json)"
 jq -rn "$PRELUDE"'
-  (($n - 60000) * $kib / 1024) as $more
-  | "Each variant'"'"'s `memory.current` peak with 60,000 idle: S1-a \($ma | r1) MiB (Pss_Anon \($pa | r1)), S1-b \($mb | r1) MiB (Pss_Anon \($pb | r1)); S1-b minus S1-a \($mb - $ma | sgn) MiB (one run each, not a pair). 90,000 more connections at \($kib) KiB are \($more | r1) MiB.",
+  def more($held): ($held - 60000) * $kib / 1024;
+  def row($label; $base; $held): "| \($label) | \($held) | \($base + more($held) | r1) | \(($base + more($held)) / $box * 100 | r1) % |";
+  "Each variant'"'"'s `memory.current` peak with 60,000 idle: S1-a \($ma | r1) MiB (Pss_Anon \($pa | r1)), S1-b \($mb | r1) MiB (Pss_Anon \($pb | r1)); S1-b minus S1-a \($mb - $ma | sgn) MiB (one run each, not a pair). Each connection above the 60,000 adds \($kib) KiB. A process holds at most about \($limit) connections (its soft limit, under the 65,535 fds), so S1-d holds \([$n, $limit] | min) at \($n) users and S1-b with 2 processes holds 2 × \([$n / 2, $limit] | min) (the connections held are counted at the limit, a few hundred more in practice).",
   "",
-  "| At 150,000 users | memory.current MiB | of the \($box) MiB box |",
-  "|---|---|---|",
-  "| S1-d, 1 process | \($ma + $more | r1) | \(($ma + $more) / $box * 100 | r1) % |",
-  "| S1-b, 2 processes | \($mb + $more | r1) | \(($mb + $more) / $box * 100 | r1) % |",
-  "| S1-b, 3 processes (a projection: a process is counted as the extra memory S1-b measured over S1-a when that is positive, \([$mb - $ma, 0] | max | r1) MiB here) | \($mb + ([$mb - $ma, 0] | max) + $more | r1) | \(($mb + ([$mb - $ma, 0] | max) + $more) / $box * 100 | r1) % |"' \
-  --argjson n 150000 --argjson kib "$KIB_PER_CONNECTION" --argjson box "$BOX_MIB" --argjson ma "$MEM_A" --argjson mb "$MEM_B" --argjson pa "$PSS_A" --argjson pb "$PSS_B"
+  "| At \($n) users | connections held | memory.current MiB | of the \($box) MiB box |",
+  "|---|---|---|---|",
+  row("S1-d, 1 process"; $ma; [$n, $limit] | min),
+  row("S1-b, 2 processes"; $mb; 2 * ([$n / 2, $limit] | min)),
+  row("S1-b, 3 processes (a projection: no soft limit reached, \($n / 3 | round) each; a process is counted as the extra memory S1-b measured over S1-a when that is positive, \([$mb - $ma, 0] | max | r1) MiB here)"; $mb + ([$mb - $ma, 0] | max); $n)' \
+  --argjson limit "$SOFT_LIMIT" --argjson n 150000 --argjson kib "$KIB_PER_CONNECTION" --argjson box "$BOX_MIB" --argjson ma "$MEM_A" --argjson mb "$MEM_B" --argjson pa "$PSS_A" --argjson pb "$PSS_B"
 
 echo
 echo "### The bench estimate (S1-a's Xeon µs/req times $XEON_TO_BENCH, 5a's Xeon-to-bench factor)"
 echo
 ALL_S1A="$(jq -s "$PRELUDE"'[.[][] | select(counted and .steplab.variant == "s1a") | us] | med' <(runs_of s1b-7500) <(runs_of reconnect))"
-jq -rn "$PRELUDE"'"S1-a on the Xeon: \($a | r2) µs/req (median of the \($n) S1-a runs of this folder: \($all | r2)). Times \($f): **\($a * $f | r1) µs/req on the bench** (\($all * $f | r1) with every S1-a run), against 5a'"'"'s \($old) for the skeleton (no `mmap-off`).",
+jq -rn "$PRELUDE"'
+  def share($per): if $per > $limit then 1 - $limit / $per else 0 end;
+  ($b + share(150000 / 2) * $r) as $b150
+  | "S1-a on the Xeon: \($a | r2) µs/req (median of the S1-a runs of the S1-b series; \($all | r2) over the \($n) S1-a runs of this folder). Times \($f): **\($a * $f | r1) µs/req on the bench** (\($all * $f | r1) with every S1-a run), against 5a'"'"'s \($old) for the skeleton (no `mmap-off`).",
   "",
-  "With the chosen S1 (S1-b, 2 processes, the soft limit in each) on top of S1-a, through the same factor: \(($a + $b) * $f | r1) µs/req at 100,000 users (\($b | sgn) µs added) and \(($a + $b + (1 - $limit / (150000 / 2)) * $r) * $f | r1) µs/req at 150,000 users (\($b + (1 - $limit / (150000 / 2)) * $r | sgn) µs added)."' \
-  --argjson a "$S1A_US" --argjson all "$ALL_S1A" --argjson f "$XEON_TO_BENCH" --argjson n "$(jq -s '[.[][] | select(.valid and .steplab.variant == "s1a")] | length' <(runs_of s1b-7500) <(runs_of reconnect))" --argjson old 83.9 \
+  "With the chosen S1 (S1-b, 2 processes, the soft limit in each) on top of S1-a, through the same factor: \(($a + $b + share(100000 / 2) * $r) * $f | r1) µs/req at 100,000 users (\($b + share(100000 / 2) * $r | sgn) µs added) and \(($a + $b150) * $f | r1) µs/req at 150,000 users (\($b150 | sgn) µs added)."' \
+  --argjson a "$S1A_US" --argjson all "$ALL_S1A" --argjson f "$XEON_TO_BENCH" --argjson n "$(jq -s "$PRELUDE"'[.[][] | select(counted and .steplab.variant == "s1a")] | length' <(runs_of s1b-7500) <(runs_of reconnect))" --argjson old "$FIVE_A_BENCH_ESTIMATE" \
   --argjson b "$S1B_ADD" --argjson r "$RECON" --argjson limit "$SOFT_LIMIT"
