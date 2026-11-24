@@ -8,6 +8,9 @@ LAB_IMAGE=php-lab
 # php.net tarball with lab/images/Dockerfile.src.
 LAB_VARIANTS=(8.3-apt 8.3 8.4 8.5 8.6)
 LAB_SOURCE_VARIANTS=(8.3 8.4 8.5 8.6)
+# Images built on top of another one (lab/images/Dockerfile.<variant>): `lab/build.sh <variant>` builds them (after their base), `all` and
+# the micro benches' default list leave them out.
+LAB_DERIVED_VARIANTS=(8.3-apt-tzimpel)
 
 # lab_source_release <variant>: prints "<php version> <sha256 of its .tar.xz> <WITH_SWOOLE> <WITH_EVENT> <WITH_EXCIMER>".
 # The sha256 values are the ones php.net publishes (https://www.php.net/releases/?json&version=<branch>), read on
@@ -28,6 +31,47 @@ lab_source_release() {
 LAB_CPUSET_SERVER=2     # the server and the micro benches
 LAB_CPUSET_K6=4-11      # the load generator
 LAB_CPUSET_PROBE=0-1    # the helper that reads cgroup files and /proc for lab/macro.sh, next to the VM's own CPUs
+LAB_CPUSET_IDLE_SIBLING=  # empty: the VM's vCPUs are not read for hyperthreads; x86-8 below sets it
+
+# lab_cpu_layout_x86_8: the layout of an 8-vCPU x86 host (a c5.2xlarge is 4 cores of 2 hyperthreads). It reads each vCPU's
+# `thread_siblings_list` (LAB_SYSFS_CPU, default /sys/devices/system/cpu, is a test hook) and sets:
+#  - LAB_CPUSET_SERVER: the first vCPU of the second core (the first core takes the host's interrupts);
+#  - LAB_CPUSET_IDLE_SIBLING: that core's other vCPU, which nothing of the lab runs on, so the server has the whole core;
+#  - LAB_CPUSET_K6: every vCPU but those two (the load generator, the idle client and the aggregator);
+#  - LAB_CPUSET_PROBE: the first core's two vCPUs (the probe only reads /proc and cgroup files once a second).
+# Returns 1 with a message unless the host has exactly 4 cores of 2 threads.
+lab_cpu_layout_x86_8() {
+  local sys="${LAB_SYSFS_CPU:-/sys/devices/system/cpu}" f list cores=() c
+  for f in "$sys"/cpu[0-9]*/topology/thread_siblings_list; do
+    [ -f "$f" ] || { echo "no thread_siblings_list under $sys: cannot read the cores" >&2; return 1; }
+    # The kernel prints a cpulist: adjacent siblings come as a range ("0-1"), others as a list ("0,4").
+    list="$(tr -d ' \n' <"$f" | awk -F, '{ o = ""; for (i = 1; i <= NF; i++) if (split($i, r, "-") == 2) for (j = r[1]; j <= r[2]; j++) o = o (o == "" ? "" : ",") j; else o = o (o == "" ? "" : ",") $i; print o }')"
+    case " ${cores[*]-} " in *" $list "*) ;; *) cores+=("$list") ;; esac
+  done
+  [ "${#cores[@]}" -eq 4 ] || { echo "x86-8 wants 4 cores, found ${#cores[@]}" >&2; return 1; }
+  # Cores ordered by their lowest vCPU number.
+  list="$(printf '%s\n' "${cores[@]}" | sort -t, -k1,1n)"
+  IFS=$'\n' read -r -d '' -a cores <<<"$list" || true
+  for c in "${cores[@]}"; do
+    [[ "$c" =~ ^[0-9]+,[0-9]+$ ]] || { echo "x86-8 wants 2 threads a core, found '$c'" >&2; return 1; }
+  done
+  LAB_CPUSET_PROBE="${cores[0]}"
+  LAB_CPUSET_SERVER="${cores[1]%%,*}"
+  LAB_CPUSET_IDLE_SIBLING="${cores[1]#*,}"
+  LAB_CPUSET_K6="$(printf '%s\n' "${cores[0]}" "${cores[2]}" "${cores[3]}" | tr ',' '\n' | sort -n | paste -sd, -)"
+}
+
+# LAB_CPU_LAYOUT picks the layout: unset (the Mac's Docker VM, above) or `x86-8`. Anything else stops the script.
+case "${LAB_CPU_LAYOUT:-}" in
+  "") ;;
+  x86-8) lab_cpu_layout_x86_8 || exit 1 ;;
+  *) echo "unknown LAB_CPU_LAYOUT '$LAB_CPU_LAYOUT' (unset, or x86-8)" >&2; exit 1 ;;
+esac
+
+# lab_cpuset_count <cpuset>: how many CPUs a cpuset names ("4-11" is 8, "0,2,3" is 3, "0-1,4" is 3).
+lab_cpuset_count() {
+  awk -v s="$1" 'BEGIN { n = split(s, p, ","); t = 0; for (i = 1; i <= n; i++) t += (split(p[i], r, "-") == 2) ? r[2] - r[1] + 1 : 1; print t }'
+}
 
 # Resource limits of every lab container: 1 CPU, 2 GiB, no swap, like the challenge VM (1 vCPU, about 2 GB). Not the same
 # budget, though: the VM's memory is shared with the OS (and Nginx when used), the lab gives the server the whole 2 GiB. A
@@ -36,7 +80,7 @@ LAB_RESOURCE_FLAGS=(--cpus=1 --memory=2g --memory-swap=2g --ulimit nofile=65535:
 
 lab_known_variant() {
   local v
-  for v in "${LAB_VARIANTS[@]}"; do
+  for v in "${LAB_VARIANTS[@]}" "${LAB_DERIVED_VARIANTS[@]}"; do
     [ "$v" = "$1" ] && return 0
   done
   return 1
@@ -45,7 +89,7 @@ lab_known_variant() {
 # Exits non-zero with the list of known variants when $1 is not one of them.
 lab_require_variant() {
   if [ -z "${1:-}" ] || ! lab_known_variant "$1"; then
-    echo "unknown variant: '${1:-}'. Known variants: ${LAB_VARIANTS[*]}" >&2
+    echo "unknown variant: '${1:-}'. Known variants: ${LAB_VARIANTS[*]} ${LAB_DERIVED_VARIANTS[*]}" >&2
     return 1
   fi
 }
@@ -68,12 +112,16 @@ LAB_SERVER_PHP_FLAGS=(-d memory_limit=-1 -d opcache.enable_cli=1 -d opcache.jit=
   -d opcache.file_update_protection=0 -d zend.assertions=-1)
 
 # lab_build_php_flags: fills LAB_PHP_FLAGS with `-d extension=<name>` for each name of the array LAB_EXT, then
-# LAB_SERVER_PHP_FLAGS, then `-d <k=v>` for each entry of the array LAB_INI. The caller sets LAB_EXT and LAB_INI.
+# LAB_SERVER_PHP_FLAGS, then `-d <k=v>` for each entry of the array LAB_INI. The caller sets LAB_EXT and LAB_INI. A name that is a path
+# loads that file. With LAB_PHP_INI_FILE (a php.ini as the container sees it: a server that brings its own configuration, run as its
+# start.sh runs it) the flags are `-c <that file>` first and the lab's own LAB_SERVER_PHP_FLAGS are left out: the file is the whole
+# configuration, as it is in the entry.
 lab_build_php_flags() {
   local e kv
   LAB_PHP_FLAGS=()
+  [ -z "${LAB_PHP_INI_FILE:-}" ] || LAB_PHP_FLAGS+=(-c "$LAB_PHP_INI_FILE")
   for e in "${LAB_EXT[@]+"${LAB_EXT[@]}"}"; do LAB_PHP_FLAGS+=(-d "extension=$e"); done
-  LAB_PHP_FLAGS+=("${LAB_SERVER_PHP_FLAGS[@]}")
+  [ -n "${LAB_PHP_INI_FILE:-}" ] || LAB_PHP_FLAGS+=("${LAB_SERVER_PHP_FLAGS[@]}")
   for kv in "${LAB_INI[@]+"${LAB_INI[@]}"}"; do LAB_PHP_FLAGS+=(-d "$kv"); done
 }
 
@@ -81,13 +129,16 @@ lab_build_php_flags() {
 # 2 GiB, the server CPU, host network, lab/ at /lab, the seed read-only at /lab/data), running <command> in php-lab:<variant>.
 # Needs LAB (the lab/ folder); LAB_ENV, an array of K=V, is passed with -e after PORT. Never mount lab/data writable here: a
 # server must copy feed.db, not open it (WAL files). LAB_SERVER_NOFILE, when set, replaces the container's `nofile` limit (a test
-# hook for lab/conns.sh: the later --ulimit of the same name wins).
+# hook for lab/conns.sh: the later --ulimit of the same name wins). LAB_SERVER_SECCOMP_UNCONFINED=1 starts the container without
+# Docker's default seccomp filter, which refuses the io_uring syscalls (EPERM): only the io_uring server uses it, through the
+# --seccomp-unconfined option of lab/macro.sh, lab/conformance.sh, lab/conns.sh and lab/stress.sh.
 lab_run_server_container() {
-  local name="$1" variant="$2" port="$3" env_args=() nofile_args=() kv
+  local name="$1" variant="$2" port="$3" env_args=() nofile_args=() seccomp_args=() kv
   shift 3
   for kv in "${LAB_ENV[@]+"${LAB_ENV[@]}"}"; do env_args+=(-e "$kv"); done
   [ -z "${LAB_SERVER_NOFILE:-}" ] || nofile_args=(--ulimit "nofile=$LAB_SERVER_NOFILE:$LAB_SERVER_NOFILE")
-  docker run -d --name "$name" "${LAB_RESOURCE_FLAGS[@]}" "${nofile_args[@]+"${nofile_args[@]}"}" --network host --cpuset-cpus "$LAB_CPUSET_SERVER" \
+  [ "${LAB_SERVER_SECCOMP_UNCONFINED:-}" != 1 ] || seccomp_args=(--security-opt seccomp=unconfined)
+  docker run -d --name "$name" "${LAB_RESOURCE_FLAGS[@]}" "${nofile_args[@]+"${nofile_args[@]}"}" "${seccomp_args[@]+"${seccomp_args[@]}"}" --network host --cpuset-cpus "$LAB_CPUSET_SERVER" \
     -v "$LAB:/lab:ro" -v "$LAB/data:/lab/data:ro" -e "PORT=$port" "${env_args[@]+"${env_args[@]}"}" \
     "$LAB_IMAGE:$variant" "$@" >/dev/null
 }
@@ -144,6 +195,17 @@ lab_ensure_tools_image() {
   docker image inspect "$LAB_TOOLS_IMAGE" >/dev/null 2>&1 && return 0
   echo "building $LAB_TOOLS_IMAGE (once)" >&2
   docker build -q -t "$LAB_TOOLS_IMAGE" -f "$LAB/images/Dockerfile.tools" "$LAB/images" >/dev/null
+}
+
+# The image of lab/syscalls.sh's sidecar: strace 6.8-0ubuntu2 on the same pinned Ubuntu (lab/images/Dockerfile.strace), built by
+# lab_ensure_strace_image on first use. A version pinned by apt, not a pulled image: the lab trusts one base image and one archive.
+LAB_STRACE_IMAGE=php-lab-strace:1
+
+# lab_ensure_strace_image: builds LAB_STRACE_IMAGE when it is missing. Needs LAB.
+lab_ensure_strace_image() {
+  docker image inspect "$LAB_STRACE_IMAGE" >/dev/null 2>&1 && return 0
+  echo "building $LAB_STRACE_IMAGE (once)" >&2
+  docker build -q -t "$LAB_STRACE_IMAGE" -f "$LAB/images/Dockerfile.strace" "$LAB/images" >/dev/null
 }
 
 # lab_in_container_path <file under lab/>: prints the file's path in the containers (lab/ is mounted at /lab). Returns 1 with a

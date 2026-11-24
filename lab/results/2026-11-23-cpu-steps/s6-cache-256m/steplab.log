@@ -1,0 +1,20 @@
+steplab: 2 variant(s) x 1 round(s), 24000 req/s for 60s (think scale 0.02, 60000 idle connections), warm-up 2400,60, into lab/results/2026-11-23-cpu-steps/s6-cache-256m
+[1/2] round 1, ref
+  TIME_WAIT before: 7063 on the busiest address, 32768 in all on the clients' addresses, 32768 on the VM, waited 0 s
+  valid, 23386.9 req/s, 27.1 us/req, p99 26.654 ms, pass, TIME_WAIT after: 7143 on the busiest address
+[2/2] round 1, cache-256m
+  TIME_WAIT before: 7143 on the busiest address, 32768 in all on the clients' addresses, 32768 on the VM, waited 0 s
+  valid, 23452.9 req/s, 24.8 us/req, p99 22.293 ms, pass, TIME_WAIT after: 7187 on the busiest address
+
+runs, in the order they ran (one round runs every variant once, the first variant is the reference)
+round  variant        valid      req/s    us/req   p95 ms   p99 ms   tw/addr  result
+    1  ref            yes      23386.9      27.1    10.75    26.65      7063  pass
+    1  cache-256m     yes      23452.9      24.8     8.35    22.29      7143  pass
+tw/addr: the most TIME_WAIT sockets on one of k6's source addresses when the run started (0 when the runner did not count)
+
+variants (us is the server's CPU per request over the plateau)
+variant         valid median us        min to max   p99 ms  paired differences us     median  verdict
+ref               1/1      27.1      27.1 to 27.1    26.65  reference                      -  reference
+cache-256m        1/1      24.8      24.8 to 24.8    22.29  -2.2                        -2.2  screen: not better in one pair
+
+Rule: a variant is beyond the noise when it has at least 2 pairs, every paired difference (its µs CPU/req minus the reference's in the same round) has the same sign and the median paired difference is at least 2.57 µs in absolute value; otherwise it is within the noise. A round where either run is invalid has no pair. One pair with a floor: a screen (beats the floor when lower by at least the floor, else not better), never a verdict. No pair: no verdict. No floor: not judged (the floor comes from an A/A calibration).

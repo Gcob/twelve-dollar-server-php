@@ -4,11 +4,13 @@
 # the same host network.
 #
 #   bash lab/conformance.sh --image 8.5 --server lab/servers/bake-swoole.php [--ext <name>]... [--env K=V]... [--port 18090]
+#                           [--seccomp-unconfined]
 #
 # One line per case, `ok    <case>` or `FAIL  <case>: <why>`; exit 0 when every case is ok, 1 when one fails or the run could not
 # be done, 2 on a usage error. The cases: /noop, /posts/1 (against what sqlite3 gives for the seed), the error bodies, two
 # requests on a keep-alive connection, three pipelined requests, a request split across two writes, a POST with a body and the
-# reuse of its connection. After them: the exact bytes of the /noop response, the `loop:` line the server printed at boot
+# reuse of its connection. --seccomp-unconfined starts the server container without Docker's default seccomp filter, which refuses io_uring
+# (only lab/servers/uring-noop.php needs it). After them: the exact bytes of the /noop response, the `loop:` line the server printed at boot
 # (when it prints one) and its socket line (backlog, tcp_nodelay). Both containers are removed at the end, whatever happens.
 set -euo pipefail
 
@@ -20,7 +22,7 @@ SERVER=lab-conformance-server
 CLIENT=lab-conformance-client
 
 usage() {
-  echo "usage: lab/conformance.sh --image <variant> --server <php file under lab/> [--ext <name>]... [--env K=V]... [--port <n>]" >&2
+  echo "usage: lab/conformance.sh --image <variant> --server <php file under lab/> [--ext <name>]... [--env K=V]... [--port <n>] [--seccomp-unconfined]" >&2
   exit 2
 }
 fail() { echo "conformance: $*" >&2; exit 1; }
@@ -28,6 +30,7 @@ fail() { echo "conformance: $*" >&2; exit 1; }
 image="" server_file="" port=18090
 LAB_EXT=() LAB_ENV=()
 while [ "$#" -gt 0 ]; do
+  if [ "$1" = --seccomp-unconfined ]; then export LAB_SERVER_SECCOMP_UNCONFINED=1; shift; continue; fi
   [ "$#" -ge 2 ] || { echo "missing value for $1" >&2; usage; }
   case "$1" in
     --image) image="$2" ;;

@@ -1,0 +1,18 @@
+
+image 8.3-apt (PHP 8.3.6), server.php, k6 v1.8.3 (commit/58bbfd8e48, go1.26.4, linux/amd64), k6 from 127.0.1.1-127.0.1.4
+think scale 0.02: one VU offers 5.292683 req/s, 9.45 users per req/s, ramp 10 s, plateau 60 s, VU cap 5400 (bound by --vu-cap)
+step    VUs   offered  achieved   users    us/req   p95 ms   p99 ms  errors  result
+   1   1418      7505    7384.7   69785      57.7   11.408   21.639      0%  pass
+  step 1 per endpoint (p95 / p99 ms, requests): GET /feed 11.579 / 21.964 (197375), GET /posts/:id 11.073 / 21.319 (197384), POST /posts 10.589 / 21.639 (3927), POST /posts/:id/like 11.929 / 22.627 (29624)
+no step failed
+k6 connection errors: 0
+database copy in the page cache when the server opened it (fincore): 249192448 of 249192448 bytes, 100 %, --cold off
+server connections: soft limit off, no telemetry, file descriptors peak not read: --no-series runs no sampler
+idle connections: 60000 requested, 60000 held at the start and 60000 at the end, 0 closed by the server; the server counted 60000 and 60000 established, 60013 file descriptors open with them
+idle client memory: 284.5 MiB memory.current at the end (peak 286.25, anon 64.45, kernel 220.05, socket buffers 0), the process RSS 80.52 MiB after opening them, opened in 23.63 s from 3 source addresses
+k6 peak memory 596.34 MiB of its 12030 MiB budget, k6 CPU 215.24 % of one CPU, aggregator max lag 1.829 s (gate 6 s), server Pss_Anon peak not read (--no-series), memory.current peak not read
+
+per second: off (--no-series: no sampler, the poll read only k6's memory and the aggregator's status; the latency of each second is in results.per_second)
+
+VALID
+wrote <tmp>/php-swoole-mattsplat-1.json

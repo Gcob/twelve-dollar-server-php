@@ -58,3 +58,14 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+## The two Swoole entries run unchanged
+
+`lab/servers/swoole-entries/php-swoole-mattsplat/server.php`, `lab/servers/swoole-entries/php-swoole-tzimpel/server.php` and
+`lab/servers/swoole-entries/php-swoole-tzimpel/php.ini` are copies, byte for byte, of `submissions/php-swoole-mattsplat/server.php`,
+`submissions/php-swoole-tzimpel/server.php` and `submissions/php-swoole-tzimpel/php.ini` of the challenge repository,
+<https://github.com/arjaythedev/twelve-dollar-server-challenge>, at commit `162699aca4d8db710b7f0fa30729d4a626b90297`, run by
+`lab/realistic.sh` and `lab/challenge-test.sh` to measure them (`lab/check.sh` fails if a copy differs from the challenge's file). Their authors
+are the entries' (mattsplat and tzimpel); the license is the challenge repository's, MIT, with the text above (Copyright (c) 2026 arjaythedev and
+the challenge contributors). `lab/images/install-swoole-tzimpel.sh` also copies, byte for byte, the two lines of `submissions/php-swoole-tzimpel/build.sh`
+(lines 17 and 18, the memory patch of Swoole's `src/server/port.cc` and its check) that the entry applies to its own Swoole build.

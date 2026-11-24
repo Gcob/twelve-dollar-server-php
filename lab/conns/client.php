@@ -21,8 +21,12 @@
 //
 // Why a rotation of source addresses: a client address has about 10 000 to 28 000 ephemeral ports (read from
 // /proc/sys/net/ipv4/ip_local_port_range), so more than that many connections to one server address and port need several
-// 127.x addresses (loopback accepts the whole 127.0.0.0/8). The next address is one nothing uses, TIME_WAIT sockets of an
-// earlier run included, so a second run right after a first one never fails on bind.
+// 127.x addresses (loopback accepts the whole 127.0.0.0/8). The next address is one nothing uses, whichever end of a socket it
+// is on, TIME_WAIT sockets of an earlier run included, so a second run right after a first one starts on addresses that are free.
+//
+// Why a retry: a connection is bound to a random port of its address (bind to port 0), and a port whose 4-tuple matches a TIME_WAIT
+// socket fails at connect with `Cannot assign requested address` (EADDRNOTAVAIL). That is not a limit of the server: the client
+// binds again (another random port), and after a few failures in a row moves to the next free address.
 
 const DEFAULT_PATH = '/noop';
 const DEFAULT_BODY = '{"status":"ok"}';
@@ -32,11 +36,15 @@ const PORT_MARGIN = 500;
 const FIRST_OCTET = 2;
 const LAST_OCTET = 254;
 const TIME_WAIT_MAX_S = 70;
+// Failures of one connection with EADDRNOTAVAIL before the client gives up, and how many in a row before it leaves the address.
+const BIND_RETRIES_MAX = 200;
+const BIND_RETRIES_BEFORE_NEW_ADDRESS = 25;
 
 const ECONNRESET = 104;
 const EPIPE = 32;
 const ETIMEDOUT = 110;
 const ECONNREFUSED = 111;
+const EADDRNOTAVAIL = 99;
 const EMFILE = 24;
 const ENFILE = 23;
 
@@ -88,20 +96,26 @@ function port_range(): array
     return [(int) $m[1], (int) $m[2]];
 }
 
-/** @return array<string, array<string, int>> for each 127.x address that is the local address of a socket: its sockets by state */
-function used_local_addresses(): array
+/** @return array<string, array<string, int>> for each 127.x address that is at either end of a socket: its sockets by state */
+function used_addresses(): array
 {
     $used = [];
     $lines = file('/proc/net/tcp', FILE_IGNORE_NEW_LINES) ?: [];
     array_shift($lines);
     foreach ($lines as $line) {
         $cols = preg_split('/\s+/', trim($line));
-        [$hexAddr] = explode(':', $cols[1]);
-        // A little-endian hex word: 0200007F is 127.0.0.2.
-        $ip = implode('.', array_reverse(array_map('hexdec', str_split($hexAddr, 2))));
-        if (str_starts_with($ip, '127.')) {
-            $state = $cols[3];
-            $used[$ip][$state] = ($used[$ip][$state] ?? 0) + 1;
+        $state = $cols[3];
+        // Why both columns: the side that closes first keeps the TIME_WAIT socket, so after a server that closed first the port that
+        // blocks a connection is a socket whose local address is the server's and whose remote address is the one the client would use.
+        $seen = [];
+        foreach ([$cols[1], $cols[2]] as $endpoint) {
+            [$hexAddr] = explode(':', $endpoint);
+            // A little-endian hex word: 0200007F is 127.0.0.2.
+            $ip = implode('.', array_reverse(array_map('hexdec', str_split($hexAddr, 2))));
+            if (str_starts_with($ip, '127.') && !isset($seen[$ip])) {
+                $seen[$ip] = true;
+                $used[$ip][$state] = ($used[$ip][$state] ?? 0) + 1;
+            }
         }
     }
     return $used;
@@ -116,6 +130,8 @@ final class Source
     /** @var resource|null */
     private $context = null;
     private int $perAddress;
+    /** How many connects failed with EADDRNOTAVAIL and were tried again. */
+    public int $retries = 0;
 
     public function __construct(int $portsInRange)
     {
@@ -143,11 +159,17 @@ final class Source
         return $this->context;
     }
 
+    /** The current address is not worth more tries: the next context() takes another one. */
+    public function leaveAddress(): void
+    {
+        $this->opened = $this->perAddress;
+    }
+
     private function nextFreeAddress(): string
     {
         $waited = 0;
         while (true) {
-            $busy = used_local_addresses();
+            $busy = used_addresses();
             for ($octet = FIRST_OCTET; $octet <= LAST_OCTET; $octet++) {
                 $ip = "127.0.0.$octet";
                 if (!isset($busy[$ip]) && !in_array($ip, $this->used, true)) {
@@ -172,7 +194,20 @@ final class Source
 function open_and_request(int $port, Source $source, string $path, ?string $bodyRegex): array
 {
     $ctx = $source->context();
-    $fp = @stream_socket_client("tcp://127.0.0.1:$port", $errno, $errstr, TIMEOUT_S, STREAM_CLIENT_CONNECT, $ctx);
+    $failures = 0;
+    while (true) {
+        $fp = @stream_socket_client("tcp://127.0.0.1:$port", $errno, $errstr, TIMEOUT_S, STREAM_CLIENT_CONNECT, $ctx);
+        if ($fp !== false || $errno !== EADDRNOTAVAIL || $failures >= BIND_RETRIES_MAX) {
+            break;
+        }
+        $failures++;
+        $source->retries++;
+        if ($failures % BIND_RETRIES_BEFORE_NEW_ADDRESS === 0) {
+            log_line("$failures connects in a row failed with 'Cannot assign requested address' on " . end($source->used) . ' (sockets of an earlier run), moving to another address');
+            $source->leaveAddress();
+            $ctx = $source->context();
+        }
+    }
     if ($fp === false) {
         return match (true) {
             $errno === ETIMEDOUT || ($errno === 0 && stripos($errstr, 'timed out') !== false) => [null, 'connect timeout', $errstr],
@@ -327,6 +362,7 @@ if ($holdMode) {
         'seconds' => round(microtime(true) - $started, 2),
         'source_addresses' => $source->used,
         'ports_per_address' => $source->perAddress(),
+        'bind_retries' => $source->retries,
         'nofile' => $nofile,
         'rss_kb' => $rss,
         'hwm_kb' => $hwm,
@@ -373,6 +409,7 @@ while (($line = fgets(STDIN)) !== false) {
         'seconds' => round(microtime(true) - $started, 2),
         'source_addresses' => $source->used,
         'ports_per_address' => $source->perAddress(),
+        'bind_retries' => $source->retries,
         'nofile' => $nofile,
         'port_range' => [$low, $high],
     ]);

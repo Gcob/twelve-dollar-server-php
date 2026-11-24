@@ -1,0 +1,9 @@
+# php-lab-strace: strace on the same pinned Ubuntu as the lab's other images, for lab/syscalls.sh's sidecar (it attaches to the server's
+# process from a second container). The version is pinned: apt installs exactly 6.8-0ubuntu2 (Ubuntu 24.04's release; the build fails
+# if the archive no longer has it, and then the line and the check in lab/lib.sh move together). Built by lab_ensure_strace_image
+# the first time lab/syscalls.sh runs, never at run time.
+FROM ubuntu:24.04@sha256:9c7f200c07e3d4a03e7249d2c16bf66a51120fb876aa2242cf31451412543289
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends strace=6.8-0ubuntu2 \
+    && rm -rf /var/lib/apt/lists/*

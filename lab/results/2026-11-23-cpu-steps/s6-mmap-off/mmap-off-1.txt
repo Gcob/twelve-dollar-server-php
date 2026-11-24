@@ -1,0 +1,18 @@
+
+image 8.5 (PHP 8.5.13), server.php, k6 v1.8.3 (commit/58bbfd8e48, go1.26.4, linux/arm64), k6 from 127.0.1.1-127.0.1.4
+think scale 0.02: one VU offers 5.292683 req/s, 9.45 users per req/s, ramp 10 s, plateau 60 s, VU cap 5400 (bound by file descriptors)
+step    VUs   offered  achieved   users    us/req   p95 ms   p99 ms  errors  result
+   1   4535   24002.3   23446.6  221570      25.1    9.541   24.016      0%  pass
+  step 1 per endpoint (p95 / p99 ms, requests): GET /feed 9.977 / 24.376 (626510), GET /posts/:id 9.124 / 23.661 (626602), POST /posts 9.4 / 24.376 (12461), POST /posts/:id/like 9.261 / 23.311 (94329)
+no step failed
+k6 connection errors: 0
+database copy in the page cache when the server opened it (fincore): 249843712 of 249843712 bytes, 100 %, --cold off
+server connections: soft limit off, no telemetry, file descriptors peak not read: --no-series runs no sampler
+idle connections: 60000 requested, 60000 held at the start and 60000 at the end, 0 closed by the server; the server counted 60000 and 60000 established, 60012 file descriptors open with them
+idle client memory: 266.02 MiB memory.current at the end (peak 289.98, anon 53.97, kernel 212.05, socket buffers 0), the process RSS 65.87 MiB after opening them, opened in 8.18 s from 9 source addresses
+k6 peak memory 1826.11 MiB of its 4351 MiB budget, k6 CPU 278.73 % of one CPU, aggregator max lag 2.005 s (gate 6 s), server Pss_Anon peak not read (--no-series), memory.current peak not read
+
+per second: off (--no-series: no sampler, the poll read only k6's memory and the aggregator's status; the latency of each second is in results.per_second)
+
+VALID
+wrote <tmp>/mmap-off-1.json

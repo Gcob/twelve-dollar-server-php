@@ -11,6 +11,23 @@ measurement. Nothing in `lab/data/` is committed.
 - **`jq`**: the macro harness builds and reads its JSON with it.
 - The clone of the challenge in `reference/` (see Seed), and `curl`, `git`, `shasum` (they ship with macOS).
 
+## CPU layouts
+
+`lab/lib.sh` pins every container. The default (`LAB_CPU_LAYOUT` unset) is the Mac's Docker VM of 12 vCPUs: the server on `2`, k6, the idle
+client and the aggregator on `4-11`, the probe on `0-1`, the VM's own work on whatever is left.
+
+`LAB_CPU_LAYOUT=x86-8` is for an 8-vCPU x86 host (an AWS `c5.2xlarge`: 4 cores of 2 hyperthreads, Docker running on the host itself). It
+reads `/sys/devices/system/cpu/cpu*/topology/thread_siblings_list` and refuses a host that is not 4 cores of 2 threads:
+
+- **The server** gets one vCPU, the first of the second core, and **its hyperthread sibling stays idle**: nothing of the lab runs on it, so
+  the server has a whole core to itself, as a one-vCPU VM on a bigger machine would not.
+- **k6, the idle client and the aggregator** run on every other vCPU (the first core's two and the third's and fourth's), never on that sibling.
+- **The probe** runs on the first core, where the host's interrupts and the kernel's own work are.
+
+Example with the siblings `0,4`, `1,5`, `2,6` and `3,7` (a guess until read on the host): the server is on `1`, its sibling `5` is idle, k6 is
+on `0,2,3,4,6,7` and the probe on `0,4`. Export the variable before any lab script (`export LAB_CPU_LAYOUT=x86-8`): every script reads it
+through `lib.sh`. `check_cpu_layouts` checks that the default is unchanged and that both ways the kernel prints siblings give such a layout.
+
 ## Seed
 
 ```bash
@@ -42,6 +59,7 @@ bash lab/run.sh 8.4 php-info
 | `8.4` | 8.4.28 | 6.2.6 | same |
 | `8.5` | 8.5.13 | 6.2.6 | same |
 | `8.6` | 8.6.0 | not built | same, `WITH_SWOOLE=0`: Swoole 6.2.6 does not compile on 8.6 (`results/swoole-on-php-8.6.md`) |
+| `8.3-apt-tzimpel` | 8.3.6 | 6.2.6 plus the `php-swoole-tzimpel` entry's memory patch, as a second extension in `/opt/swoole-tzimpel/swoole.so` | `FROM php-lab:8.3-apt` (`Dockerfile.8.3-apt-tzimpel`, `install-swoole-tzimpel.sh`); `bash lab/build.sh 8.3-apt-tzimpel` after `8.3-apt`, left out of `all` |
 
 The source builds share one Dockerfile and the same configure flags (CLI only, `pdo_sqlite` on the system libsqlite3,
 `mbstring`, `sodium`, `ffi`, `ctype`, `iconv`, OPcache with its JIT, `CFLAGS=-O2`; the reason for each is in
@@ -150,6 +168,12 @@ return [
   writes should copy that file again. Never open `lab/data/feed.db` itself: it is in WAL mode and leaves `-wal`/`-shm`
   files in `lab/data/`.
 - `micro/benches/sample.php` is the format in use; `failing-check.php` is the fixture `lab/check.sh` uses.
+- `micro/benches/ffi.php` prices, in ns per operation, what an io_uring loop written in PHP through FFI would do per
+  request (FFI calls, struct fields, `FFI::memcpy` and `FFI::string`, `pack()` of an SQE, `unpack()` of a CQE, batches of 32)
+  next to what it would replace (`fwrite` and `fread` on a socket pair). It needs no flag: `ffi.enable`'s CLI default,
+  `preload`, allows `FFI::cdef` in a CLI script, and each run's JSON records the value. Keep the one `FFI` object alive for
+  the whole process (`ffi_bench_ffi()`): a `CData` whose `FFI` object was freed fails with "over data boundary". The batch
+  rows are per batch of 32.
 
 ### How it measures
 
@@ -519,7 +543,7 @@ variant of every step of a request, on purpose: later work measures the alternat
   route, a plain match), `jwt_verify`, `id_validate`, `body_validate`, `feed_query`, `post_query`, `post_insert`, `post_exists`,
   `like_insert`, `feed_json`, `post_json`, `like_json`, `health_json`, `response_json`, `response_error`. Parsing and writing are
   `DiyConnection`'s. The SQL is the spec's reference SQL; every write is its own autocommit transaction, committed before the
-  response is built; the pragmas are the bake-off handler's. Every token is verified on every request, and a token without `exp`
+  response is built (with `APP_GROUP_COMMIT=1`, the writes of a loop turn share one transaction, committed before any of their responses); the pragmas are the bake-off handler's. Every token is verified on every request, and a token without `exp`
   is rejected. `lab/check/app-test.php` covers what the challenge's suite does not (the JWT and body rules, one like per user,
   the feed's order).
 - **`lab_start_app`** (`lab/lib.sh`) is how a harness starts the app on a fresh database: it copies `lab/data/feed.db` **with
@@ -528,8 +552,11 @@ variant of every step of a request, on purpose: later work measures the alternat
 - **`lab/challenge-test.sh`** runs the challenge's own `test/test.sh`, unchanged, against it:
 
   ```bash
-  bash lab/challenge-test.sh --image 8.5 [--server lab/app/server.php] [--ext sockets --ext event] [--port 18110]
+  bash lab/challenge-test.sh --image 8.5 [--server lab/app/server.php] [--ext sockets --ext event] [--env K=V]... [--port 18110]
   ```
+
+  `--env K=V` (repeatable) goes to the server container, after `JWT_SECRET` and `SQLITE_PATH`: `--env APP_SOFT_CONN_LIMIT=0` runs the
+  suite on the soft connection limit (every response says `Connection: close`) and it still passes.
 
   It starts the server on a fresh copy, waits for `GET /health` (60 s at most, like the challenge's `test/run.sh`), prints the
   suite's output and exits with its code (`passed=42 failed=0`, exit 0). Both containers are removed at the end, whatever
@@ -542,6 +569,95 @@ variant of every step of a request, on purpose: later work measures the alternat
   its host networking setting is on, and a harness must not change that setting, so running `test.sh` from the Mac does not work
   here. No published image was used for the four tools: building them from the pinned Ubuntu is less to trust than a third-party
   image.
+
+### The S6 variants (SQL, fetch and pragmas)
+
+Three switches on `lab/app/server.php`, read once at boot by `app_variants` (`lab/app/app.php`). Unset (or empty) is the reference: the
+same statements and the same bytes as before. A value that is not a name is refused (exit 1, the message names the variable and the
+names). When one is set, the boot prints `app variants: feed_sql=... fetch=... pragmas=...`.
+
+| Switch | Values | What it does |
+| --- | --- | --- |
+| `APP_FEED_SQL` | `reference`, `join`, `two-step` | `reference`: the like count is a correlated subquery per post. `join`: the 20 newest posts come from a subquery with the `LIMIT`, then `JOIN users`, `LEFT JOIN likes`, `GROUP BY p.created_at, p.id` (`GET /posts/:id` gets a `LEFT JOIN ... GROUP BY p.id` too). `two-step`: the 20 posts with their authors, then one `SELECT post_id, count(*) FROM likes WHERE post_id IN (20 ids) GROUP BY post_id` with that request's own ids, merged in PHP (both statements are the request's own: nothing is read for another request). `GET /posts/:id` reads as the reference in `two-step`: splitting one id into two statements is the reference with one more call. |
+| `APP_FETCH` | `assoc`, `num`, `assoc-loop`, `num-loop` | The rows as arrays keyed by column name, or by position (`FETCH_NUM`, the JSON then built from positions: `feed_json_positions`, `post_json_positions`). `-loop` reads with `fetch()` in a loop instead of `fetchAll()`. |
+| `APP_PRAGMAS` | `default`, `mmap-off`, `cache-256m`, `cache-8m` | Today's: `cache_size` 64 MiB and `mmap_size` 256 MiB (the seed is 250 MB). `mmap-off`: reads go through `pread` and the 64 MiB cache. `cache-256m`: the whole seed fits in the page cache and the map is off (the cache against the map). `cache-8m`: a cache too small for the data and the map on (how much the cache matters when the map does the reading). |
+
+`bash lab/challenge-test.sh --image 8.5 --env APP_FEED_SQL=join --env APP_FETCH=num` runs the 42 checks on a variant.
+`lab/check/app-variants-test.php` answers the same requests on a small database under each combination and compares the bytes with the unset
+one (and with a literal answer).
+
+**The micro bench:** `lab/micro/benches/feed.php` (`bash lab/micro.sh lab/micro/benches/feed.php --images 8.5 --jit on`) times `route_feed()`
+(the query and the JSON) for every SQL and fetch pair, the query alone for each SQL, the pragmas on the reference, and `GET /posts/:id`, on a
+warm copy of the seed whose 20 newest posts got 0 to 50 more likes first. Each case checks its answer against the reference's, computed in
+the same process. `lab/micro/feed-plans.php` prints the `EXPLAIN QUERY PLAN` of every statement (`bash lab/run.sh 8.5 php
+/lab/micro/feed-plans.php`); `lab/micro/feed-run/` has one run's rows (`feed-8.5-jit-on.txt` and its JSON) and the plans
+(`feed-plans.txt`, which `lab/check.sh` regenerates and compares). That run is a developer's look at the variants, not a result: the
+macro pairs are `lab/results/`'s.
+
+### The S8 variant (locking)
+
+`APP_LOCKING=normal|exclusive` on `lab/app/server.php`, read once at boot by `app_variants` (unset or empty is `normal`: the same pragmas, the
+same syscalls and bytes as before; any other value is refused). `exclusive` runs `PRAGMA locking_mode = EXCLUSIVE` before the connection's
+first WAL access (before `journal_mode = WAL`), so SQLite keeps its locks and never makes the WAL's shared-memory file. When it is set the
+boot prints `app variants: ... locking=exclusive`.
+
+Why: a strace with arguments of the skeleton (a scratch run, not kept) splits its 2.4 `fcntl` a request: all of them are `F_SETLK` on the
+database's `-shm` file (a read lock and its release around every read, five more calls around every write), none on a socket (the streams
+make no `F_GETFL` or `F_SETFL` after the accept). `recvfrom` and `sendto` are exactly 1 a request with no `EAGAIN`, so reading and writing
+through `ext-sockets` instead of the streams cannot remove a syscall and is not built.
+
+The cost: while the server runs no other process can open the database (a second connection, an `sqlite3` shell, a checkpointer in its own
+process gets "database is locked"), and `lab/macro/sampler.php`'s `mxFrame` reading has no `-shm` file to read. The locks go when the process
+ends, killed or not: a new server opens the database again (`lab/check/app-variants-test.php` kills a child with SIGKILL and boots again).
+`lab/syscalls.sh --image 8.5 --env APP_LOCKING=exclusive` counts the effect.
+
+### The S9 variants (group commit and a checkpointer)
+
+Two switches on `lab/app/server.php`, read once at boot by `app_variants` (unset or empty is off: the same loop, statements and bytes as
+before). `APP_GROUP_COMMIT` takes `0` or `1`; `APP_CHECKPOINTER` takes a whole number of milliseconds (1 or more). A value that is not one of
+those is refused at boot (exit 1, the message names the variable and the value). When one is set the boot prints
+`app variants: ... group_commit=on checkpointer=1000` (and `checkpointer: 1000 ms (process N)` with the process id).
+
+**Group commit** (`APP_GROUP_COMMIT=1`): the loop runs one turn at a time and the writes of a turn are committed together.
+
+- A write's request (`POST /posts`, `POST /posts/:id/like`) still checks the token, the body and the id at once, and a like still reads
+  `post_exists` at once (a read of that request: nothing is shared with another one). Its statement is queued as a `Closure`, the handler's
+  answer, instead of run.
+- At the end of the turn `DiyServer` hands the queued writes to `app_group_commit()`: one `BEGIN IMMEDIATE`, each write in its own
+  `SAVEPOINT`, one `COMMIT`. A write that throws is rolled back to its savepoint and answers `500 {"error":"internal server error"}`; the
+  others commit. A transaction that cannot start or commit commits nothing and every write of it answers 500. Only then do the responses go
+  out: **a write is never answered before it is committed.** There is no timer: at low load a batch is one write.
+- **Order:** a connection with a write waiting stops parsing and reading until that write's response is in its buffer. Its later requests stay in
+  the read buffer, so a like then a read pipelined on one connection answer in that order and the read sees the like. After the commit the
+  server answers the paused connections, parses what waited behind the write (which may queue the next write: another `BEGIN ... COMMIT`),
+  and goes round again until nothing is queued, so two pipelined writes are both answered with no stall. Reads on other connections are not
+  delayed.
+- **The loop:** `DiyServer::run()` calls `turn()` in a loop (`EventBase::loop(LOOP_ONCE)`, then the flush) instead of `dispatch()`. The group
+  commit needs to know where a turn ends: a zero-timeout timer added during a callback runs only after the next turn's I/O callbacks, so it
+  would flush a turn late.
+- **Telemetry** (`APP_TELEMETRY=1`, only with the switch on): `"group_commit":{"commits":N,"batch_mean":x,"batch_max":y}` in the line, the
+  commits of that second and the writes in each. The flush counts as a callback for `longest_callback_ms`.
+
+**The checkpointer** (`APP_CHECKPOINTER=<ms>`): the server's connection runs with `wal_autocheckpoint = 0`, and a second process
+(`lab/app/checkpointer.php`, started with `proc_open` before the server listens, in the server's cgroup) runs
+`PRAGMA wal_checkpoint(PASSIVE)` on its own connection every `<ms>`. It never blocks the writer or a reader and copies only as far as the oldest
+reader allows. It reads a pipe whose other end is the server: when the server ends, killed or not, the pipe closes and the checkpointer ends
+(a test kills the server with SIGKILL and looks for the process). **It cannot run with `APP_LOCKING=exclusive`**: that process could not open
+the database ("database is locked"), so the server refuses the pair at boot and says why. Group commit and exclusive locking do go together
+(one process commits). **Don't use it as it is:** under a steady writer the WAL never restarts and grows without bound (at the bench's write rate,
+about 3 GB in 2 minutes), so a run of any length fills the disk; the measured figures are in `results/2026-11-23-cpu-steps/README.md` ("The checkpointer").
+
+**A trap of ext-event, and why `turn()` is a method of the server:** the loop's callbacks are private methods of `DiyServer`, and ext-event
+calls a callback in the scope of whoever runs the loop. `$base->loop(EventBase::LOOP_ONCE)` called from outside the class (a test, a
+script that reached the base by reflection) calls none of them, with no error: the listening socket stays readable and the call returns
+at once, millions of times a second, with the port silent. `dispatch()` from outside fails the same way. A loop driven from a method
+of the class works. The checks of `lab/check/diy-group-commit-test.php` run a server and its clients in one process through `turn()`.
+
+**Checks:** `diy-group-commit-test.php` (the loop and the order rules, with a stub handler and a stub commit), `app-group-commit-test.php` (the
+switches, the batch, a write that fails inside it through a trigger of the test's database that makes one insert throw, a `DiyServer` with
+the real app in the test's process, and `lab/app/server.php` as a child process: a 201 survives SIGKILL, the checkpointer copies the WAL
+back and ends with the server, the telemetry line has the batches), and `check_challenge_test_passes_with_group_commit_and_checkpointer`
+(the 42 checks with each switch and both).
 
 ## The realistic mode
 
@@ -639,7 +755,14 @@ running, and prints k6's memory per VU (the difference between the two plateaus)
   bounds nothing;
 - the scale is the `s` that puts 20,000 req/s under the cap: `cap * 2.17 / (20,000 * 20.5)`, with the margin the 97 % rule leaves
   (`0.29 * s` s of mean latency per request);
-- the harness **refuses more VUs than the cap** (`--vu-cap`, default 5,400): exit 2, before any container starts.
+- the harness **refuses more VUs than the cap** (`--vu-cap`, default 5,400): exit 2, before any container starts. **With
+  `--env APP_SOFT_CONN_LIMIT=<n>`** every k6 request reconnects and the server closes the connection after its response (see "Connection
+  limits"), so k6's VUs no longer hold the server's descriptors: the default cap is then the smaller of k6's memory (`LAB_K6_MIB_PER_VU`,
+  0.343 MiB a VU, against the budget) and its local ports (10,500 per source address, 4 addresses by default). `--vu-cap` given by
+  hand still wins. The JSON says which one bound the cap: `load.vu_cap_bound_by` is `file descriptors`, `k6 memory`, `local ports` or
+  `--vu-cap`, and the refusal names it. `server_connections` in the JSON holds the soft limit, what the server's telemetry counted over
+  its life (`close_responses`, `accept_pauses`, `open_peak`) and `fds_peak`, the peak of the server's file descriptors from the sampler
+  (null, with `fds_peak_note`, under `--no-series`: nothing read them).
 
 Smoke runs on the Docker VM with 23 other projects' containers running (7,935 MiB, 12 vCPUs; not a measurement), the app on 8.5
 (the JSON files are in `lab/results/2026-11-22-realistic-calibration/`; this table is typed by hand from them: that folder has no `summarize.sh`, so the results check skips it):
@@ -744,13 +867,14 @@ exit 3). A client that cannot open them all (`held` below `<n>` with a failure) 
 APP_TELEMETRY=...` is given (a later measurement compares on against off). One line a second on stdout, from `lab/servers/diy-telemetry.php`:
 
 ```text
-telemetry {"second":1795370018,"requests":{"GET /feed":8253,"GET /posts/:id":7948},"wal_bytes":4161232,"longest_callback_ms":9.815,"gc_runs":0,"gc_collected":0,"minflt":28,"majflt":0}
+telemetry {"second":1795370018,"requests":{"GET /feed":8253,"GET /posts/:id":7948},"wal_bytes":4161232,"longest_callback_ms":9.815,"gc_runs":0,"gc_collected":0,"minflt":28,"majflt":0,"connections":{"open_peak":60004,"limit_closes":0,"accept_pauses":0}}
 ```
 
 `second` is the one that just ended (the timer is set for 2 ms after the whole second, and a line takes the second it was set for, never
 the clock's: a timer that fires early must not repeat the second before). Requests are counted per endpoint by the app (`app_count`,
 one call per request), `longest_callback_ms` is the longest callback of the event loop that second (two `hrtime` calls around each
-callback, `accept`, read and write alike), `gc_*` are the deltas of `gc_status()`, `minflt` and `majflt` the process's own. When the
+callback, `accept`, read and write alike), `gc_*` are the deltas of `gc_status()`, `minflt` and `majflt` the process's own, and `connections`
+what the server's connection count saw that second (see "Connection limits"). When the
 event loop stalls for 5 ms, this is the line that says whether it was one callback (and the sampler's `majflt` whether it waited
 on the disk). The cost of having it on is not measured here.
 
@@ -770,6 +894,42 @@ series (20 to 27 a second at 400 req/s in the smoke run) and `memory.current` gr
 `results.series` is null, the server's memory peaks are null, `per_second_probes` is false and the table says the per-second part is off. The
 per-step results and `results.per_second` (the aggregator's latency, and the server's CPU from its cgroup) stay. The telemetry line stays too
 unless `--env APP_TELEMETRY=0` turns it off.
+
+### Connection limits (`lab/servers/diy-server.php`)
+
+Two limits on the client connections of a server on the DIY loop, the bake-off's included.
+
+**The hard limit** is the process's file descriptors (65,535 in the lab). When `accept()` fails for want of one (`EMFILE` or `ENFILE`) the
+loop deletes the listening event instead of firing it again at once (a busy loop: 205 ticks of CPU in 2 s on a server with 64 descriptors
+before this), and adds it back when a client connection closes. The clients wait in the kernel's backlog meanwhile. One line goes to stderr
+the first time (`diy-server: out of file descriptors ...`), nothing per failure after that. An idle connection is never closed to make room.
+It is not a variant: it fixes what the loop did at the limit.
+
+**The soft limit** is a variant, off unless `APP_SOFT_CONN_LIMIT=<n>` is set on `lab/app/server.php` (`0` is a limit; the bake-off's
+`bake-diy.php` never sets it). The server counts its client connections (accepted, not yet closed). A response built while more than `n`
+are open (strictly: with `n` open the `n`-th keeps alive, the `n + 1`-th closes) gets a `Connection: close` header and the connection
+ends once the response is written; a request pipelined behind it is not answered. Only a connection that has just got a response is
+closed, never an idle one (closing idle sockets scored 0 for two entries: k6 does not retry a POST sent on a socket the server just
+closed). One process then serves more users than it has descriptors, because the bench's users are idle more than 99 % of the time: their
+connections come and go as each one sends a request, and the idle ones the run holds stay. Unset, the server is byte for byte what it was.
+
+**Closing cleanly.** The server shuts down its sending side before it closes a connection that the limit ended. Why: a `close()` while the
+receive buffer holds bytes nobody read (the client sent its next request behind the one answered) makes Linux send a reset, and a client
+that reads after it gets `ECONNRESET` where it should get the end of the response (`TCPAbortOnClose` counts it in `/proc/net/netstat`);
+the FIN of the shutdown goes first, so a client that reads a small response on loopback gets the whole of it and then the end of the stream.
+`diy-soft-limit-test.php` tests it that way, on a TCP pair with 150 KB left unread. It is not a lingering close: a `close()` with unread
+bytes still sends a reset, and that reset drops what is still in the server's send queue, so a large response to a client whose window is
+full could be cut short. The lab's responses are small. Past the lab, shut down, read until the end of the stream or a short timeout, then close.
+
+**What it counts** (`connections` in the telemetry line, `APP_TELEMETRY=1`): `open_peak` (the most client connections open at once in
+that second), `limit_closes` (the `Connection: close` responses the limit caused: a client that asked for the close is not one) and
+`accept_pauses`. `lab/realistic.sh` sums them in the JSON's `server_connections` (see below).
+
+**Checks:** `diy-soft-limit-test.php` (the connection on socket pairs, no loop), and on the real server `check_soft_limit_closes_the_third_connection`
+(limit 2, three keep-alive connections), `check_soft_limit_keeps_idle_connections` (50 idle, limit 50, 20 new ones), `check_soft_limit_serves_churn_at_256_fds`
+(256 descriptors, limit 200, 200 idle, 2,000 new connections one after the other), `check_hard_fd_limit_pauses_accepts` (64 descriptors,
+80 clients: the server's CPU stays under 0.2 s in 2 s while they wait), `check_challenge_test_passes_with_soft_limit_zero` and
+`check_realistic_soft_limit_run`. `lab/check/conn-client.php` is their client.
 
 ### The challenge app on `macro.sh`
 
@@ -874,6 +1034,153 @@ the harness's own polls, because the bench's journey never asks for it.
 asked for; the 8.6 image has no Excimer; and the CPU of a profiled run is higher than an unprofiled one's (the cost is measured, not assumed:
 run the same load with and without `--profile` and compare the `us/req` of the plateau).
 
+## The step lab
+
+Two instruments to judge a change to the server: `lab/steplab.sh` compares variants by CPU per request, `lab/syscalls.sh` counts the
+syscalls per request.
+
+### `lab/steplab.sh`: variants against a reference
+
+```bash
+bash lab/steplab.sh --image 8.5 --rate 24000 --think-scale 0.02 --idle 60000 --seconds 60 --pairs 3 \
+  --variant ref= --variant telemetry-on=APP_TELEMETRY=1 --floor 5 --out /tmp/steplab-telemetry
+```
+
+Each run is `lab/realistic.sh --hold <rate>,<seconds>` (a fresh seed copy, server and idle connections each time), with `--no-series`
+(no per-second probes) and the server's telemetry off unless the variant sets `APP_TELEMETRY`. The default warm-up is a tenth of the
+rate for 60 s (`--warmup <req/s>,<s>` changes it). `--variant <name>=<K=V,K=V...>` sets environment variables (an empty list is the
+skeleton as it is); `--server-variant <name>=<php file under lab/>` runs another server file; `--variant-args <name>=<arguments>` adds
+arguments to that variant's `lab/realistic.sh` call, split on spaces and given last, so a variant can run on another image and with its own
+extension and `php.ini` (`--variant-args "other=--image 8.3-apt --ext swoole"`). **The first variant is the reference.** Runs are **interleaved by round**: round 1 runs every variant once in the given order, round 2 again, and so on for
+`--pairs` rounds, so a slow drift of the VM hits every variant alike.
+
+**The order inside a round is not rotated.** The reference runs first in every round. The A/A data shows an order effect of about -0.2 µs/req:
+the four A/A pairs at 24,000 req/s that passed the 97 % rule are all negative (-0.26, -0.16, -0.27, -0.06), the second run of an identical pair costing
+a little less, and the Mac's same-rate S1-d pair that never fires is lower in 3 of 3 rounds. The order stays for this phase: the A/A floor
+(0.27 µs/req, from those four pairs) absorbs an effect of that size, so a variant that clears the floor clears it with the bias in. Alternating the
+order of each round (ABBA: reference, variant, then variant, reference) cancels a steady bias and is the fix for a later phase; it needs no change to the
+verdict, only to the order the runner loops in.
+
+**The judgment** (`lab/steplab-verdict.jq`, a pure function of the run JSON files): the number of a run is the server's CPU per
+request over the plateau (what the aggregator reads from the cgroup). A run counts when its JSON is valid. A variant's **paired
+differences** are its number minus the reference's of the same round; a round where either run is invalid has no pair. A variant is
+`beyond the noise` when it has at least 2 pairs, **every pair has the same sign** (a zero has none) **and** the median paired difference
+is at least `--floor <us>` in absolute value; otherwise `within the noise`. **One pair is a screen, not a verdict:** with a floor, a
+variant that is lower than the reference by at least the floor is `screen: beats the floor`, any other is `screen: not better in one
+pair` (the first look that decides which variants deserve more pairs). No pair: `no verdict`. Without
+`--floor`: `no floor: not judged` (the floor comes from an A/A calibration: two identical variants, the largest median paired difference
+they show). The rule is printed under the tables.
+
+**TIME_WAIT sockets.** Before each run the runner counts the TIME_WAIT sockets on every source address the lab's clients use, k6's and
+the idle client's (`127.0.0.2` to `127.0.0.254`) (`probe.sh time-wait`, one /24 range per comma-separated item: the VM's
+`/proc/net/tcp`, a socket counts for an address that is at either end, because the side that closes first keeps the port busy). A closed
+connection keeps its port for 60 s and the VM's ephemeral ports are 55000 to 65535 (about 10,500 per address).
+
+- **k6's addresses:** k6 opens about one connection per VU, a quarter of them on each address (1,200 at 24,000 req/s), and dials again when a
+  port is taken. The run waits until the busiest holds at most `--time-wait-max` (default 2,500): a run then has 8,000 free ports per address,
+  six times what it needs, and the 1,134 per address that a run at that rate leaves do not make the next one wait.
+- **The idle client's addresses (with `--idle`):** it opens its connections once and binds each to a random port of its address. A port
+  whose 4-tuple matches a TIME_WAIT socket fails at connect (`Cannot assign requested address`): the client binds again (another random
+  port) and, after 25 failures of one connection in a row, moves to another address; it gives up after 200. A run therefore does not wait
+  for the sockets of the one before: `--idle-time-wait-max` defaults to 100,000 (never). `--idle-time-wait-max 0` brings the wait back
+  (the busiest address drained, about a minute after a run that held 60,000 idle connections). The retries a run needed are in its JSON,
+  `idle.bind_retries`.
+
+A count that does not drop within `--time-wait-wait` seconds (default 150) is a harness failure. The counts before and after
+each run (per address that holds any, the busiest, k6's and the idle client's busiest, the total on the clients' addresses, the total on the VM) are in the run's JSON, under `steplab.time_wait`,
+and the most TIME_WAIT sockets on any one address (k6's or the idle client's) before each run is in the table (`tw/addr`; `-` when the runner did not count).
+
+**What it writes** into `--out` (default `lab/results/steplab-<label>-<image>-<time>/`): `<variant>-<round>.json` (the realistic run's
+JSON with a `steplab` object: variant, index, round, the variant's env and server file, the TIME_WAIT counts), `<variant>-<round>.txt`
+(that run's table; the runner's temp folder is a per-user path on the Mac, so both files hold `<tmp>` where it was), `summary.json` and `summary.txt`. `bash lab/steplab-summary.sh <folder> [--floor <us>] [--json <file>]` rebuilds the
+two tables and the verdicts from the JSON files alone, so a results folder's `summarize.sh` calls it. Exit codes: 0 every run ran (an
+invalid run or a failing step is a result), 1 a harness failure, 2 usage. The runs of a comparison take what they take: a 60 s plateau
+with 60,000 idle connections is about 4 minutes a run, plus the drain of the TIME_WAIT sockets.
+
+`check_steplab_verdicts` runs the verdict on recorded run files (`lab/check/fixtures/steplab/<case>/`: identical variants, a variant
+1 ms slower in every round, mixed signs, the same sign under the floor, an invalid round of the variant or of the reference, a single
+pair that is slower, lower by less than the floor or lower by more than it, and no pair), and `check_steplab_live` runs two variants for two rounds at a low rate and reads the tables' shape.
+
+### `lab/syscalls.sh`: syscalls per request
+
+```bash
+bash lab/syscalls.sh --image 8.5                       # the skeleton, 2,000 req/s, 20 s of strace
+bash lab/syscalls.sh --image 8.5 --env APP_X=1 --out /tmp/count.json
+```
+
+A realistic hold at `--rate` (default 2,000 req/s, `--think-scale` 0.1, no idle connections, no per-second probes, telemetry off) and,
+from 3 s into its plateau, a sidecar container in the server's pid namespace (`--pid container:<server>`, `--cap-add SYS_PTRACE`, on the
+probe CPUs) runs `strace -c -f -p <server pid>` for `--seconds` (default 20), then detaches. **Only counts are kept.** strace stops the
+server at each syscall, so it slows it down and its time columns mean nothing; they are dropped. The table gives each syscall's calls,
+calls per request, errors (an `EAGAIN` counts as an error) and the total per request. The requests are **the aggregator's** (one row per
+second of k6's own samples), summed over the whole seconds of the window, which starts on a whole second of the VM's clock: the traced
+server serves fewer requests than the nominal rate, so the division uses what it served. The JSON holds the table, the window, the
+request count and the command.
+
+strace comes from `lab/images/Dockerfile.strace`: the lab's pinned Ubuntu with strace 6.8-0ubuntu2 installed at that exact version
+(`lab_ensure_strace_image` builds it the first time). Its raw output stays in a temporary folder: no path or process id goes into the
+JSON, so a result can be committed. If the VM refuses ptrace, the script prints strace's own message and exits 1. Exit codes: 0, 1 a
+harness failure, 2 usage, 3 the realistic run was invalid.
+
+**Reading it.** On the skeleton (keep-alive, 2,000 req/s) the write family (`write`, `sendto`, `writev`) is 1 per request, one response
+each; `check_syscalls_live` asserts it is near 1 and that the total is positive. `check_syscalls_table_parse` reads strace's table from
+a real capture (`lab/check/fixtures/strace-c.txt`).
+
+### The two Swoole entries (`lab/servers/swoole-entries/`)
+
+The leaderboard's two real-PHP entries, `php-swoole-mattsplat` and `php-swoole-tzimpel`, run unchanged: their `server.php` (and tzimpel's
+`php.ini`) are byte copies of the challenge's files (`lab/check.sh` compares them; credit in `lab/NOTICE.md`), read from the same
+environment as the skeleton (`SQLITE_PATH`, `JWT_SECRET`, `HOST`, `PORT`). Their `install.sh` and `build.sh` are never run. What their
+`start.sh` runs, and how the lab reproduces it:
+
+| Entry | `start.sh` | In the lab |
+| --- | --- | --- |
+| mattsplat | `php -d extension=swoole -d memory_limit=-1 -d opcache.enable_cli=1 -d opcache.jit=tracing -d opcache.jit_buffer_size=32M server.php` | `--image 8.3-apt --ext swoole`: the lab's own flags are these four plus `opcache.file_update_protection=0` and `zend.assertions=-1` |
+| tzimpel | `php -c php.ini -d extension=$PWD/build/swoole.so server.php` | `--image 8.3-apt-tzimpel --php-ini <its php.ini> --ext /opt/swoole-tzimpel/swoole.so`: `--php-ini` passes `-c <file>` and leaves the lab's flags out, so the file is the whole configuration |
+
+`bash lab/build.sh 8.3-apt-tzimpel` builds the image: our Swoole 6.2.6 source (the same tarball and checksum as `8.3-apt`) with the one
+`perl -0pi` line of tzimpel's `build.sh` (the receive buffer freed once a request is done), copied byte for byte, and his check that it applied
+exactly twice (`check_tzimpel_patch_is_his` compares the two lines with the challenge's). The entries used Swoole 6.2.3.
+
+```bash
+bash lab/challenge-test.sh --image 8.3-apt --server lab/servers/swoole-entries/php-swoole-mattsplat/server.php --ext swoole
+bash lab/challenge-test.sh --image 8.3-apt-tzimpel --server lab/servers/swoole-entries/php-swoole-tzimpel/server.php \
+  --php-ini lab/servers/swoole-entries/php-swoole-tzimpel/php.ini --ext /opt/swoole-tzimpel/swoole.so
+```
+
+### The io_uring server (`lab/servers/uring-noop.php`)
+
+A spike: a server for `GET /noop` (and the bake-off handler's other routes, so `conformance.sh` runs on it) whose event loop is an io_uring
+ring driven through PHP's FFI, no C compiled (declarations in `lab/servers/uring-noop.h`). Multishot accept into direct descriptors (a
+sparse table as large as `RLIMIT_NOFILE`, 65,535 here), multishot receive from a provided buffer ring (a pool shared by all connections:
+2,048-byte buffers, nothing held per idle connection), one SEND per response from a pooled slot, no SQPOLL, `SINGLE_ISSUER` +
+`DEFER_TASKRUN` + `SUBMIT_ALL`, one `io_uring_enter` per turn. SQEs are written field by field in the ring's mapped memory, CQEs read with
+one `FFI::string` and one `unpack()` per turn. The header comment of the server file holds the design and the memory-ordering reasoning.
+
+```bash
+bash lab/conformance.sh --image 8.5 --server lab/servers/uring-noop.php --ext sockets --seccomp-unconfined
+bash lab/stress.sh --image 8.5 --server lab/servers/uring-noop.php --seccomp-unconfined [--env URING_RINGS=2]
+bash lab/conns.sh --image 8.5 --server lab/servers/uring-noop.php --ext sockets --seccomp-unconfined --steps 1000,30000,60000
+```
+
+- **`--seccomp-unconfined`** (`macro.sh`, `conformance.sh`, `conns.sh`, `stress.sh`; `LAB_SERVER_SECCOMP_UNCONFINED=1` in `lib.sh`): Docker's
+  default seccomp filter refuses the io_uring syscalls (`EPERM`), so this server's container runs without it. No other server uses it. The
+  kernel of the VM must be 6.6 or newer (`IORING_SETUP_NO_SQARRAY`); the min-wait knob below needs 6.12.
+- **`--ext sockets`**: the lab scripts default to `--ext swoole`; the ring server uses no extension, and `sockets` is loaded only to keep
+  the PHP the same as the DIY server's.
+- **`/noop?id=<digits>`** answers `{"status":"ok","id":<digits>}` (the only change to the DIY server's bytes); `lab/stress.sh` and
+  `lab/conformance/stress.php` send requests with unique ids over many connections, one at a time and pipelined (bursts of 1 to 16), and
+  check every response byte for byte, in order, per connection: 0 mismatches and 0 lost, or exit 1.
+- **The server prints `ring:` lines** (one a second while it works): turns (`io_uring_enter` calls), requests, CQEs, `requests_per_turn`.
+  At a low rate a turn handles one completion, so the ring pays one enter per request; `URING_MIN_COMPLETE` and `URING_MIN_WAIT_US` (the
+  kernel returns after that many microseconds when at least one completion is there) make a turn batch under load, at the price of that
+  much latency. Default off.
+- **`URING_RINGS=2`** adds a second ring with its own table (80,000 connections over two); the loop waits on the first with a timeout
+  (`URING_WAIT_US`, default 500) and enters the second when its `IORING_SQ_TASKRUN` flag shows work or it has SQEs queued.
+- **Traps:** an accept that finds the table full has already taken the connection off the queue and the kernel drops it, so the ring
+  cancels its accept 16 descriptors before the end of the table and arms it again once connections close; a ring that is not entered keeps
+  its queued SQEs (its first accept included); `FFI::cast('uintptr_t', $pointer)` reads 0, so pointers are made from integer addresses.
+
 ## Connection test
 
 `lab/conns.sh` measures how many idle keep-alive connections one server process holds, and what each one costs in memory:
@@ -896,9 +1203,11 @@ more containers join it: the probe of `macro.sh` (`lab/macro/probe.sh`, from out
 - **Source addresses rotate over 127.x.** One client address has only as many ephemeral ports as `ip_local_port_range` gives
   (10,536 on the lab's VM at the time of writing, 28,232 with Linux's default of 32768-60999; the client reads the file and
   keeps 500 ports in reserve), so the client binds each connection to `127.0.0.N:0` (`socket.bindto`) and moves to another
-  address before the ports run out. The next address is one that is the local address of no socket at all: a run right after
-  another one skips the addresses whose `TIME_WAIT` sockets (the client closes first, so they sit on its side, for 60 s) are
-  still there, and never fails on `bind`. `127.0.0.1` stays for the probe's fresh request. No `sysctl` is changed: the Docker
+  address before the ports run out. The next address is one that is at neither end of any socket: a run right after
+  another one skips the addresses whose `TIME_WAIT` sockets (for 60 s, on the client's side when it closed first, on the server's
+  when the server did) are still there. A connect that still fails with `Cannot assign requested address` (a port whose 4-tuple matches
+  a `TIME_WAIT` socket) is tried again on another random port, and after 25 failures in a row on another address; the retries are
+  in the `held` and `step` events (`bind_retries`). `127.0.0.1` stays for the probe's fresh request. No `sysctl` is changed: the Docker
   VM is shared. If every address from 127.0.0.2 to 127.0.0.254 is taken, the client waits up to 70 s, then fails.
 - **What is read at each step,** after the client opened its connections and swept them (non-blocking reads: an EOF or a reset
   means the server closed one), and 1 s later: the summed `Pss` and `Pss_Anon` of the server's processes, the cgroup's `memory.current` and

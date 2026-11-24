@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # The public guard: this repository is public, so nothing private may reach it. It refuses e-mail addresses,
-# absolute home paths (/Users/<name>, /home/<name>) and every word of a private denylist.
+# absolute home paths (/Users/<name>, /home/<name>), the Mac's per-user temp folder (/var/folders/..., also as
+# /private/var/folders/...) and every word of a private denylist.
 #
 #   bash tools/public-guard.sh tree        # scan every tracked file as it is on disk (lab/check.sh runs this)
 #   bash tools/public-guard.sh pre-push    # scan what a push sends: added lines and commit messages (.githooks/pre-push)
@@ -20,6 +21,8 @@ EMAIL_RE='[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'
 EMAIL_OK_RE='@(example\.(com|org|net)|users\.noreply\.github\.com)|noreply@|^git@'
 HOME_RE='/(Users|home)/[A-Za-z0-9._-]+'
 HOME_OK_RE='/(Users|home)/(\.\.\.|runner|user|me|you|example|<[^>]*>)'
+# Why: macOS puts a per-user hash in every temp folder (/var/folders/<hash>/T/...). It names no one, but it is as private as a home path.
+TEMP_RE='/var/folders/'
 
 # Reads lines on stdin, each "<where>:<text>"; prints one line per finding, without the private word itself.
 scan() {
@@ -35,7 +38,7 @@ scan() {
   cat > "$tmp/in"
   # Why: one grep pass keeps only the lines that may hold something; the loop below then checks few lines.
   {
-    grep -E -e "$EMAIL_RE" -e "$HOME_RE" "$tmp/in"
+    grep -E -e "$EMAIL_RE" -e "$HOME_RE" -e "$TEMP_RE" "$tmp/in"
     [ -s "$tmp/words" ] && grep -iF -f "$tmp/words" "$tmp/in"
   } | sort -u > "$tmp/candidates"
   while IFS= read -r line; do
@@ -46,6 +49,9 @@ scan() {
     fi
     if grep -Eo "$HOME_RE" <<<"$text" | grep -Evq "$HOME_OK_RE"; then
       echo "$where: an absolute home path"; hits=$((hits + 1))
+    fi
+    if grep -Eq "$TEMP_RE" <<<"$text"; then
+      echo "$where: the Mac's per-user temp folder"; hits=$((hits + 1))
     fi
     for word in ${words[@]+"${words[@]}"}; do
       if grep -iqF -- "$word" <<<"$text"; then

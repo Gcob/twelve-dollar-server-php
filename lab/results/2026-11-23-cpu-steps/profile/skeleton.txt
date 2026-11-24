@@ -1,0 +1,72 @@
+idle: opening 60000 connections
+realistic: idle client: 25 connects in a row failed with 'Cannot assign requested address' on 127.0.0.2 (sockets of an earlier run), moving to another address
+realistic: idle client: 25 connects in a row failed with 'Cannot assign requested address' on 127.0.0.3 (sockets of an earlier run), moving to another address
+realistic: idle client: 25 connects in a row failed with 'Cannot assign requested address' on 127.0.0.4 (sockets of an earlier run), moving to another address
+realistic: idle client: 25 connects in a row failed with 'Cannot assign requested address' on 127.0.0.5 (sockets of an earlier run), moving to another address
+realistic: idle client: 25 connects in a row failed with 'Cannot assign requested address' on 127.0.0.6 (sockets of an earlier run), moving to another address
+realistic: idle client: 25 connects in a row failed with 'Cannot assign requested address' on 127.0.0.7 (sockets of an earlier run), moving to another address
+realistic: idle client: 25 connects in a row failed with 'Cannot assign requested address' on 127.0.0.8 (sockets of an earlier run), moving to another address
+realistic: idle client: 25 connects in a row failed with 'Cannot assign requested address' on 127.0.0.14 (sockets of an earlier run), moving to another address
+idle: 60000 held in 8.83 s, the server has 60000 established and 60012 file descriptors open
+warm-up: 60s at 2400 req/s (not scored)
+measured: 1 step(s) of 60s (ramp 10s), think scale 0.02, VUs 4535
+realistic: idle client: 25 connects in a row failed with 'Cannot assign requested address' on 127.0.0.2 (sockets of an earlier run), moving to another address
+realistic: idle client: 25 connects in a row failed with 'Cannot assign requested address' on 127.0.0.3 (sockets of an earlier run), moving to another address
+realistic: idle client: 25 connects in a row failed with 'Cannot assign requested address' on 127.0.0.4 (sockets of an earlier run), moving to another address
+realistic: idle client: 25 connects in a row failed with 'Cannot assign requested address' on 127.0.0.5 (sockets of an earlier run), moving to another address
+realistic: idle client: 25 connects in a row failed with 'Cannot assign requested address' on 127.0.0.6 (sockets of an earlier run), moving to another address
+realistic: idle client: 25 connects in a row failed with 'Cannot assign requested address' on 127.0.0.7 (sockets of an earlier run), moving to another address
+realistic: idle client: 25 connects in a row failed with 'Cannot assign requested address' on 127.0.0.8 (sockets of an earlier run), moving to another address
+realistic: idle client: 25 connects in a row failed with 'Cannot assign requested address' on 127.0.0.14 (sockets of an earlier run), moving to another address
+idle: 60000 held at the end (60000 established on the server)
+
+image 8.5 (PHP 8.5.13), server.php, k6 v1.8.3 (commit/58bbfd8e48, go1.26.4, linux/arm64), k6 from 127.0.1.1-127.0.1.4
+think scale 0.02: one VU offers 5.292683 req/s, 9.45 users per req/s, ramp 10 s, plateau 60 s, VU cap 5400 (bound by file descriptors)
+step    VUs   offered  achieved   users    us/req   p95 ms   p99 ms  errors  result
+   1   4535   24002.3   23397.5  221107        27   10.589   25.872      0%  pass
+  step 1 per endpoint (p95 / p99 ms, requests): GET /feed 11.408 / 27.054 (625333), GET /posts/:id 9.977 / 24.376 (625466), POST /posts 10.589 / 25.872 (12547), POST /posts/:id/like 10.279 / 25.113 (93711)
+no step failed
+k6 connection errors: 0
+database copy in the page cache when the server opened it (fincore): 249843712 of 249843712 bytes, 100 %, --cold off
+server connections: soft limit off, no telemetry, file descriptors peak not read: --no-series runs no sampler
+idle connections: 60000 requested, 60000 held at the start and 60000 at the end, 0 closed by the server; the server counted 60000 and 60000 established, 60012 file descriptors open with them
+idle client memory: 266.16 MiB memory.current at the end (peak 281.63, anon 53.96, kernel 212.2, socket buffers 0), the process RSS 65.87 MiB after opening them, opened in 8.83 s from 9 source addresses
+k6 peak memory 1828.51 MiB of its 4351 MiB budget, k6 CPU 279.13 % of one CPU, aggregator max lag 2.129 s (gate 6 s), server Pss_Anon peak not read (--no-series), memory.current peak not read
+
+per second: off (--no-series: no sampler, the poll read only k6's memory and the aggregator's status; the latency of each second is in results.per_second)
+
+profile (the server ran with Excimer on CPU time: its CPU per request is NOT the baseline's):
+step                   GET /health     GET /feed  GET /posts/:id  POST /posts  POST /posts/:id/like        shared            all
+S1 accept connections   0.0% 0.0us    0.0% 0.0us      0.0% 0.0us   0.0% 0.0us            0.0% 0.0us    2.0% 0.7us     2.0% 0.7us
+S2 read and parse       0.0% 0.0us    0.0% 0.0us      0.0% 0.0us   0.0% 0.0us            0.0% 0.0us    8.1% 2.7us     8.1% 2.7us
+S3 route                0.0% 0.0us    0.0% 0.0us      0.0% 0.0us   0.0% 0.0us            0.0% 0.0us    0.5% 0.2us     0.6% 0.2us
+S4 verify the JWT       0.0% 0.0us    0.0% 0.0us      0.0% 0.0us   0.2% 0.1us            1.4% 0.5us    0.0% 0.0us     1.6% 0.5us
+S5 validate the input   0.0% 0.0us    0.0% 0.0us      0.0% 0.0us   0.1% 0.0us            0.1% 0.0us    0.0% 0.0us     0.2% 0.1us
+S6 query SQLite         0.1% 0.0us  38.2% 12.7us      6.0% 2.0us   1.0% 0.3us            6.0% 2.0us    0.0% 0.0us   51.2% 17.1us
+S7 build the JSON       0.0% 0.0us    8.6% 2.9us      0.7% 0.2us   0.0% 0.0us            0.1% 0.0us    0.0% 0.0us     9.4% 3.2us
+S8 write the response   0.0% 0.0us    0.0% 0.0us      0.0% 0.0us   0.0% 0.0us            0.0% 0.0us   20.6% 6.9us    20.6% 6.9us
+S9 durability           0.0% 0.0us    0.0% 0.0us      0.0% 0.0us   0.0% 0.0us            0.0% 0.0us    0.0% 0.0us     0.0% 0.0us
+event loop              0.0% 0.0us    0.0% 0.0us      0.0% 0.0us   0.0% 0.0us            0.0% 0.0us    6.3% 2.1us     6.3% 2.1us
+unclassified            0.0% 0.0us    0.0% 0.0us      0.0% 0.0us   0.0% 0.0us            0.0% 0.0us    0.0% 0.0us     0.0% 0.0us
+all                     0.1% 0.0us  46.8% 15.6us      6.7% 2.2us   1.3% 0.4us            7.6% 2.5us  37.5% 12.5us  100.0% 33.4us
+samples: 58321, 33.4 us per request on average
+each cell: share of all samples and the microseconds it adds to the average request; S9 is inside S6 (autocommit)
+
+within each endpoint (share of that column's own samples):
+step                   GET /health  GET /feed  GET /posts/:id  POST /posts  POST /posts/:id/like  shared
+S1 accept connections         0.0%       0.0%            0.0%         0.0%                  0.0%    5.3%
+S2 read and parse             0.0%       0.0%            0.0%         0.0%                  0.0%   21.7%
+S3 route                      0.0%       0.0%            0.0%         2.9%                  0.0%    1.4%
+S4 verify the JWT             0.0%       0.0%            0.0%        16.8%                 18.1%    0.0%
+S5 validate the input         0.0%       0.0%            0.6%         4.6%                  0.8%    0.0%
+S6 query SQLite              82.1%      81.6%           89.3%        73.4%                 79.9%    0.0%
+S7 build the JSON            17.9%      18.4%           10.1%         2.0%                  1.2%    0.0%
+S8 write the response         0.0%       0.0%            0.0%         0.3%                  0.0%   55.0%
+S9 durability                 0.0%       0.0%            0.0%         0.0%                  0.0%    0.0%
+event loop                    0.0%       0.0%            0.0%         0.0%                  0.0%   16.7%
+unclassified                  0.0%       0.0%            0.0%         0.0%                  0.0%    0.0%
+weight in all samples         0.1%      46.8%            6.7%         1.3%                  7.6%   37.5%
+cgroup CPU over the profiled window: user 40546 ms, system 18030 ms (31 % in the kernel); samples 58321 at 1 ms, so 100 % of that CPU is in the profile; kernel time spent inside a syscall shows in the PHP frame that made it (fread, fwrite, stream_socket_accept)
+collapsed stacks: skeleton.collapsed
+VALID
+wrote lab/results/2026-11-23-cpu-steps/profile/skeleton.json

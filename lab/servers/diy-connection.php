@@ -12,9 +12,50 @@
 // ended by a bare \n (the request never completes, and a client that sends 8 KiB of it gets a 400). A header name with
 // whitespace before the colon, or a line fold, gets a 400. A handler that throws gets a 500 and the connection serves on.
 //
+// handler_handle() may also answer with a Closure instead of [status, body]: a write that waits for its commit (group commit, see
+// lab/app/app.php). The connection then stops parsing, and stops reading, until the server hands the response to resume(): the requests
+// behind that write stay in rbuf, so the responses go out in the order of the requests. takePending() gives the server the Closure.
+//
 // A response is `HTTP/1.1 <status> <reason>`, Content-Type, Content-Length and the body: nothing else, whatever the request's
 // version. An HTTP/1.0 client that asks for keep-alive gets it (the connection stays open) without a `Connection: keep-alive`
 // header in the answer, so most of them will close on their own.
+
+/**
+ * What the server knows about its client connections, shared with each DiyConnection when a soft limit is set: the connections open now
+ * (accepted, not yet closed), the most open at once since the last reset, and what the limits did. The loop counts a connection when it
+ * accepts it and when it closes it.
+ */
+final class DiyConnectionCount
+{
+    public int $open = 0;
+    public int $peak = 0;
+    /** Responses that said `Connection: close` because more than $softLimit connections were open (the client had not asked for it). */
+    public int $limitCloses = 0;
+    /** Times accept() failed for want of a file descriptor and the loop stopped listening until a connection closed. */
+    public int $acceptPauses = 0;
+
+    /** @param int|null $softLimit null: no limit. A response built while more than this many connections are open ends its connection. */
+    public function __construct(public readonly ?int $softLimit = null)
+    {
+    }
+
+    public function opened(): void
+    {
+        if (++$this->open > $this->peak) {
+            $this->peak = $this->open;
+        }
+    }
+
+    public function closed(): void
+    {
+        $this->open--;
+    }
+
+    public function resetPeak(): void
+    {
+        $this->peak = $this->open;
+    }
+}
 
 final class DiyConnection
 {
@@ -52,9 +93,19 @@ final class DiyConnection
     private string $authorization = '';
     private int $bodyLength = 0;
     private bool $closeAfter = false;
+    /** The soft limit made this connection say `Connection: close`: it shuts down its sending side before it closes (see close()). */
+    private bool $limitClosed = false;
+    /** A write waits for its commit: nothing more is parsed or read until resume(). */
+    private bool $held = false;
+    /** The write the handler deferred, until the server takes it (takePending()). */
+    private ?Closure $pending = null;
 
-    /** @param resource $stream a non-blocking stream */
-    public function __construct(private $stream)
+    /**
+     * @param resource $stream a non-blocking stream
+     * @param DiyConnectionCount|null $limit given only when a soft limit is set: a response built while more connections than its limit
+     *                                       are open says `Connection: close`, and the connection ends once it is written
+     */
+    public function __construct(private $stream, private readonly ?DiyConnectionCount $limit = null)
     {
     }
 
@@ -81,7 +132,28 @@ final class DiyConnection
 
     public function wantsRead(): bool
     {
-        return !$this->closing && strlen($this->wbuf) < self::WRITE_LIMIT;
+        return !$this->closing && !$this->held && strlen($this->wbuf) < self::WRITE_LIMIT;
+    }
+
+    /** The write the last call deferred, if any (the connection stays held until resume()). Null when the call deferred nothing. */
+    public function takePending(): ?Closure
+    {
+        $write = $this->pending;
+        $this->pending = null;
+        return $write;
+    }
+
+    /**
+     * The deferred write is committed: its response goes out, then whatever waits in rbuf is answered (a write in it holds the
+     * connection again). Returns false when the connection is finished.
+     *
+     * @param array{int, string} $response
+     */
+    public function resume(array $response): bool
+    {
+        $this->held = false;
+        $this->respond($response[0], $response[1]);
+        return $this->advance();
     }
 
     public function wantsWrite(): bool
@@ -98,6 +170,13 @@ final class DiyConnection
     public function close(): void
     {
         if (is_resource($this->stream)) {
+            // Why: a close with bytes the server never read (a request the client sent behind the one answered) makes the kernel send a
+            // reset, and a client that reads after it gets an error instead of the end of the response. The FIN of a shutdown goes first,
+            // so a client that reads a small response on loopback (what the test covers) gets all of it, then the end of the stream. The reset
+            // can still drop bytes left in the send queue: a large response to a client with a full window would need a lingering close.
+            if ($this->limitClosed) {
+                @stream_socket_shutdown($this->stream, STREAM_SHUT_WR);
+            }
             fclose($this->stream);
         }
     }
@@ -123,6 +202,9 @@ final class DiyConnection
     /** Answers every complete request in rbuf. Returns true when it stopped because wbuf reached the limit. */
     private function parse(): bool
     {
+        if ($this->held) {
+            return false;
+        }
         $rbuf = $this->rbuf;
         $length = strlen($rbuf);
         $pos = 0;
@@ -151,18 +233,36 @@ final class DiyConnection
             $pos = $bodyStart + $this->bodyLength;
             // Why: an exception that escaped here would leave the ext-event callback and stop the loop for every connection.
             try {
-                [$status, $payload] = handler_handle($this->method, $this->target, $body, $this->authorization);
+                $result = handler_handle($this->method, $this->target, $body, $this->authorization);
             } catch (Throwable $e) {
                 fwrite(STDERR, 'diy-connection: the handler failed: ' . get_class($e) . ': ' . $e->getMessage() . "\n");
-                [$status, $payload] = [500, self::INTERNAL_ERROR];
+                $result = [500, self::INTERNAL_ERROR];
             }
+            if ($result instanceof Closure) {
+                // Why: the bytes behind this request stay in rbuf, so that nothing after a write is answered before the write is.
+                $this->pending = $result;
+                $this->held = true;
+                break;
+            }
+            $this->respond($result[0], $result[1]);
+        }
+        $this->rbuf = $this->closing || $pos >= $length ? '' : ($pos === 0 ? $rbuf : substr($rbuf, $pos));
+        return $stoppedAtLimit;
+    }
+
+    /** Appends the response of the request just handled, with the `Connection: close` the soft limit or the client asked for. */
+    private function respond(int $status, string $payload): void
+    {
+        if ($this->limit !== null && $this->limit->open > $this->limit->softLimit) {
+            $this->wbuf .= self::HEAD[$status] . strlen($payload) . "\r\nConnection: close\r\n\r\n" . $payload;
+            $this->limit->limitCloses += (int) !$this->closeAfter;
+            $this->closing = $this->limitClosed = true;
+        } else {
             $this->wbuf .= self::HEAD[$status] . strlen($payload) . "\r\n\r\n" . $payload;
             if ($this->closeAfter) {
                 $this->closing = true;
             }
         }
-        $this->rbuf = $this->closing || $pos >= $length ? '' : ($pos === 0 ? $rbuf : substr($rbuf, $pos));
-        return $stoppedAtLimit;
     }
 
     private function reject(): void

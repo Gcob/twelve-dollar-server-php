@@ -1,0 +1,20 @@
+runs, in the order they ran (one round runs every variant once, the first variant is the reference)
+round  variant        valid      req/s    us/req   p95 ms   p99 ms   tw/addr  result
+    1  s1a            yes      11906.7        28        2     6.01         0  pass
+    1  s1d            yes      11893.7      34.6     3.12     6.38         0  pass
+    2  s1a            yes      11908.4      27.5     1.75     5.11         0  pass
+    2  s1d            yes      11852.2      36.3     3.74    13.64         0  pass
+    3  s1a            yes      11918.1      27.9     1.91     5.42         0  pass
+    3  s1d            yes      11895.7      34.3     3.22     6.48         0  pass
+    4  s1a            yes      11912.8        28     1.67     4.88         0  pass
+    4  s1d            yes      11893.3      34.6     3.08      6.2         0  pass
+    5  s1a            yes      11912.3      27.9     1.86     5.58         0  pass
+    5  s1d            yes      11902.7      34.3     3.08     6.29         0  pass
+tw/addr: the most TIME_WAIT sockets on one of k6's source addresses when the run started (0 when the runner did not count)
+
+variants (us is the server's CPU per request over the plateau)
+variant         valid median us        min to max   p99 ms  paired differences us     median  verdict
+s1a               5/5      27.9        27.5 to 28     5.42  reference                      -  reference
+s1d               5/5      34.6      34.3 to 36.3     6.38  +6.6 +8.8 +6.4 +6.6 +6.4      +6.6  beyond the noise
+
+Rule: a variant is beyond the noise when it has at least 2 pairs, every paired difference (its µs CPU/req minus the reference's in the same round) has the same sign and the median paired difference is at least 1.4317068739785483 µs in absolute value; otherwise it is within the noise. A round where either run is invalid has no pair. One pair with a floor: a screen (beats the floor when lower by at least the floor, else not better), never a verdict. No pair: no verdict. No floor: not judged (the floor comes from an A/A calibration).

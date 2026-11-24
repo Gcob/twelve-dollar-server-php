@@ -1,0 +1,36 @@
+steplab: 2 variant(s) x 3 round(s), 7500 req/s for 60s (think scale 0.02, 60000 idle connections), warm-up 750,60, into lab/results/2026-11-23-x86-calibration/pairs
+[1/6] round 1, skeleton
+  TIME_WAIT before: 27732 on the busiest address, 61571 in all on the clients' addresses, 61571 on the VM, waited 0 s
+  valid, 7395.8 req/s, 53.6 us/req, p99 18.646 ms, pass, TIME_WAIT after: 26703 on the busiest address
+[2/6] round 1, s1d
+  TIME_WAIT before: 26703 on the busiest address, 61389 in all on the clients' addresses, 61389 on the VM, waited 0 s
+  valid, 7383.1 req/s, 53.4 us/req, p99 20.388 ms, pass, TIME_WAIT after: 26863 on the busiest address
+[3/6] round 2, skeleton
+  TIME_WAIT before: 26863 on the busiest address, 61415 in all on the clients' addresses, 61415 on the VM, waited 0 s
+  valid, 7387.8 req/s, 53.8 us/req, p99 20.694 ms, pass, TIME_WAIT after: 26861 on the busiest address
+[4/6] round 2, s1d
+  TIME_WAIT before: 26861 on the busiest address, 61396 in all on the clients' addresses, 61397 on the VM, waited 0 s
+  valid, 7382.2 req/s, 53.7 us/req, p99 20.694 ms, pass, TIME_WAIT after: 26867 on the busiest address
+[5/6] round 3, skeleton
+  TIME_WAIT before: 26867 on the busiest address, 61393 in all on the clients' addresses, 61393 on the VM, waited 0 s
+  valid, 7395.3 req/s, 53.2 us/req, p99 20.694 ms, pass, TIME_WAIT after: 26878 on the busiest address
+[6/6] round 3, s1d
+  TIME_WAIT before: 26878 on the busiest address, 61379 in all on the clients' addresses, 61379 on the VM, waited 0 s
+  valid, 7392 req/s, 53.5 us/req, p99 21.319 ms, pass, TIME_WAIT after: 26870 on the busiest address
+
+runs, in the order they ran (one round runs every variant once, the first variant is the reference)
+round  variant        valid      req/s    us/req   p95 ms   p99 ms   tw/addr  result
+    1  skeleton       yes       7395.8      53.6     9.54    18.65     27732  pass
+    1  s1d            yes       7383.1      53.4     9.98    20.39     26703  pass
+    2  skeleton       yes       7387.8      53.8     9.12    20.69     26863  pass
+    2  s1d            yes       7382.2      53.7    10.43    20.69     26861  pass
+    3  skeleton       yes       7395.3      53.2     9.98    20.69     26867  pass
+    3  s1d            yes         7392      53.5     9.98    21.32     26878  pass
+tw/addr: the most TIME_WAIT sockets on one of k6's source addresses when the run started (0 when the runner did not count)
+
+variants (us is the server's CPU per request over the plateau)
+variant         valid median us        min to max   p99 ms  paired differences us     median  verdict
+skeleton          3/3      53.6      53.2 to 53.8    20.69  reference                      -  reference
+s1d               3/3      53.5      53.4 to 53.7    20.69  -0.2 -0.1 +0.3              -0.1  no floor: not judged: run with --floor <µs> from an A/A calibration
+
+Rule: a variant is beyond the noise when it has at least 2 pairs, every paired difference (its µs CPU/req minus the reference's in the same round) has the same sign and the median paired difference is at least the floor in absolute value; otherwise it is within the noise. A round where either run is invalid has no pair. One pair with a floor: a screen (beats the floor when lower by at least the floor, else not better), never a verdict. No pair: no verdict. No floor: not judged (the floor comes from an A/A calibration).

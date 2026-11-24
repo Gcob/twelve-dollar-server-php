@@ -4,7 +4,10 @@
 # of the seed (lab_start_app: the suite's golden answers need a fresh database, and it writes to it); the suite runs in a second
 # container on the same host network, from an image with the four programs it needs (lab/images/Dockerfile.tools).
 #
-#   bash lab/challenge-test.sh --image 8.5 [--server lab/app/server.php] [--ext sockets --ext event] [--port 18110]
+#   bash lab/challenge-test.sh --image 8.5 [--server lab/app/server.php] [--php-ini <php.ini>] [--ext sockets --ext event] [--env K=V]... [--port 18110]
+#
+# --env K=V (repeatable) is passed to the server container, after JWT_SECRET and SQLITE_PATH: the way to run the suite on a variant
+# (`--env APP_SOFT_CONN_LIMIT=0`).
 #
 # Prints the suite's output and exits with its code (0: every check passed). Exit 1 too when the server never answers
 # GET /health (60 s at most, like test/run.sh), 2 on a usage error. Both containers are removed at the end, whatever happens.
@@ -19,19 +22,24 @@ SERVER=lab-challenge-server
 TESTER=lab-challenge-test
 
 usage() {
-  echo "usage: lab/challenge-test.sh --image <variant> [--server <php file under lab/>] [--ext <name>]... [--port <n>]" >&2
+  echo "usage: lab/challenge-test.sh --image <variant> [--server <php file under lab/>] [--php-ini <php.ini under lab/>] [--ext <name>]... [--env K=V]... [--port <n>]" >&2
   exit 2
 }
 fail() { echo "challenge-test: $*" >&2; exit 1; }
 
 image="" server_file="$LAB/app/server.php" port=18110
-LAB_EXT=()
+LAB_EXT=() LAB_ENV=()
+LAB_PHP_INI_FILE=""
+# Why disable SC2034: lab_build_php_flags (lib.sh) reads LAB_PHP_INI_FILE, set below.
+# shellcheck disable=SC2034
 while [ "$#" -gt 0 ]; do
   [ "$#" -ge 2 ] || { echo "missing value for $1" >&2; usage; }
   case "$1" in
     --image) image="$2" ;;
     --server) server_file="$2" ;;
+    --php-ini) LAB_PHP_INI_FILE="$(lab_in_container_path "$2")" || exit 2 ;;
     --ext) LAB_EXT+=("$2") ;;
+    --env) [[ "$2" == ?*=* ]] || { echo "--env must be K=V, got '$2'" >&2; usage; }; LAB_ENV+=("$2") ;;
     --port) port="$2" ;;
     *) echo "unknown option: $1" >&2; usage ;;
   esac

@@ -2,11 +2,14 @@
 # Measures how many idle keep-alive connections one server process holds, and what each one costs in memory.
 #
 #   bash lab/conns.sh --image 8.5 --server lab/servers/bake-swoole.php [--ext <name>]... [--env K=V]... [--label <text>]
-#                     [--steps 1000,5000,...] [--max <n>] [--server-nofile <n>] [--port 18100] [--out <path>]
+#                     [--steps 1000,5000,...] [--max <n>] [--server-nofile <n>] [--port 18100] [--out <path>] [--seccomp-unconfined]
 #
 # --ext names a PHP extension to load (`-d extension=<name>`, repeatable, default `swoole`); --env K=V is passed to the server
 # container (repeatable); --label goes in the JSON and in the default file name after the server's name; --max drops every
-# step above it; --server-nofile replaces the server container's `nofile` limit (65535 in the lab), a test hook.
+# step above it; --server-nofile replaces the server container's `nofile` limit (65535 in the lab), a test hook; --seccomp-unconfined starts
+# the server container without Docker's default seccomp filter, which refuses io_uring (only lab/servers/uring-noop.php needs it). The probe
+# also records how many file descriptors the server process holds at each step (`probe.server_fds` in the JSON, `own fds` in the table): a
+# direct-descriptor server holds almost none per connection.
 #
 # Three containers, all on the host network of Docker's VM, like lab/macro.sh:
 #   server  php-lab:<image> running the server file, 1 CPU, 2 GiB, pinned to the server CPU (lab/lib.sh);
@@ -45,7 +48,7 @@ SETTLE_S=1
 
 usage() {
   echo "usage: lab/conns.sh --image <variant> --server <php file under lab/> [--ext <name>]... [--env K=V]... [--label <text>]" >&2
-  echo "                    [--steps a,b,...] [--max <n>] [--server-nofile <n>] [--port <n>] [--out <path>]" >&2
+  echo "                    [--steps a,b,...] [--max <n>] [--server-nofile <n>] [--port <n>] [--out <path>] [--seccomp-unconfined]" >&2
   exit 2
 }
 fail() { echo "conns: $*" >&2; exit 1; }
@@ -56,6 +59,7 @@ command_line="${command_line//$REPO/.}"
 image="" server_file="" out="" port=18100 label="" steps_arg="$DEFAULT_STEPS" max="" server_nofile=""
 LAB_EXT=() LAB_ENV=()
 while [ "$#" -gt 0 ]; do
+  if [ "$1" = --seccomp-unconfined ]; then export LAB_SERVER_SECCOMP_UNCONFINED=1; shift; continue; fi
   [ "$#" -ge 2 ] || { echo "missing value for $1" >&2; usage; }
   case "$1" in
     --image) image="$2" ;;
@@ -218,14 +222,16 @@ next_event() {
 # read_probe: what the server holds right now, as one JSON object. The established connections are counted before the fresh
 # request, which would add one.
 read_probe() {
-  local mem events tcp fresh
+  local mem events tcp fresh fds
   mem="$(probe memory-now "$server_id" | lines_to_json)" || return 1
   events="$(probe memory-events "$server_id" | lines_to_json)" || return 1
   tcp="$(probe connections "$port" | lines_to_json)" || return 1
   fresh="$(probe fresh-request "$port" /noop | lines_to_json)" || return 1
-  jq -nc --argjson mem "$mem" --argjson events "$events" --argjson tcp "$tcp" --argjson fresh "$fresh" '{
+  fds="$(probe fds "$server_id")" || return 1
+  jq -nc --argjson mem "$mem" --argjson events "$events" --argjson tcp "$tcp" --argjson fresh "$fresh" --arg fds "$fds" '{
     pss_kb: $mem.memory_now.pss_kb, pss_anon_kb: $mem.memory_now.pss_anon_kb, cgroup_current: $mem.memory_now.cgroup_current, oom_kill: $events.memory_events.oom_kill,
-    tcp_established: $tcp.connections.established, fresh_http_code: $fresh.fresh.http_code, fresh_ms: $fresh.fresh.ms}'
+    tcp_established: $tcp.connections.established, fresh_http_code: $fresh.fresh.http_code, fresh_ms: $fresh.fresh.ms,
+    server_fds: ($fds | split(" ") | .[2] | tonumber)}'
 }
 
 next_event
@@ -355,14 +361,14 @@ jq -n \
 # The table reads the JSON just written, so what is printed is what is stored.
 echo
 echo "image $image (PHP $php_version${swoole_version:+, Swoole $swoole_version}), $(basename "$server_file"), server nofile $server_limit"
-printf '  %8s %8s %10s %13s %12s %10s %9s  %s\n' target held "Pss MiB" "Pss_Anon MiB" "mem.cur MiB" "/proc tcp" "fresh ms" status
+printf '  %8s %8s %10s %13s %12s %10s %9s %9s  %s\n' target held "Pss MiB" "Pss_Anon MiB" "mem.cur MiB" "/proc tcp" "fresh ms" "own fds" status
 jq -r '.steps[] | [.target, .held, ((.probe.pss_kb // null) | if . == null then null else . / 1024 * 100 | round / 100 end),
     ((.probe.pss_anon_kb // null) | if . == null then null else . / 1024 * 100 | round / 100 end),
     ((.probe.cgroup_current // null) | if . == null then null else . / 1048576 * 100 | round / 100 end),
-    (.probe.tcp_established // null), (.probe.fresh_ms // null), (.ceiling_reason // "ok")]
+    (.probe.tcp_established // null), (.probe.fresh_ms // null), (.probe.server_fds // null), (.ceiling_reason // "ok")]
   | map(if . == null then "n/a" else . end) | @tsv' "$out" \
-  | while IFS=$'\t' read -r t h pss anon cur tcp fresh status; do
-      printf '  %8s %8s %10s %13s %12s %10s %9s  %s\n' "$t" "$h" "$pss" "$anon" "$cur" "$tcp" "$fresh" "$status"
+  | while IFS=$'\t' read -r t h pss anon cur tcp fresh fds status; do
+      printf '  %8s %8s %10s %13s %12s %10s %9s %9s  %s\n' "$t" "$h" "$pss" "$anon" "$cur" "$tcp" "$fresh" "$fds" "$status"
     done
 IFS=$'\t' read -r maxc maxstep stopped reason pss_slope anon_slope cur_slope used base_pss base_anon base_cur socket < <(
   jq -r '.results as $r | [$r.max_connections, ($r.max_connections_step // "none"), $r.held_at_stop, $r.reason_stopped,

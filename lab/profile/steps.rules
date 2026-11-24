@@ -16,11 +16,16 @@
 # - DiyServer::onReadable and ::onWritable hold almost no PHP of their own: their own samples are libevent's dispatch and epoll_wait's
 #   kernel time (the loop), and DiyServer::settle adds and removes events (libevent calls): loop.
 # - DiyServer::onAccept holds stream_socket_accept and the setup of the new socket: S1, like DiyConnection::close (fclose).
+# - Group commit (APP_GROUP_COMMIT=1): DiyServer::turn, ::flush and the grouped callbacks are the loop's own code (the flush calls the
+#   commit and answers the connections: what is in them is the other frames'); DiyConnection::takePending and ::resume are glue: loop.
+#   app_group_commit is the one frame with S9 work: BEGIN IMMEDIATE, the savepoints and COMMIT run in its own PDOStatement::execute calls
+#   (the write's statement runs in post_insert or like_insert: S6, as without the switch). A write's closure is the app's glue: S3.
 # - DiyConnection::onReadable holds fread (the kernel's receive path is in the syscall): S2, like parse and parseHead. parse also
 #   holds the concatenation of the response head and body, which is S8 work, too small to split without a function of its own.
-# - DiyConnection::advance and ::onWritable hold fwrite (the kernel's send path): S8.
-# - S9 has no frame: SQLite commits inside PDOStatement::execute (autocommit), so a write's commit and its WAL checkpoint are in the
-#   write query function, S6. The row stays in the table, at 0, to say so.
+# - DiyConnection::advance and ::onWritable hold fwrite (the kernel's send path): S8. DiyConnection::respond is the concatenation that
+#   used to be inside parse (the response head and body): S2, so a profile before and after the split reads the same.
+# - S9 has no frame without group commit: SQLite commits inside PDOStatement::execute (autocommit), so a write's commit and its WAL
+#   checkpoint are in the write query function, S6. The row stays in the table, at 0, to say so; with group commit it is app_group_commit.
 # - route_health runs its query inline (no query function of its own), so its own samples are S6.
 # - app_count only counts the request for the telemetry (off in a profile) and hands the response back: it is the router's glue, S3.
 # - DiyProfile::write is the profiler's own flush (stop, merge, rewrite the file), run by a timer on the loop between two requests.
@@ -32,6 +37,13 @@ step DiyServer::run loop
 step DiyServer::onReadable loop
 step DiyServer::onWritable loop
 step DiyServer::settle loop
+step DiyServer::turn loop
+step DiyServer::flush loop
+step DiyServer::onReadableGrouped loop
+step DiyServer::onWritableGrouped loop
+step DiyServer::settleGrouped loop
+step DiyConnection::takePending loop
+step DiyConnection::resume loop
 step DiyConnection::wantsRead loop
 step DiyConnection::wantsWrite loop
 step DiyConnection::pendingBytes loop
@@ -46,12 +58,17 @@ step DiyPeer::__construct S1
 step DiyConnection::onReadable S2
 step DiyConnection::parse S2
 step DiyConnection::parseHead S2
+step DiyConnection::respond S2
 step DiyConnection::reject S2
 step handler_handle S3
 step app_count S3
 step route_post_get S3
 step route_post_create S3
 step route_like S3
+step post_create S3
+step like_create S3
+step {closure:/lab/app/app.php* S3
+step app_group_commit S9
 step route_feed S3
 step route_health S6
 step jwt_verify S4
@@ -78,3 +95,5 @@ route route_feed GET /feed
 route route_post_get GET /posts/:id
 route route_post_create POST /posts
 route route_like POST /posts/:id/like
+route post_create POST /posts
+route like_create POST /posts/:id/like

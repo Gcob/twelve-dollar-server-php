@@ -1,0 +1,3078 @@
+{
+  "date": "2026-11-23T12:07:26Z",
+  "command": "lab/realistic.sh --image 8.5 --think-scale 0.02 --hold 24000,60 --no-series --warmup 2400,60 --out <tmp>/exclusive-1.json --label exclusive --idle 60000 --env APP_LOCKING=exclusive --env APP_TELEMETRY=0",
+  "mode": "hold",
+  "label": "exclusive",
+  "other_containers": {
+    "count": 0
+  },
+  "valid": true,
+  "invalid_reasons": [],
+  "idle": {
+    "requested": 60000,
+    "path": "/health",
+    "held_at_start": 60000,
+    "held_at_end": 60000,
+    "closed_by_server_at_start": 0,
+    "closed_by_server_at_end": 0,
+    "server_established_at_start": 60000,
+    "server_established_at_end": 60000,
+    "server_fds_open_with_idle": 60011,
+    "seconds_to_open": 8.7,
+    "source_addresses": [
+      "127.0.0.2",
+      "127.0.0.3",
+      "127.0.0.4",
+      "127.0.0.5",
+      "127.0.0.9",
+      "127.0.0.10",
+      "127.0.0.11",
+      "127.0.0.12",
+      "127.0.0.13"
+    ],
+    "ports_per_address": 10036,
+    "bind_retries": 200,
+    "client": {
+      "nofile": 200000,
+      "rss_mib": 65.87,
+      "hwm_mib": 89.8,
+      "memory_current_mib_after_opening": 266.18,
+      "memory_current_mib_at_end": 266.16,
+      "memory_peak_mib": 281.15,
+      "anon_mib": 53.97,
+      "socket_buffers_mib": 0,
+      "kernel_mib": 212.2,
+      "budget_mib": 512
+    }
+  },
+  "cold": {
+    "requested": false,
+    "resident_bytes": 249843712,
+    "size_bytes": 249843712,
+    "resident_pages": 60997,
+    "pages": 60997,
+    "resident_share": 1
+  },
+  "profile": null,
+  "per_second_probes": false,
+  "host": {
+    "docker_desktop": "Docker Desktop 4.76.0 (228118)",
+    "engine": "29.5.2",
+    "vm_kernel": "6.12.76-linuxkit",
+    "arch": "arm64",
+    "limits": "--cpus=1 --memory=2g --memory-swap=2g --ulimit nofile=65535:65535"
+  },
+  "server": {
+    "variant": "8.5",
+    "image_id": "sha256:a23707c8168f1cde43edcf9d3fe6aa9a934e184f23992f7b8dc6c76eb8d565d3",
+    "php_version": "8.5.13",
+    "file": "app/server.php",
+    "port": 18120,
+    "php_flags": "-d extension=sockets -d extension=event -d memory_limit=-1 -d opcache.enable_cli=1 -d opcache.jit=tracing -d opcache.jit_buffer_size=32M -d opcache.file_update_protection=0 -d zend.assertions=-1",
+    "ext": [
+      "sockets",
+      "event"
+    ],
+    "env": [
+      "APP_LOCKING=exclusive",
+      "APP_TELEMETRY=0"
+    ],
+    "fds_open_at_boot": 11,
+    "socket": "backlog=4096 tcp_nodelay=1"
+  },
+  "load": {
+    "think_scale": 0.02,
+    "per_vu_rate_rps": 5.292683,
+    "users_per_rps": 9.45,
+    "ramp_s": 10,
+    "plateau_s": 60,
+    "vus": [
+      4535
+    ],
+    "vu_cap": 5400,
+    "vu_cap_bound_by": "file descriptors",
+    "warmup": "2400,60",
+    "pass_rule": "p95 < 500 ms, p99 < 1000 ms, errors < 1 %, achieved >= 97 % of offered"
+  },
+  "k6": {
+    "image": "grafana/k6:1.8.3@sha256:2cd9cd09e4119340a122aaf06f30cf3009c19db23b87954909fba0d3eda58e08",
+    "version": "k6 v1.8.3 (commit/58bbfd8e48, go1.26.4, linux/arm64)",
+    "script": "macro/k6/realistic.js",
+    "local_ips": "127.0.1.1-127.0.1.4",
+    "client_ips_seen": {},
+    "memory_budget_mib": 4351,
+    "peak_memory_mib": 1820.07,
+    "cpu_percent_of_one_cpu": 279.85,
+    "exit_codes": [
+      0
+    ]
+  },
+  "aggregator": {
+    "lag_gate_s": 6,
+    "max_lag_s": 2.069,
+    "rows": 18267022,
+    "unparsed": 0
+  },
+  "k6_connection_errors": 0,
+  "k6_error_codes": {},
+  "server_memory": {
+    "pss_anon_peak_mib": null,
+    "memory_current_peak_mib": null
+  },
+  "server_connections": {
+    "soft_limit": null,
+    "telemetry": null,
+    "fds_peak": null,
+    "fds_peak_note": "not read: --no-series runs no sampler"
+  },
+  "server_cpu_usec_over_the_runs": 40781203,
+  "results": {
+    "steps": [
+      {
+        "window": [
+          1795435584,
+          1795435642
+        ],
+        "seconds": 58,
+        "offered_rps": 24002.317405,
+        "requests": 1362147,
+        "achieved_rps": 23485.293103448275,
+        "users": 221936.0198275862,
+        "cpu_usec_per_request": 25.858142220908334,
+        "latency_ms": {
+          "overall": {
+            "count": 1362147,
+            "p50": 0.28,
+            "p95": 9.124,
+            "p99": 19.79
+          },
+          "endpoints": {
+            "GET /feed": {
+              "count": 627537,
+              "p50": 0.297,
+              "p95": 9.541,
+              "p99": 20.087
+            },
+            "GET /posts/:id": {
+              "count": 627644,
+              "p50": 0.264,
+              "p95": 8.597,
+              "p99": 19.497
+            },
+            "POST /posts": {
+              "count": 12544,
+              "p50": 0.284,
+              "p95": 8.726,
+              "p99": 18.646
+            },
+            "POST /posts/:id/like": {
+              "count": 94422,
+              "p50": 0.284,
+              "p95": 9.124,
+              "p99": 19.79
+            }
+          }
+        },
+        "errors": 0,
+        "error_rate": 0,
+        "pass": true,
+        "reasons": [],
+        "step": 1,
+        "vus": 4535,
+        "k6_cpu_percent_of_one_cpu": 303.41
+      }
+    ],
+    "stopped_at_step": null,
+    "stop_reasons": [],
+    "invalid": "",
+    "stopped_by_harness": false,
+    "k6_exit": 0,
+    "k6_peak_memory_mib": 1820.07,
+    "client_ips_seen": {},
+    "server_pss_anon_peak_mib": null,
+    "server_memory_current_peak_mib": null,
+    "aggregator": {
+      "max_lag_s": 2.069,
+      "rows": 18267022,
+      "requests": 1542398,
+      "unparsed": 0,
+      "bytes": 1647706938,
+      "connection_errors": 0,
+      "error_codes": {}
+    },
+    "per_second": [
+      {
+        "second": 1795435572,
+        "vus": null,
+        "requests": 666,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 360,
+            "p50": 0.315,
+            "p99": 1.118,
+            "max": 1.557
+          },
+          "GET /posts/:id": {
+            "count": 278,
+            "p50": 0.214,
+            "p99": 0.771,
+            "max": 0.828
+          },
+          "POST /posts": {
+            "count": 1,
+            "p50": 0.555,
+            "p99": 0.555,
+            "max": 0.559
+          },
+          "POST /posts/:id/like": {
+            "count": 27,
+            "p50": 0.311,
+            "p99": 1.317,
+            "max": 1.314
+          }
+        },
+        "p95": 0.705,
+        "p99": 1.053,
+        "server_cpu_usec_per_s": 79724
+      },
+      {
+        "second": 1795435573,
+        "vus": 343,
+        "requests": 3011,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 1455,
+            "p50": 0.238,
+            "p99": 1.671,
+            "max": 8.751
+          },
+          "GET /posts/:id": {
+            "count": 1348,
+            "p50": 0.166,
+            "p99": 1.187,
+            "max": 7.611
+          },
+          "POST /posts": {
+            "count": 27,
+            "p50": 0.208,
+            "p99": 0.83,
+            "max": 0.836
+          },
+          "POST /posts/:id/like": {
+            "count": 181,
+            "p50": 0.231,
+            "p99": 7.632,
+            "max": 8.83
+          }
+        },
+        "p95": 0.581,
+        "p99": 1.575,
+        "server_cpu_usec_per_s": 205161
+      },
+      {
+        "second": 1795435574,
+        "vus": 797,
+        "requests": 5362,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 2543,
+            "p50": 0.221,
+            "p99": 3.077,
+            "max": 9.725
+          },
+          "GET /posts/:id": {
+            "count": 2423,
+            "p50": 0.174,
+            "p99": 2.574,
+            "max": 8.455
+          },
+          "POST /posts": {
+            "count": 50,
+            "p50": 0.224,
+            "p99": 2.354,
+            "max": 2.35
+          },
+          "POST /posts/:id/like": {
+            "count": 346,
+            "p50": 0.196,
+            "p99": 6.383,
+            "max": 8.455
+          }
+        },
+        "p95": 1.748,
+        "p99": 2.943,
+        "server_cpu_usec_per_s": 262293
+      },
+      {
+        "second": 1795435575,
+        "vus": 1251,
+        "requests": 7727,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 3620,
+            "p50": 0.154,
+            "p99": 2.498,
+            "max": 7.575
+          },
+          "GET /posts/:id": {
+            "count": 3535,
+            "p50": 0.122,
+            "p99": 2.536,
+            "max": 7.593
+          },
+          "POST /posts": {
+            "count": 53,
+            "p50": 0.166,
+            "p99": 2.09,
+            "max": 2.105
+          },
+          "POST /posts/:id/like": {
+            "count": 519,
+            "p50": 0.141,
+            "p99": 1.801,
+            "max": 7.442
+          }
+        },
+        "p95": 0.479,
+        "p99": 2.498,
+        "server_cpu_usec_per_s": 248021
+      },
+      {
+        "second": 1795435576,
+        "vus": 1704,
+        "requests": 10152,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 4739,
+            "p50": 0.166,
+            "p99": 4.81,
+            "max": 9.401
+          },
+          "GET /posts/:id": {
+            "count": 4634,
+            "p50": 0.137,
+            "p99": 4.084,
+            "max": 7.971
+          },
+          "POST /posts": {
+            "count": 101,
+            "p50": 0.171,
+            "p99": 0.949,
+            "max": 2.058
+          },
+          "POST /posts/:id/like": {
+            "count": 678,
+            "p50": 0.154,
+            "p99": 2.943,
+            "max": 7.201
+          }
+        },
+        "p95": 2.09,
+        "p99": 4.27,
+        "server_cpu_usec_per_s": 306562
+      },
+      {
+        "second": 1795435577,
+        "vus": 2157,
+        "requests": 12506,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 5851,
+            "p50": 0.182,
+            "p99": 6.196,
+            "max": 10.01
+          },
+          "GET /posts/:id": {
+            "count": 5730,
+            "p50": 0.15,
+            "p99": 6.104,
+            "max": 8.089
+          },
+          "POST /posts": {
+            "count": 96,
+            "p50": 0.19,
+            "p99": 5.182,
+            "max": 5.18
+          },
+          "POST /posts/:id/like": {
+            "count": 829,
+            "p50": 0.182,
+            "p99": 6.014,
+            "max": 7.848
+          }
+        },
+        "p95": 2.987,
+        "p99": 6.196,
+        "server_cpu_usec_per_s": 356980
+      },
+      {
+        "second": 1795435578,
+        "vus": 2610,
+        "requests": 14873,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 6954,
+            "p50": 0.205,
+            "p99": 6.289,
+            "max": 9.891
+          },
+          "GET /posts/:id": {
+            "count": 6797,
+            "p50": 0.169,
+            "p99": 6.196,
+            "max": 10.102
+          },
+          "POST /posts": {
+            "count": 136,
+            "p50": 0.174,
+            "p99": 6.576,
+            "max": 8.023
+          },
+          "POST /posts/:id/like": {
+            "count": 986,
+            "p50": 0.193,
+            "p99": 6.576,
+            "max": 7.085
+          }
+        },
+        "p95": 3.791,
+        "p99": 6.289,
+        "server_cpu_usec_per_s": 395747
+      },
+      {
+        "second": 1795435579,
+        "vus": 3067,
+        "requests": 17065,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 7937,
+            "p50": 0.284,
+            "p99": 15.365,
+            "max": 21.665
+          },
+          "GET /posts/:id": {
+            "count": 7849,
+            "p50": 0.245,
+            "p99": 14.476,
+            "max": 19.32
+          },
+          "POST /posts": {
+            "count": 152,
+            "p50": 0.238,
+            "p99": 16.307,
+            "max": 17.651
+          },
+          "POST /posts/:id/like": {
+            "count": 1127,
+            "p50": 0.268,
+            "p99": 14.693,
+            "max": 18.013
+          }
+        },
+        "p95": 7.632,
+        "p99": 14.914,
+        "server_cpu_usec_per_s": 546105
+      },
+      {
+        "second": 1795435580,
+        "vus": 3518,
+        "requests": 19722,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 9107,
+            "p50": 0.234,
+            "p99": 7.084,
+            "max": 12.788
+          },
+          "GET /posts/:id": {
+            "count": 9051,
+            "p50": 0.196,
+            "p99": 6.479,
+            "max": 13.524
+          },
+          "POST /posts": {
+            "count": 199,
+            "p50": 0.205,
+            "p99": 7.746,
+            "max": 7.937
+          },
+          "POST /posts/:id/like": {
+            "count": 1365,
+            "p50": 0.217,
+            "p99": 6.876,
+            "max": 13.963
+          }
+        },
+        "p95": 4.084,
+        "p99": 6.775,
+        "server_cpu_usec_per_s": 525142
+      },
+      {
+        "second": 1795435581,
+        "vus": 3971,
+        "requests": 21747,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10163,
+            "p50": 0.264,
+            "p99": 13.438,
+            "max": 24.388
+          },
+          "GET /posts/:id": {
+            "count": 9954,
+            "p50": 0.224,
+            "p99": 12.851,
+            "max": 24.89
+          },
+          "POST /posts": {
+            "count": 194,
+            "p50": 0.272,
+            "p99": 12.474,
+            "max": 12.962
+          },
+          "POST /posts/:id/like": {
+            "count": 1436,
+            "p50": 0.264,
+            "p99": 15.137,
+            "max": 20.214
+          }
+        },
+        "p95": 4.956,
+        "p99": 13.239,
+        "server_cpu_usec_per_s": 570821
+      },
+      {
+        "second": 1795435582,
+        "vus": 4425,
+        "requests": 23204,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10679,
+            "p50": 0.325,
+            "p99": 21.964,
+            "max": 42.439
+          },
+          "GET /posts/:id": {
+            "count": 10688,
+            "p50": 0.28,
+            "p99": 20.694,
+            "max": 46.351
+          },
+          "POST /posts": {
+            "count": 212,
+            "p50": 0.35,
+            "p99": 18.925,
+            "max": 23.124
+          },
+          "POST /posts/:id/like": {
+            "count": 1625,
+            "p50": 0.306,
+            "p99": 19.79,
+            "max": 33.877
+          }
+        },
+        "p95": 12.108,
+        "p99": 21.319,
+        "server_cpu_usec_per_s": 629466
+      },
+      {
+        "second": 1795435583,
+        "vus": 4535,
+        "requests": 22550,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10416,
+            "p50": 2.574,
+            "p99": 41.662,
+            "max": 48.466
+          },
+          "GET /posts/:id": {
+            "count": 10439,
+            "p50": 1.998,
+            "p99": 41.662,
+            "max": 46.763
+          },
+          "POST /posts": {
+            "count": 174,
+            "p50": 2.059,
+            "p99": 41.047,
+            "max": 41.37
+          },
+          "POST /posts/:id/like": {
+            "count": 1521,
+            "p50": 2.251,
+            "p99": 41.662,
+            "max": 44.656
+          }
+        },
+        "p95": 38.673,
+        "p99": 41.662,
+        "server_cpu_usec_per_s": 784024
+      },
+      {
+        "second": 1795435584,
+        "vus": 4535,
+        "requests": 23530,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10871,
+            "p50": 0.288,
+            "p99": 22.967,
+            "max": 57.191
+          },
+          "GET /posts/:id": {
+            "count": 10788,
+            "p50": 0.252,
+            "p99": 25.113,
+            "max": 57.149
+          },
+          "POST /posts": {
+            "count": 238,
+            "p50": 0.325,
+            "p99": 34.846,
+            "max": 40.469
+          },
+          "POST /posts/:id/like": {
+            "count": 1633,
+            "p50": 0.264,
+            "p99": 25.113,
+            "max": 41.935
+          }
+        },
+        "p95": 8.857,
+        "p99": 24.742,
+        "server_cpu_usec_per_s": 599445
+      },
+      {
+        "second": 1795435585,
+        "vus": 4535,
+        "requests": 22857,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10479,
+            "p50": 0.335,
+            "p99": 24.742,
+            "max": 58.698
+          },
+          "GET /posts/:id": {
+            "count": 10564,
+            "p50": 0.28,
+            "p99": 24.016,
+            "max": 58.217
+          },
+          "POST /posts": {
+            "count": 204,
+            "p50": 0.383,
+            "p99": 22.967,
+            "max": 33.249
+          },
+          "POST /posts/:id/like": {
+            "count": 1610,
+            "p50": 0.306,
+            "p99": 27.054,
+            "max": 47.665
+          }
+        },
+        "p95": 14.262,
+        "p99": 24.376,
+        "server_cpu_usec_per_s": 614305
+      },
+      {
+        "second": 1795435586,
+        "vus": 4535,
+        "requests": 23849,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10960,
+            "p50": 0.284,
+            "p99": 19.79,
+            "max": 29.342
+          },
+          "GET /posts/:id": {
+            "count": 10983,
+            "p50": 0.245,
+            "p99": 19.497,
+            "max": 28.832
+          },
+          "POST /posts": {
+            "count": 225,
+            "p50": 0.264,
+            "p99": 18.925,
+            "max": 19.248
+          },
+          "POST /posts/:id/like": {
+            "count": 1681,
+            "p50": 0.284,
+            "p99": 21.004,
+            "max": 28.286
+          }
+        },
+        "p95": 13.438,
+        "p99": 19.79,
+        "server_cpu_usec_per_s": 589014
+      },
+      {
+        "second": 1795435587,
+        "vus": 4535,
+        "requests": 23401,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10888,
+            "p50": 0.26,
+            "p99": 22.627,
+            "max": 44.095
+          },
+          "GET /posts/:id": {
+            "count": 10756,
+            "p50": 0.234,
+            "p99": 24.376,
+            "max": 43.677
+          },
+          "POST /posts": {
+            "count": 233,
+            "p50": 0.288,
+            "p99": 23.311,
+            "max": 25.856
+          },
+          "POST /posts/:id/like": {
+            "count": 1524,
+            "p50": 0.241,
+            "p99": 22.967,
+            "max": 40.405
+          }
+        },
+        "p95": 9.977,
+        "p99": 23.311,
+        "server_cpu_usec_per_s": 586927
+      },
+      {
+        "second": 1795435588,
+        "vus": 4535,
+        "requests": 23032,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10523,
+            "p50": 0.32,
+            "p99": 18.37,
+            "max": 37.732
+          },
+          "GET /posts/:id": {
+            "count": 10633,
+            "p50": 0.284,
+            "p99": 18.925,
+            "max": 35.307
+          },
+          "POST /posts": {
+            "count": 202,
+            "p50": 0.306,
+            "p99": 15.595,
+            "max": 28.473
+          },
+          "POST /posts/:id/like": {
+            "count": 1674,
+            "p50": 0.306,
+            "p99": 17.052,
+            "max": 41.285
+          }
+        },
+        "p95": 9.684,
+        "p99": 18.37,
+        "server_cpu_usec_per_s": 616520
+      },
+      {
+        "second": 1795435589,
+        "vus": 4535,
+        "requests": 23569,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10863,
+            "p50": 0.335,
+            "p99": 14.914,
+            "max": 31.191
+          },
+          "GET /posts/:id": {
+            "count": 10926,
+            "p50": 0.28,
+            "p99": 14.914,
+            "max": 36.491
+          },
+          "POST /posts": {
+            "count": 213,
+            "p50": 0.306,
+            "p99": 17.308,
+            "max": 28.198
+          },
+          "POST /posts/:id/like": {
+            "count": 1567,
+            "p50": 0.335,
+            "p99": 14.693,
+            "max": 20.38
+          }
+        },
+        "p95": 9.83,
+        "p99": 14.914,
+        "server_cpu_usec_per_s": 630572
+      },
+      {
+        "second": 1795435590,
+        "vus": 4535,
+        "requests": 23589,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10922,
+            "p50": 0.26,
+            "p99": 19.209,
+            "max": 35.086
+          },
+          "GET /posts/:id": {
+            "count": 10827,
+            "p50": 0.234,
+            "p99": 18.646,
+            "max": 35.624
+          },
+          "POST /posts": {
+            "count": 212,
+            "p50": 0.268,
+            "p99": 14.476,
+            "max": 16.742
+          },
+          "POST /posts/:id/like": {
+            "count": 1628,
+            "p50": 0.256,
+            "p99": 22.293,
+            "max": 35.376
+          }
+        },
+        "p95": 6.289,
+        "p99": 19.209,
+        "server_cpu_usec_per_s": 585216
+      },
+      {
+        "second": 1795435591,
+        "vus": 4535,
+        "requests": 23006,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10581,
+            "p50": 0.32,
+            "p99": 16.8,
+            "max": 28.356
+          },
+          "GET /posts/:id": {
+            "count": 10639,
+            "p50": 0.284,
+            "p99": 16.066,
+            "max": 28.536
+          },
+          "POST /posts": {
+            "count": 215,
+            "p50": 0.366,
+            "p99": 16.307,
+            "max": 26.212
+          },
+          "POST /posts/:id/like": {
+            "count": 1571,
+            "p50": 0.311,
+            "p99": 15.137,
+            "max": 23.319
+          }
+        },
+        "p95": 8.857,
+        "p99": 16.307,
+        "server_cpu_usec_per_s": 629308
+      },
+      {
+        "second": 1795435592,
+        "vus": 4535,
+        "requests": 23906,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 11013,
+            "p50": 0.288,
+            "p99": 14.051,
+            "max": 22.546
+          },
+          "GET /posts/:id": {
+            "count": 11006,
+            "p50": 0.238,
+            "p99": 13.239,
+            "max": 25.882
+          },
+          "POST /posts": {
+            "count": 214,
+            "p50": 0.245,
+            "p99": 12.851,
+            "max": 13.484
+          },
+          "POST /posts/:id/like": {
+            "count": 1673,
+            "p50": 0.264,
+            "p99": 14.262,
+            "max": 34.615
+          }
+        },
+        "p95": 8.1,
+        "p99": 13.844,
+        "server_cpu_usec_per_s": 605696
+      },
+      {
+        "second": 1795435593,
+        "vus": 4535,
+        "requests": 23671,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10918,
+            "p50": 0.26,
+            "p99": 11.579,
+            "max": 35.816
+          },
+          "GET /posts/:id": {
+            "count": 10880,
+            "p50": 0.231,
+            "p99": 11.408,
+            "max": 37.317
+          },
+          "POST /posts": {
+            "count": 228,
+            "p50": 0.224,
+            "p99": 11.752,
+            "max": 14.219
+          },
+          "POST /posts/:id/like": {
+            "count": 1645,
+            "p50": 0.245,
+            "p99": 12.851,
+            "max": 30.755
+          }
+        },
+        "p95": 4.81,
+        "p99": 11.752,
+        "server_cpu_usec_per_s": 596209
+      },
+      {
+        "second": 1795435594,
+        "vus": 4535,
+        "requests": 23175,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10667,
+            "p50": 0.302,
+            "p99": 15.829,
+            "max": 30.511
+          },
+          "GET /posts/:id": {
+            "count": 10690,
+            "p50": 0.252,
+            "p99": 14.693,
+            "max": 30.176
+          },
+          "POST /posts": {
+            "count": 221,
+            "p50": 0.284,
+            "p99": 10.909,
+            "max": 14.529
+          },
+          "POST /posts/:id/like": {
+            "count": 1597,
+            "p50": 0.284,
+            "p99": 16.8,
+            "max": 29.244
+          }
+        },
+        "p95": 8.597,
+        "p99": 15.365,
+        "server_cpu_usec_per_s": 619593
+      },
+      {
+        "second": 1795435595,
+        "vus": 4535,
+        "requests": 23742,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10919,
+            "p50": 0.288,
+            "p99": 21.964,
+            "max": 52.533
+          },
+          "GET /posts/:id": {
+            "count": 10940,
+            "p50": 0.245,
+            "p99": 20.694,
+            "max": 52.967
+          },
+          "POST /posts": {
+            "count": 216,
+            "p50": 0.252,
+            "p99": 13.438,
+            "max": 21.345
+          },
+          "POST /posts/:id/like": {
+            "count": 1667,
+            "p50": 0.26,
+            "p99": 23.311,
+            "max": 40.497
+          }
+        },
+        "p95": 9.261,
+        "p99": 21.319,
+        "server_cpu_usec_per_s": 599615
+      },
+      {
+        "second": 1795435596,
+        "vus": 4535,
+        "requests": 23609,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10908,
+            "p50": 0.276,
+            "p99": 16.066,
+            "max": 29.761
+          },
+          "GET /posts/:id": {
+            "count": 10827,
+            "p50": 0.249,
+            "p99": 16.552,
+            "max": 29.874
+          },
+          "POST /posts": {
+            "count": 231,
+            "p50": 0.306,
+            "p99": 16.066,
+            "max": 18.637
+          },
+          "POST /posts/:id/like": {
+            "count": 1643,
+            "p50": 0.268,
+            "p99": 17.308,
+            "max": 30.751
+          }
+        },
+        "p95": 6.289,
+        "p99": 16.307,
+        "server_cpu_usec_per_s": 585795
+      },
+      {
+        "second": 1795435597,
+        "vus": 4535,
+        "requests": 23321,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10714,
+            "p50": 0.284,
+            "p99": 16.066,
+            "max": 34.338
+          },
+          "GET /posts/:id": {
+            "count": 10797,
+            "p50": 0.249,
+            "p99": 16.552,
+            "max": 33.028
+          },
+          "POST /posts": {
+            "count": 219,
+            "p50": 0.288,
+            "p99": 14.262,
+            "max": 18.247
+          },
+          "POST /posts/:id/like": {
+            "count": 1591,
+            "p50": 0.28,
+            "p99": 17.568,
+            "max": 31.45
+          }
+        },
+        "p95": 8.726,
+        "p99": 16.552,
+        "server_cpu_usec_per_s": 615418
+      },
+      {
+        "second": 1795435598,
+        "vus": 4535,
+        "requests": 23723,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10988,
+            "p50": 0.28,
+            "p99": 13.239,
+            "max": 27.839
+          },
+          "GET /posts/:id": {
+            "count": 10937,
+            "p50": 0.249,
+            "p99": 14.051,
+            "max": 30.608
+          },
+          "POST /posts": {
+            "count": 204,
+            "p50": 0.249,
+            "p99": 14.262,
+            "max": 23.869
+          },
+          "POST /posts/:id/like": {
+            "count": 1594,
+            "p50": 0.288,
+            "p99": 11.929,
+            "max": 27.501
+          }
+        },
+        "p95": 6.876,
+        "p99": 13.438,
+        "server_cpu_usec_per_s": 599021
+      },
+      {
+        "second": 1795435599,
+        "vus": 4535,
+        "requests": 23214,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10764,
+            "p50": 0.345,
+            "p99": 25.49,
+            "max": 52.245
+          },
+          "GET /posts/:id": {
+            "count": 10671,
+            "p50": 0.325,
+            "p99": 25.872,
+            "max": 53.058
+          },
+          "POST /posts": {
+            "count": 223,
+            "p50": 0.306,
+            "p99": 21.319,
+            "max": 43.373
+          },
+          "POST /posts/:id/like": {
+            "count": 1556,
+            "p50": 0.325,
+            "p99": 21.319,
+            "max": 40.279
+          }
+        },
+        "p95": 16.552,
+        "p99": 25.49,
+        "server_cpu_usec_per_s": 656349
+      },
+      {
+        "second": 1795435600,
+        "vus": 4535,
+        "requests": 23443,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10745,
+            "p50": 0.315,
+            "p99": 22.627,
+            "max": 51.981
+          },
+          "GET /posts/:id": {
+            "count": 10817,
+            "p50": 0.28,
+            "p99": 20.087,
+            "max": 51.384
+          },
+          "POST /posts": {
+            "count": 210,
+            "p50": 0.249,
+            "p99": 21.639,
+            "max": 29.106
+          },
+          "POST /posts/:id/like": {
+            "count": 1671,
+            "p50": 0.297,
+            "p99": 21.319,
+            "max": 31.906
+          }
+        },
+        "p95": 9.83,
+        "p99": 21.639,
+        "server_cpu_usec_per_s": 633795
+      },
+      {
+        "second": 1795435601,
+        "vus": 4535,
+        "requests": 23644,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10883,
+            "p50": 0.284,
+            "p99": 12.851,
+            "max": 21.025
+          },
+          "GET /posts/:id": {
+            "count": 10907,
+            "p50": 0.256,
+            "p99": 12.474,
+            "max": 24.517
+          },
+          "POST /posts": {
+            "count": 225,
+            "p50": 0.256,
+            "p99": 13.438,
+            "max": 14.867
+          },
+          "POST /posts/:id/like": {
+            "count": 1629,
+            "p50": 0.268,
+            "p99": 13.639,
+            "max": 26.731
+          }
+        },
+        "p95": 6.289,
+        "p99": 12.851,
+        "server_cpu_usec_per_s": 593040
+      },
+      {
+        "second": 1795435602,
+        "vus": 4535,
+        "requests": 23618,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10872,
+            "p50": 0.293,
+            "p99": 16.307,
+            "max": 31.909
+          },
+          "GET /posts/:id": {
+            "count": 10867,
+            "p50": 0.26,
+            "p99": 15.595,
+            "max": 31.727
+          },
+          "POST /posts": {
+            "count": 236,
+            "p50": 0.284,
+            "p99": 17.568,
+            "max": 20.903
+          },
+          "POST /posts/:id/like": {
+            "count": 1643,
+            "p50": 0.28,
+            "p99": 14.476,
+            "max": 27.633
+          }
+        },
+        "p95": 6.576,
+        "p99": 16.066,
+        "server_cpu_usec_per_s": 592347
+      },
+      {
+        "second": 1795435603,
+        "vus": 4535,
+        "requests": 23093,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10591,
+            "p50": 0.297,
+            "p99": 17.308,
+            "max": 47.886
+          },
+          "GET /posts/:id": {
+            "count": 10656,
+            "p50": 0.268,
+            "p99": 17.052,
+            "max": 42.031
+          },
+          "POST /posts": {
+            "count": 224,
+            "p50": 0.288,
+            "p99": 13.239,
+            "max": 22.258
+          },
+          "POST /posts/:id/like": {
+            "count": 1622,
+            "p50": 0.28,
+            "p99": 16.307,
+            "max": 39.029
+          }
+        },
+        "p95": 6.979,
+        "p99": 17.052,
+        "server_cpu_usec_per_s": 606239
+      },
+      {
+        "second": 1795435604,
+        "vus": 4535,
+        "requests": 24000,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 11138,
+            "p50": 0.284,
+            "p99": 13.844,
+            "max": 63.392
+          },
+          "GET /posts/:id": {
+            "count": 11042,
+            "p50": 0.245,
+            "p99": 13.639,
+            "max": 52.983
+          },
+          "POST /posts": {
+            "count": 202,
+            "p50": 0.315,
+            "p99": 12.108,
+            "max": 18.353
+          },
+          "POST /posts/:id/like": {
+            "count": 1618,
+            "p50": 0.272,
+            "p99": 15.595,
+            "max": 50.86
+          }
+        },
+        "p95": 7.862,
+        "p99": 13.844,
+        "server_cpu_usec_per_s": 612568
+      },
+      {
+        "second": 1795435605,
+        "vus": 4535,
+        "requests": 23508,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10827,
+            "p50": 0.264,
+            "p99": 19.79,
+            "max": 41.565
+          },
+          "GET /posts/:id": {
+            "count": 10836,
+            "p50": 0.231,
+            "p99": 18.646,
+            "max": 43.2
+          },
+          "POST /posts": {
+            "count": 205,
+            "p50": 0.264,
+            "p99": 17.831,
+            "max": 22.455
+          },
+          "POST /posts/:id/like": {
+            "count": 1640,
+            "p50": 0.272,
+            "p99": 21.639,
+            "max": 35.637
+          }
+        },
+        "p95": 6.775,
+        "p99": 19.497,
+        "server_cpu_usec_per_s": 589855
+      },
+      {
+        "second": 1795435606,
+        "vus": 4535,
+        "requests": 23166,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10619,
+            "p50": 0.306,
+            "p99": 22.967,
+            "max": 50.612
+          },
+          "GET /posts/:id": {
+            "count": 10686,
+            "p50": 0.272,
+            "p99": 21.964,
+            "max": 45.766
+          },
+          "POST /posts": {
+            "count": 213,
+            "p50": 0.28,
+            "p99": 22.627,
+            "max": 37.577
+          },
+          "POST /posts/:id/like": {
+            "count": 1648,
+            "p50": 0.288,
+            "p99": 19.209,
+            "max": 51.517
+          }
+        },
+        "p95": 10.433,
+        "p99": 22.627,
+        "server_cpu_usec_per_s": 624652
+      },
+      {
+        "second": 1795435607,
+        "vus": 4535,
+        "requests": 23809,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10975,
+            "p50": 0.325,
+            "p99": 17.831,
+            "max": 30.203
+          },
+          "GET /posts/:id": {
+            "count": 10999,
+            "p50": 0.276,
+            "p99": 17.308,
+            "max": 29.132
+          },
+          "POST /posts": {
+            "count": 216,
+            "p50": 0.297,
+            "p99": 13.438,
+            "max": 13.89
+          },
+          "POST /posts/:id/like": {
+            "count": 1619,
+            "p50": 0.325,
+            "p99": 15.595,
+            "max": 28.341
+          }
+        },
+        "p95": 10.279,
+        "p99": 17.308,
+        "server_cpu_usec_per_s": 636483
+      },
+      {
+        "second": 1795435608,
+        "vus": 4535,
+        "requests": 23330,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10791,
+            "p50": 0.284,
+            "p99": 27.054,
+            "max": 42.953
+          },
+          "GET /posts/:id": {
+            "count": 10700,
+            "p50": 0.252,
+            "p99": 25.872,
+            "max": 42.283
+          },
+          "POST /posts": {
+            "count": 215,
+            "p50": 0.264,
+            "p99": 14.262,
+            "max": 16.772
+          },
+          "POST /posts/:id/like": {
+            "count": 1624,
+            "p50": 0.28,
+            "p99": 29.145,
+            "max": 36.884
+          }
+        },
+        "p95": 12.474,
+        "p99": 26.654,
+        "server_cpu_usec_per_s": 584689
+      },
+      {
+        "second": 1795435609,
+        "vus": 4535,
+        "requests": 23390,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10742,
+            "p50": 0.311,
+            "p99": 30.026,
+            "max": 62.397
+          },
+          "GET /posts/:id": {
+            "count": 10804,
+            "p50": 0.276,
+            "p99": 29.145,
+            "max": 66.478
+          },
+          "POST /posts": {
+            "count": 218,
+            "p50": 0.28,
+            "p99": 30.933,
+            "max": 43.476
+          },
+          "POST /posts/:id/like": {
+            "count": 1626,
+            "p50": 0.288,
+            "p99": 33.324,
+            "max": 54.813
+          }
+        },
+        "p95": 14.051,
+        "p99": 30.026,
+        "server_cpu_usec_per_s": 602703
+      },
+      {
+        "second": 1795435610,
+        "vus": 4535,
+        "requests": 23259,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10839,
+            "p50": 0.372,
+            "p99": 18.37,
+            "max": 46.246
+          },
+          "GET /posts/:id": {
+            "count": 10637,
+            "p50": 0.306,
+            "p99": 17.568,
+            "max": 51.451
+          },
+          "POST /posts": {
+            "count": 240,
+            "p50": 0.366,
+            "p99": 25.113,
+            "max": 102.338
+          },
+          "POST /posts/:id/like": {
+            "count": 1543,
+            "p50": 0.335,
+            "p99": 19.79,
+            "max": 33.589
+          }
+        },
+        "p95": 9.977,
+        "p99": 18.099,
+        "server_cpu_usec_per_s": 640989
+      },
+      {
+        "second": 1795435611,
+        "vus": 4535,
+        "requests": 23663,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10762,
+            "p50": 0.268,
+            "p99": 16.552,
+            "max": 26.952
+          },
+          "GET /posts/:id": {
+            "count": 11037,
+            "p50": 0.231,
+            "p99": 15.595,
+            "max": 26.015
+          },
+          "POST /posts": {
+            "count": 225,
+            "p50": 0.315,
+            "p99": 18.646,
+            "max": 23.82
+          },
+          "POST /posts/:id/like": {
+            "count": 1639,
+            "p50": 0.264,
+            "p99": 17.052,
+            "max": 24.614
+          }
+        },
+        "p95": 6.775,
+        "p99": 16.307,
+        "server_cpu_usec_per_s": 596465
+      },
+      {
+        "second": 1795435612,
+        "vus": 4535,
+        "requests": 23620,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10938,
+            "p50": 0.288,
+            "p99": 11.239,
+            "max": 23.952
+          },
+          "GET /posts/:id": {
+            "count": 10790,
+            "p50": 0.252,
+            "p99": 11.073,
+            "max": 20.592
+          },
+          "POST /posts": {
+            "count": 227,
+            "p50": 0.276,
+            "p99": 10.909,
+            "max": 22.806
+          },
+          "POST /posts/:id/like": {
+            "count": 1665,
+            "p50": 0.28,
+            "p99": 11.073,
+            "max": 22.906
+          }
+        },
+        "p95": 6.196,
+        "p99": 11.073,
+        "server_cpu_usec_per_s": 583100
+      },
+      {
+        "second": 1795435613,
+        "vus": 4535,
+        "requests": 23590,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10841,
+            "p50": 0.26,
+            "p99": 11.073,
+            "max": 24.37
+          },
+          "GET /posts/:id": {
+            "count": 10926,
+            "p50": 0.224,
+            "p99": 10.748,
+            "max": 18.235
+          },
+          "POST /posts": {
+            "count": 205,
+            "p50": 0.272,
+            "p99": 11.408,
+            "max": 12.715
+          },
+          "POST /posts/:id/like": {
+            "count": 1618,
+            "p50": 0.245,
+            "p99": 10.433,
+            "max": 16.218
+          }
+        },
+        "p95": 7.408,
+        "p99": 10.909,
+        "server_cpu_usec_per_s": 583276
+      },
+      {
+        "second": 1795435614,
+        "vus": 4535,
+        "requests": 23421,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10907,
+            "p50": 0.366,
+            "p99": 18.099,
+            "max": 37.978
+          },
+          "GET /posts/:id": {
+            "count": 10699,
+            "p50": 0.32,
+            "p99": 16.066,
+            "max": 39.059
+          },
+          "POST /posts": {
+            "count": 225,
+            "p50": 0.35,
+            "p99": 16.066,
+            "max": 18.77
+          },
+          "POST /posts/:id/like": {
+            "count": 1590,
+            "p50": 0.325,
+            "p99": 16.552,
+            "max": 32.707
+          }
+        },
+        "p95": 9.977,
+        "p99": 17.308,
+        "server_cpu_usec_per_s": 638412
+      },
+      {
+        "second": 1795435615,
+        "vus": 4535,
+        "requests": 23531,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10693,
+            "p50": 0.276,
+            "p99": 16.066,
+            "max": 33.405
+          },
+          "GET /posts/:id": {
+            "count": 10963,
+            "p50": 0.245,
+            "p99": 15.137,
+            "max": 30.59
+          },
+          "POST /posts": {
+            "count": 219,
+            "p50": 0.234,
+            "p99": 14.476,
+            "max": 18.133
+          },
+          "POST /posts/:id/like": {
+            "count": 1656,
+            "p50": 0.276,
+            "p99": 14.914,
+            "max": 29.033
+          }
+        },
+        "p95": 8.726,
+        "p99": 15.595,
+        "server_cpu_usec_per_s": 588538
+      },
+      {
+        "second": 1795435616,
+        "vus": 4535,
+        "requests": 23701,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 11044,
+            "p50": 0.26,
+            "p99": 10.279,
+            "max": 30.598
+          },
+          "GET /posts/:id": {
+            "count": 10883,
+            "p50": 0.227,
+            "p99": 9.977,
+            "max": 30.25
+          },
+          "POST /posts": {
+            "count": 188,
+            "p50": 0.238,
+            "p99": 9.541,
+            "max": 17.064
+          },
+          "POST /posts/:id/like": {
+            "count": 1586,
+            "p50": 0.26,
+            "p99": 11.408,
+            "max": 20.91
+          }
+        },
+        "p95": 6.014,
+        "p99": 10.127,
+        "server_cpu_usec_per_s": 589036
+      },
+      {
+        "second": 1795435617,
+        "vus": 4535,
+        "requests": 23429,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10752,
+            "p50": 0.284,
+            "p99": 15.137,
+            "max": 39.864
+          },
+          "GET /posts/:id": {
+            "count": 10817,
+            "p50": 0.249,
+            "p99": 15.137,
+            "max": 40.092
+          },
+          "POST /posts": {
+            "count": 219,
+            "p50": 0.245,
+            "p99": 17.308,
+            "max": 30.671
+          },
+          "POST /posts/:id/like": {
+            "count": 1641,
+            "p50": 0.26,
+            "p99": 15.365,
+            "max": 27.927
+          }
+        },
+        "p95": 6.675,
+        "p99": 15.137,
+        "server_cpu_usec_per_s": 601159
+      },
+      {
+        "second": 1795435618,
+        "vus": 4535,
+        "requests": 23734,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10927,
+            "p50": 0.311,
+            "p99": 15.365,
+            "max": 28.122
+          },
+          "GET /posts/:id": {
+            "count": 10907,
+            "p50": 0.276,
+            "p99": 14.693,
+            "max": 31.021
+          },
+          "POST /posts": {
+            "count": 225,
+            "p50": 0.288,
+            "p99": 13.043,
+            "max": 16.014
+          },
+          "POST /posts/:id/like": {
+            "count": 1675,
+            "p50": 0.288,
+            "p99": 14.914,
+            "max": 27.638
+          }
+        },
+        "p95": 9.124,
+        "p99": 15.137,
+        "server_cpu_usec_per_s": 618928
+      },
+      {
+        "second": 1795435619,
+        "vus": 4535,
+        "requests": 23557,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10821,
+            "p50": 0.361,
+            "p99": 13.639,
+            "max": 32.035
+          },
+          "GET /posts/:id": {
+            "count": 10841,
+            "p50": 0.306,
+            "p99": 13.639,
+            "max": 27.345
+          },
+          "POST /posts": {
+            "count": 230,
+            "p50": 0.32,
+            "p99": 11.239,
+            "max": 14.617
+          },
+          "POST /posts/:id/like": {
+            "count": 1665,
+            "p50": 0.335,
+            "p99": 13.844,
+            "max": 17.495
+          }
+        },
+        "p95": 9.261,
+        "p99": 13.639,
+        "server_cpu_usec_per_s": 637717
+      },
+      {
+        "second": 1795435620,
+        "vus": 4535,
+        "requests": 23522,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10875,
+            "p50": 0.355,
+            "p99": 24.376,
+            "max": 52.672
+          },
+          "GET /posts/:id": {
+            "count": 10789,
+            "p50": 0.32,
+            "p99": 24.376,
+            "max": 53.407
+          },
+          "POST /posts": {
+            "count": 204,
+            "p50": 0.276,
+            "p99": 21.319,
+            "max": 45.598
+          },
+          "POST /posts/:id/like": {
+            "count": 1654,
+            "p50": 0.34,
+            "p99": 23.311,
+            "max": 48.187
+          }
+        },
+        "p95": 14.262,
+        "p99": 24.376,
+        "server_cpu_usec_per_s": 642694
+      },
+      {
+        "second": 1795435621,
+        "vus": 4535,
+        "requests": 23199,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10559,
+            "p50": 0.325,
+            "p99": 24.016,
+            "max": 40.179
+          },
+          "GET /posts/:id": {
+            "count": 10750,
+            "p50": 0.293,
+            "p99": 22.293,
+            "max": 34.632
+          },
+          "POST /posts": {
+            "count": 195,
+            "p50": 0.33,
+            "p99": 17.052,
+            "max": 19.074
+          },
+          "POST /posts/:id/like": {
+            "count": 1695,
+            "p50": 0.288,
+            "p99": 18.37,
+            "max": 32.11
+          }
+        },
+        "p95": 9.83,
+        "p99": 22.627,
+        "server_cpu_usec_per_s": 617632
+      },
+      {
+        "second": 1795435622,
+        "vus": 4535,
+        "requests": 23436,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10804,
+            "p50": 0.366,
+            "p99": 25.49,
+            "max": 66.057
+          },
+          "GET /posts/:id": {
+            "count": 10810,
+            "p50": 0.335,
+            "p99": 25.113,
+            "max": 62.503
+          },
+          "POST /posts": {
+            "count": 205,
+            "p50": 0.32,
+            "p99": 14.914,
+            "max": 18.672
+          },
+          "POST /posts/:id/like": {
+            "count": 1617,
+            "p50": 0.361,
+            "p99": 23.661,
+            "max": 58.535
+          }
+        },
+        "p95": 12.289,
+        "p99": 25.113,
+        "server_cpu_usec_per_s": 660965
+      },
+      {
+        "second": 1795435623,
+        "vus": 4535,
+        "requests": 23463,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10913,
+            "p50": 0.272,
+            "p99": 23.661,
+            "max": 39.023
+          },
+          "GET /posts/:id": {
+            "count": 10675,
+            "p50": 0.252,
+            "p99": 23.661,
+            "max": 36.572
+          },
+          "POST /posts": {
+            "count": 232,
+            "p50": 0.26,
+            "p99": 24.742,
+            "max": 26.812
+          },
+          "POST /posts/:id/like": {
+            "count": 1643,
+            "p50": 0.26,
+            "p99": 23.661,
+            "max": 34.925
+          }
+        },
+        "p95": 7.19,
+        "p99": 23.661,
+        "server_cpu_usec_per_s": 594741
+      },
+      {
+        "second": 1795435624,
+        "vus": 4535,
+        "requests": 23881,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10909,
+            "p50": 0.272,
+            "p99": 16.066,
+            "max": 28.674
+          },
+          "GET /posts/:id": {
+            "count": 11111,
+            "p50": 0.245,
+            "p99": 14.914,
+            "max": 29.537
+          },
+          "POST /posts": {
+            "count": 212,
+            "p50": 0.293,
+            "p99": 13.639,
+            "max": 17.509
+          },
+          "POST /posts/:id/like": {
+            "count": 1649,
+            "p50": 0.268,
+            "p99": 14.262,
+            "max": 22.087
+          }
+        },
+        "p95": 7.084,
+        "p99": 15.365,
+        "server_cpu_usec_per_s": 585527
+      },
+      {
+        "second": 1795435625,
+        "vus": 4535,
+        "requests": 22852,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10540,
+            "p50": 0.302,
+            "p99": 21.964,
+            "max": 40.58
+          },
+          "GET /posts/:id": {
+            "count": 10513,
+            "p50": 0.268,
+            "p99": 21.639,
+            "max": 46.501
+          },
+          "POST /posts": {
+            "count": 214,
+            "p50": 0.315,
+            "p99": 20.694,
+            "max": 22.163
+          },
+          "POST /posts/:id/like": {
+            "count": 1585,
+            "p50": 0.284,
+            "p99": 25.872,
+            "max": 42.301
+          }
+        },
+        "p95": 11.929,
+        "p99": 22.293,
+        "server_cpu_usec_per_s": 601420
+      },
+      {
+        "second": 1795435626,
+        "vus": 4535,
+        "requests": 24140,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 11154,
+            "p50": 0.306,
+            "p99": 19.209,
+            "max": 37.858
+          },
+          "GET /posts/:id": {
+            "count": 11147,
+            "p50": 0.272,
+            "p99": 20.087,
+            "max": 38.583
+          },
+          "POST /posts": {
+            "count": 201,
+            "p50": 0.306,
+            "p99": 19.497,
+            "max": 34.197
+          },
+          "POST /posts/:id/like": {
+            "count": 1638,
+            "p50": 0.293,
+            "p99": 16.307,
+            "max": 37.522
+          }
+        },
+        "p95": 7.408,
+        "p99": 19.209,
+        "server_cpu_usec_per_s": 609665
+      },
+      {
+        "second": 1795435627,
+        "vus": 4535,
+        "requests": 23511,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10812,
+            "p50": 0.293,
+            "p99": 11.752,
+            "max": 24.601
+          },
+          "GET /posts/:id": {
+            "count": 10780,
+            "p50": 0.256,
+            "p99": 11.579,
+            "max": 22.733
+          },
+          "POST /posts": {
+            "count": 215,
+            "p50": 0.264,
+            "p99": 13.043,
+            "max": 16.713
+          },
+          "POST /posts/:id/like": {
+            "count": 1704,
+            "p50": 0.272,
+            "p99": 12.474,
+            "max": 22.836
+          }
+        },
+        "p95": 6.289,
+        "p99": 11.752,
+        "server_cpu_usec_per_s": 587397
+      },
+      {
+        "second": 1795435628,
+        "vus": 4535,
+        "requests": 23588,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10897,
+            "p50": 0.28,
+            "p99": 15.829,
+            "max": 50.429
+          },
+          "GET /posts/:id": {
+            "count": 10819,
+            "p50": 0.256,
+            "p99": 16.066,
+            "max": 51.118
+          },
+          "POST /posts": {
+            "count": 210,
+            "p50": 0.234,
+            "p99": 21.964,
+            "max": 23.92
+          },
+          "POST /posts/:id/like": {
+            "count": 1662,
+            "p50": 0.272,
+            "p99": 14.476,
+            "max": 31.068
+          }
+        },
+        "p95": 7.408,
+        "p99": 15.829,
+        "server_cpu_usec_per_s": 592977
+      },
+      {
+        "second": 1795435629,
+        "vus": 4535,
+        "requests": 23439,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10700,
+            "p50": 0.33,
+            "p99": 27.054,
+            "max": 48.676
+          },
+          "GET /posts/:id": {
+            "count": 10854,
+            "p50": 0.302,
+            "p99": 26.654,
+            "max": 48.15
+          },
+          "POST /posts": {
+            "count": 224,
+            "p50": 0.284,
+            "p99": 20.694,
+            "max": 30.461
+          },
+          "POST /posts/:id/like": {
+            "count": 1661,
+            "p50": 0.311,
+            "p99": 25.872,
+            "max": 33.58
+          }
+        },
+        "p95": 13.438,
+        "p99": 27.054,
+        "server_cpu_usec_per_s": 605591
+      },
+      {
+        "second": 1795435630,
+        "vus": 4535,
+        "requests": 23385,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10958,
+            "p50": 0.377,
+            "p99": 25.872,
+            "max": 44.41
+          },
+          "GET /posts/:id": {
+            "count": 10598,
+            "p50": 0.32,
+            "p99": 23.661,
+            "max": 42.001
+          },
+          "POST /posts": {
+            "count": 220,
+            "p50": 0.34,
+            "p99": 21.639,
+            "max": 31.982
+          },
+          "POST /posts/:id/like": {
+            "count": 1609,
+            "p50": 0.345,
+            "p99": 24.016,
+            "max": 34.704
+          }
+        },
+        "p95": 14.051,
+        "p99": 24.742,
+        "server_cpu_usec_per_s": 629947
+      },
+      {
+        "second": 1795435631,
+        "vus": 4535,
+        "requests": 23506,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10670,
+            "p50": 0.268,
+            "p99": 16.066,
+            "max": 29.387
+          },
+          "GET /posts/:id": {
+            "count": 11041,
+            "p50": 0.241,
+            "p99": 15.365,
+            "max": 28.256
+          },
+          "POST /posts": {
+            "count": 209,
+            "p50": 0.231,
+            "p99": 12.474,
+            "max": 16.291
+          },
+          "POST /posts/:id/like": {
+            "count": 1586,
+            "p50": 0.264,
+            "p99": 15.595,
+            "max": 28.005
+          }
+        },
+        "p95": 8.345,
+        "p99": 15.595,
+        "server_cpu_usec_per_s": 587609
+      },
+      {
+        "second": 1795435632,
+        "vus": 4535,
+        "requests": 23480,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10833,
+            "p50": 0.272,
+            "p99": 17.568,
+            "max": 23.892
+          },
+          "GET /posts/:id": {
+            "count": 10747,
+            "p50": 0.241,
+            "p99": 16.8,
+            "max": 25.272
+          },
+          "POST /posts": {
+            "count": 214,
+            "p50": 0.238,
+            "p99": 13.438,
+            "max": 16.899
+          },
+          "POST /posts/:id/like": {
+            "count": 1686,
+            "p50": 0.276,
+            "p99": 17.308,
+            "max": 24.872
+          }
+        },
+        "p95": 7.98,
+        "p99": 17.052,
+        "server_cpu_usec_per_s": 594060
+      },
+      {
+        "second": 1795435633,
+        "vus": 4535,
+        "requests": 23716,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10938,
+            "p50": 0.297,
+            "p99": 23.311,
+            "max": 37.306
+          },
+          "GET /posts/:id": {
+            "count": 10952,
+            "p50": 0.272,
+            "p99": 21.319,
+            "max": 32.301
+          },
+          "POST /posts": {
+            "count": 215,
+            "p50": 0.268,
+            "p99": 17.568,
+            "max": 28.423
+          },
+          "POST /posts/:id/like": {
+            "count": 1611,
+            "p50": 0.276,
+            "p99": 24.376,
+            "max": 32.33
+          }
+        },
+        "p95": 6.979,
+        "p99": 22.627,
+        "server_cpu_usec_per_s": 601984
+      },
+      {
+        "second": 1795435634,
+        "vus": 4535,
+        "requests": 23259,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10835,
+            "p50": 0.34,
+            "p99": 22.627,
+            "max": 44.371
+          },
+          "GET /posts/:id": {
+            "count": 10637,
+            "p50": 0.311,
+            "p99": 25.113,
+            "max": 43.732
+          },
+          "POST /posts": {
+            "count": 222,
+            "p50": 0.33,
+            "p99": 19.209,
+            "max": 25.509
+          },
+          "POST /posts/:id/like": {
+            "count": 1565,
+            "p50": 0.33,
+            "p99": 25.49,
+            "max": 40.05
+          }
+        },
+        "p95": 11.579,
+        "p99": 24.016,
+        "server_cpu_usec_per_s": 638926
+      },
+      {
+        "second": 1795435635,
+        "vus": 4535,
+        "requests": 23278,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10600,
+            "p50": 0.272,
+            "p99": 10.909,
+            "max": 24.367
+          },
+          "GET /posts/:id": {
+            "count": 10872,
+            "p50": 0.231,
+            "p99": 9.541,
+            "max": 20.35
+          },
+          "POST /posts": {
+            "count": 196,
+            "p50": 0.272,
+            "p99": 18.37,
+            "max": 90.817
+          },
+          "POST /posts/:id/like": {
+            "count": 1610,
+            "p50": 0.26,
+            "p99": 8.726,
+            "max": 21.045
+          }
+        },
+        "p95": 6.104,
+        "p99": 10.127,
+        "server_cpu_usec_per_s": 581573
+      },
+      {
+        "second": 1795435636,
+        "vus": 4535,
+        "requests": 23769,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10993,
+            "p50": 0.288,
+            "p99": 8.726,
+            "max": 25.913
+          },
+          "GET /posts/:id": {
+            "count": 10889,
+            "p50": 0.256,
+            "p99": 8.221,
+            "max": 23.35
+          },
+          "POST /posts": {
+            "count": 223,
+            "p50": 0.288,
+            "p99": 13.844,
+            "max": 16.318
+          },
+          "POST /posts/:id/like": {
+            "count": 1664,
+            "p50": 0.264,
+            "p99": 9.4,
+            "max": 15.646
+          }
+        },
+        "p95": 5.666,
+        "p99": 8.47,
+        "server_cpu_usec_per_s": 597742
+      },
+      {
+        "second": 1795435637,
+        "vus": 4535,
+        "requests": 23598,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10886,
+            "p50": 0.288,
+            "p99": 19.209,
+            "max": 39.235
+          },
+          "GET /posts/:id": {
+            "count": 10858,
+            "p50": 0.245,
+            "p99": 18.925,
+            "max": 35.306
+          },
+          "POST /posts": {
+            "count": 209,
+            "p50": 0.256,
+            "p99": 18.37,
+            "max": 25.098
+          },
+          "POST /posts/:id/like": {
+            "count": 1645,
+            "p50": 0.264,
+            "p99": 18.37,
+            "max": 25.247
+          }
+        },
+        "p95": 9.684,
+        "p99": 19.209,
+        "server_cpu_usec_per_s": 596913
+      },
+      {
+        "second": 1795435638,
+        "vus": 4535,
+        "requests": 23469,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10768,
+            "p50": 0.284,
+            "p99": 17.568,
+            "max": 34.62
+          },
+          "GET /posts/:id": {
+            "count": 10836,
+            "p50": 0.26,
+            "p99": 17.308,
+            "max": 36.06
+          },
+          "POST /posts": {
+            "count": 200,
+            "p50": 0.227,
+            "p99": 13.844,
+            "max": 16.915
+          },
+          "POST /posts/:id/like": {
+            "count": 1665,
+            "p50": 0.276,
+            "p99": 17.052,
+            "max": 26.437
+          }
+        },
+        "p95": 9.684,
+        "p99": 17.568,
+        "server_cpu_usec_per_s": 592402
+      },
+      {
+        "second": 1795435639,
+        "vus": 4535,
+        "requests": 22729,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10511,
+            "p50": 0.361,
+            "p99": 32.831,
+            "max": 46.784
+          },
+          "GET /posts/:id": {
+            "count": 10443,
+            "p50": 0.33,
+            "p99": 32.346,
+            "max": 46.975
+          },
+          "POST /posts": {
+            "count": 207,
+            "p50": 0.284,
+            "p99": 28.29,
+            "max": 29.853
+          },
+          "POST /posts/:id/like": {
+            "count": 1568,
+            "p50": 0.311,
+            "p99": 35.369,
+            "max": 49.009
+          }
+        },
+        "p95": 22.627,
+        "p99": 32.831,
+        "server_cpu_usec_per_s": 638942
+      },
+      {
+        "second": 1795435640,
+        "vus": 4535,
+        "requests": 23956,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 11027,
+            "p50": 0.276,
+            "p99": 20.087,
+            "max": 36.327
+          },
+          "GET /posts/:id": {
+            "count": 11135,
+            "p50": 0.245,
+            "p99": 17.308,
+            "max": 38.272
+          },
+          "POST /posts": {
+            "count": 221,
+            "p50": 0.249,
+            "p99": 27.054,
+            "max": 30.339
+          },
+          "POST /posts/:id/like": {
+            "count": 1573,
+            "p50": 0.28,
+            "p99": 18.646,
+            "max": 33.97
+          }
+        },
+        "p95": 6.979,
+        "p99": 18.646,
+        "server_cpu_usec_per_s": 596326
+      },
+      {
+        "second": 1795435641,
+        "vus": 4535,
+        "requests": 23271,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 10670,
+            "p50": 0.288,
+            "p99": 20.388,
+            "max": 33.834
+          },
+          "GET /posts/:id": {
+            "count": 10710,
+            "p50": 0.249,
+            "p99": 18.925,
+            "max": 32.838
+          },
+          "POST /posts": {
+            "count": 231,
+            "p50": 0.302,
+            "p99": 24.016,
+            "max": 27.43
+          },
+          "POST /posts/:id/like": {
+            "count": 1660,
+            "p50": 0.249,
+            "p99": 21.639,
+            "max": 29.893
+          }
+        },
+        "p95": 8.1,
+        "p99": 19.79,
+        "server_cpu_usec_per_s": 584570
+      },
+      {
+        "second": 1795435642,
+        "vus": 4535,
+        "requests": 19608,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 8713,
+            "p50": 0.238,
+            "p99": 8.1,
+            "max": 14.809
+          },
+          "GET /posts/:id": {
+            "count": 9215,
+            "p50": 0.202,
+            "p99": 7.862,
+            "max": 15.093
+          },
+          "POST /posts": {
+            "count": 213,
+            "p50": 0.221,
+            "p99": 8.221,
+            "max": 10.271
+          },
+          "POST /posts/:id/like": {
+            "count": 1467,
+            "p50": 0.208,
+            "p99": 8.221,
+            "max": 11.279
+          }
+        },
+        "p95": 4.6,
+        "p99": 7.98,
+        "server_cpu_usec_per_s": 502511
+      },
+      {
+        "second": 1795435643,
+        "vus": 2034,
+        "requests": 2058,
+        "errors": 0,
+        "endpoints": {
+          "GET /feed": {
+            "count": 651,
+            "p50": 0.171,
+            "p99": 6.675,
+            "max": 8.062
+          },
+          "GET /posts/:id": {
+            "count": 1140,
+            "p50": 0.152,
+            "p99": 4.81,
+            "max": 7.986
+          },
+          "POST /posts": {
+            "count": 33,
+            "p50": 0.199,
+            "p99": 1.462,
+            "max": 1.459
+          },
+          "POST /posts/:id/like": {
+            "count": 234,
+            "p50": 0.176,
+            "p99": 7.98,
+            "max": 8.175
+          }
+        },
+        "p95": 3.124,
+        "p99": 6.675,
+        "server_cpu_usec_per_s": 93652
+      }
+    ],
+    "series": null,
+    "run_total": {
+      "GET /feed": {
+        "count": 710725,
+        "p50": 0.293,
+        "p95": 9.684,
+        "p99": 21.319
+      },
+      "GET /posts/:id": {
+        "count": 710725,
+        "p50": 0.256,
+        "p95": 8.726,
+        "p99": 20.388
+      },
+      "POST /posts": {
+        "count": 14185,
+        "p50": 0.276,
+        "p95": 8.726,
+        "p99": 19.209
+      },
+      "POST /posts/:id/like": {
+        "count": 106763,
+        "p50": 0.276,
+        "p95": 9.124,
+        "p99": 20.694
+      }
+    },
+    "k6_summary": {
+      "metrics": {
+        "http_req_sending": {
+          "min": 0.001292,
+          "med": 0.002709,
+          "p(90)": 0.049917,
+          "p(95)": 0.0997981499999972,
+          "p(99)": 4.212167259999999,
+          "max": 33.874583,
+          "avg": 0.13696813745282718
+        },
+        "http_req_tls_handshaking": {
+          "min": 0,
+          "med": 0,
+          "p(90)": 0,
+          "p(95)": 0,
+          "p(99)": 0,
+          "max": 0,
+          "avg": 0
+        },
+        "data_sent": {
+          "count": 155658052,
+          "rate": 2176220.0881778053
+        },
+        "http_req_failed": {
+          "passes": 0,
+          "fails": 1542398,
+          "thresholds": {
+            "rate<0.01": false
+          },
+          "value": 0
+        },
+        "http_req_duration{name:GET /posts/:id}": {
+          "max": 66.477833,
+          "avg": 1.6323643120813378,
+          "min": 0.01775,
+          "med": 0.256167,
+          "p(90)": 5.0791666,
+          "p(95)": 8.697674599999996,
+          "p(99)": 20.27551316,
+          "thresholds": {
+            "p(95)<3600000": false
+          }
+        },
+        "vus_max": {
+          "min": 4535,
+          "max": 4535,
+          "value": 4535
+        },
+        "iterations": {
+          "count": 710725,
+          "rate": 9936.485792396854
+        },
+        "http_req_receiving": {
+          "p(90)": 0.039125,
+          "p(95)": 0.072083,
+          "p(99)": 2.9767749899999885,
+          "max": 96.086417,
+          "avg": 0.10469548537017608,
+          "min": 0.002458,
+          "med": 0.00575
+        },
+        "iteration_duration": {
+          "p(95)": 534.5306919999999,
+          "p(99)": 571.978835,
+          "max": 694.231708,
+          "avg": 419.2606657953085,
+          "min": 223.693792,
+          "med": 419.030333,
+          "p(90)": 512.2309592
+        },
+        "http_req_duration": {
+          "max": 102.337709,
+          "avg": 1.7140322135908508,
+          "min": 0.01775,
+          "med": 0.2739165,
+          "p(90)": 5.340429300000002,
+          "p(95)": 9.172817049999988,
+          "p(99)": 20.867601459999992,
+          "thresholds": {
+            "p(95)<500": false,
+            "p(99)<1000": false
+          }
+        },
+        "http_req_blocked": {
+          "p(90)": 0.002458,
+          "p(95)": 0.003375,
+          "p(99)": 0.00675,
+          "max": 20.933834,
+          "avg": 0.002531464865740821,
+          "min": 0.000375,
+          "med": 0.00125
+        },
+        "http_reqs": {
+          "count": 1542398,
+          "rate": 21563.91827109124
+        },
+        "data_received": {
+          "count": 2815969244,
+          "rate": 39369430.34905555
+        },
+        "http_req_duration{name:POST /posts}": {
+          "min": 0.040125,
+          "med": 0.276709,
+          "p(90)": 4.920174800000001,
+          "p(95)": 8.748774399999977,
+          "p(99)": 19.254463279999992,
+          "max": 102.337709,
+          "avg": 1.6043236025378882,
+          "thresholds": {
+            "p(95)<3600000": false
+          }
+        },
+        "vus": {
+          "value": 2034,
+          "min": 343,
+          "max": 4535
+        },
+        "http_req_duration{name:GET /feed}": {
+          "max": 66.056917,
+          "avg": 1.7968732856575542,
+          "min": 0.038958,
+          "med": 0.291042,
+          "p(90)": 5.582767200000003,
+          "p(95)": 9.646724999999996,
+          "p(99)": 21.462667,
+          "thresholds": {
+            "p(95)<3600000": false
+          }
+        },
+        "http_req_duration{expected_response:true}": {
+          "p(99)": 20.867601459999992,
+          "max": 102.337709,
+          "avg": 1.7140322135908508,
+          "min": 0.01775,
+          "med": 0.2739165,
+          "p(90)": 5.340429300000002,
+          "p(95)": 9.172817049999988
+        },
+        "checks": {
+          "passes": 1542398,
+          "fails": 0,
+          "value": 1
+        },
+        "http_req_waiting": {
+          "avg": 1.472368590767768,
+          "min": 0.012792,
+          "med": 0.255792,
+          "p(90)": 4.610104400000007,
+          "p(95)": 7.828214299999997,
+          "p(99)": 17.486009989999996,
+          "max": 45.882333
+        },
+        "http_req_duration{name:POST /posts/:id/like}": {
+          "avg": 1.72079874322563,
+          "min": 0.032084,
+          "med": 0.277167,
+          "p(90)": 5.402799600000001,
+          "p(95)": 9.13642109999997,
+          "p(99)": 20.59664249999998,
+          "max": 58.534792,
+          "thresholds": {
+            "p(95)<3600000": false
+          }
+        },
+        "http_req_connecting": {
+          "med": 0,
+          "p(90)": 0,
+          "p(95)": 0,
+          "p(99)": 0,
+          "max": 18.195375,
+          "avg": 0.0005836933093792912,
+          "min": 0
+        }
+      },
+      "root_group": {
+        "id": "d41d8cd98f00b204e9800998ecf8427e",
+        "groups": {},
+        "checks": {
+          "feed 200": {
+            "name": "feed 200",
+            "path": "::feed 200",
+            "id": "2a3c2c61b723f5457936f17befabce0e",
+            "passes": 710725,
+            "fails": 0
+          },
+          "post 200": {
+            "passes": 710725,
+            "fails": 0,
+            "name": "post 200",
+            "path": "::post 200",
+            "id": "f2622e43eb8df3601203978c8216bab8"
+          },
+          "like 200/201": {
+            "id": "d08d63a4981c57ae85942223195c7710",
+            "passes": 106763,
+            "fails": 0,
+            "name": "like 200/201",
+            "path": "::like 200/201"
+          },
+          "create 201": {
+            "path": "::create 201",
+            "id": "156654209db568811cc0f7da2d599478",
+            "passes": 14185,
+            "fails": 0,
+            "name": "create 201"
+          }
+        },
+        "name": "",
+        "path": ""
+      }
+    }
+  },
+  "calibration": null,
+  "runs": null,
+  "raw": {
+    "cpu_stat_before": {
+      "time": {
+        "us": 1795435571495504
+      },
+      "server": {
+        "usage_usec": 16128505,
+        "user_usec": 10633093,
+        "system_usec": 5495412,
+        "nice_usec": 0,
+        "nr_periods": 803,
+        "nr_throttled": 0,
+        "throttled_usec": 0,
+        "nr_bursts": 0,
+        "burst_usec": 0
+      },
+      "k6": {
+        "usage_usec": 52277468,
+        "user_usec": 44655071,
+        "system_usec": 7622397,
+        "nice_usec": 0,
+        "nr_periods": 0,
+        "nr_throttled": 0,
+        "throttled_usec": 0,
+        "nr_bursts": 0,
+        "burst_usec": 0
+      }
+    },
+    "cpu_stat_after": {
+      "time": {
+        "us": 1795435645325420
+      },
+      "server": {
+        "usage_usec": 56909708,
+        "user_usec": 39816330,
+        "system_usec": 17093378,
+        "nice_usec": 0,
+        "nr_periods": 1520,
+        "nr_throttled": 0,
+        "throttled_usec": 0,
+        "nr_bursts": 0,
+        "burst_usec": 0
+      },
+      "k6": {
+        "usage_usec": 258892687,
+        "user_usec": 236281401,
+        "system_usec": 22611285,
+        "nice_usec": 0,
+        "nr_periods": 0,
+        "nr_throttled": 0,
+        "throttled_usec": 0,
+        "nr_bursts": 0,
+        "burst_usec": 0
+      }
+    }
+  },
+  "steplab": {
+    "variant": "exclusive",
+    "variant_index": 1,
+    "round": 1,
+    "rounds": 1,
+    "reference": "ref",
+    "variant_env": [
+      "APP_LOCKING=exclusive"
+    ],
+    "variant_server_file": null,
+    "rate": 24000,
+    "warmup": "2400,60",
+    "time_wait": {
+      "before": {
+        "per_address": {
+          "127.0.1.1": 1134,
+          "127.0.1.2": 1134,
+          "127.0.1.3": 1134,
+          "127.0.1.4": 1133,
+          "127.0.0.6": 4052,
+          "127.0.0.7": 7153,
+          "127.0.0.8": 7153,
+          "127.0.0.14": 7099,
+          "127.0.0.15": 2776
+        },
+        "max": 7153,
+        "k6_max": 1134,
+        "idle_max": 7153,
+        "in_range": 32768,
+        "all": 32768,
+        "waited_s": 0,
+        "limit_per_address": 2500,
+        "idle_limit_per_address": 100000
+      },
+      "after": {
+        "per_address": {
+          "127.0.1.1": 1134,
+          "127.0.1.2": 1134,
+          "127.0.1.3": 1134,
+          "127.0.1.4": 1133,
+          "127.0.0.9": 4127,
+          "127.0.0.10": 7163,
+          "127.0.0.11": 7163,
+          "127.0.0.12": 7084,
+          "127.0.0.13": 2696
+        },
+        "max": 7163,
+        "k6_max": 1134,
+        "idle_max": 7163,
+        "in_range": 32768,
+        "all": 32768
+      }
+    },
+    "command": "lab/steplab.sh --image 8.5 --rate 24000 --think-scale 0.02 --idle 60000 --seconds 60 --pairs 1 --floor 2.57 --out lab/results/2026-11-23-cpu-steps/s8-exclusive --variant ref= --variant exclusive=APP_LOCKING=exclusive"
+  }
+}

@@ -27,6 +27,13 @@
 # per-step results and `results.per_second` (the aggregator's latency per second) stay, so a hold's p99 and stalled seconds can be
 # compared with a run that has the probes. The server's own telemetry line stays on unless `--env APP_TELEMETRY=0` turns it off too.
 #
+# The VU cap: the file descriptors the idle connections leave the server (LAB_VU_CAP_FDS), unless --vu-cap sets it. With APP_SOFT_CONN_LIMIT in
+# --env every request of k6 opens a connection and the server closes it after the response, so k6's VUs do not hold the server's file
+# descriptors: the cap is then k6's memory (LAB_K6_MIB_PER_VU a VU against the budget) or the local ports of its source addresses
+# (LAB_PORTS_PER_ADDRESS each), whichever is lower. The JSON says which one bound it (`load.vu_cap_bound_by`). `server_connections` holds
+# what the server's telemetry counted (the `Connection: close` responses, the accept pauses, the most connections open at once) and the peak of
+# its file descriptors from the sampler (null, with the reason, under --no-series).
+#
 # --profile <file> runs the server with the Excimer profiler (CPU time, one sample every APP_PROFILE_PERIOD seconds, default 0.001: pass
 # `--env APP_PROFILE_PERIOD=<s>` to change it; telemetry off unless --env sets it), copies the collapsed stacks to <file> when the load is over
 # and prints the fold of lab/profile/fold.php (the table of steps S1 to S9 per endpoint) with the cgroup's user and system CPU of the same
@@ -69,6 +76,10 @@ USERS_PER_RPS=9.45
 # What the idle connections of the next measurement leave of the server's file descriptors: 65,535 (the lab's nofile) minus 60,000 idle
 # connections minus a margin for the server's own descriptors (about 13 at boot).
 LAB_VU_CAP_FDS=5400
+# With a soft connection limit the cap comes from k6 instead: its memory per VU (MiB, the calibration of the realistic baseline: 0.284 at 50
+# VUs, 0.343 from 300 to 5,000) and the ephemeral ports of each source address (the VM's range 55000 to 65535, about 10,500).
+LAB_K6_MIB_PER_VU=0.343
+LAB_PORTS_PER_ADDRESS=10500
 # The memory the idle client may take in the budget of k6's memory (MiB), and the file it ends on (the client holds until it exists).
 LAB_IDLE_CLIENT_MIB=512
 IDLE_END_FILE=/tmp/idle-end
@@ -81,8 +92,8 @@ LIMIT_ACHIEVED_RATIO=0.97
 usage() {
   cat >&2 <<'EOF'
 usage: lab/realistic.sh --image <variant> (--staircase <from>,<step>,<to>,<s> | --hold <rate>,<s> | --calibrate) [--think-scale <s>]
-                        [--server <php file under lab/>] [--ext <name>]... [--env K=V]... [--label <text>] [--warmup <rate>,<s>]
-                        [--vu-cap <n>] [--ramp <s>] [--out <path>] [--port <n>] [--local-ips <range>] [--lag-gate <s>] [--k6-memory <MiB>]
+                        [--server <php file under lab/>] [--php-ini <php.ini under lab/>] [--ext <name>]... [--env K=V]... [--label <text>]
+                        [--warmup <rate>,<s>] [--vu-cap <n>] [--ramp <s>] [--out <path>] [--port <n>] [--local-ips <range>] [--lag-gate <s>] [--k6-memory <MiB>]
                         [--calibrate-vus <a>,<b>] [--calibrate-seconds <s>] [--idle <n>] [--cold] [--no-series]
                         [--profile <collapsed stacks file>]
 rates are in req/s, <s> is the seconds of one plateau; --think-scale is the share of the bench's think time (default 1)
@@ -99,6 +110,9 @@ profile_out=""
 ramp="" out="" port=18120 local_ips="127.0.1.1-127.0.1.4" lag_gate=6 k6_memory="" calibrate_vus="50,300" calibrate_seconds=60 idle="" cold=""
 series=1
 LAB_EXT=() LAB_ENV=()
+LAB_PHP_INI_FILE=""
+# Why disable SC2034: lab_build_php_flags (lib.sh) reads LAB_PHP_INI_FILE, set below.
+# shellcheck disable=SC2034
 while [ "$#" -gt 0 ]; do
   if [ "$1" = --calibrate ]; then calibrate=1; shift; continue; fi
   if [ "$1" = --cold ]; then cold=1; shift; continue; fi
@@ -107,6 +121,7 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --image) image="$2" ;;
     --server) server_file="$2" ;;
+    --php-ini) LAB_PHP_INI_FILE="$(lab_in_container_path "$2")" || exit 2 ;;
     --ext) LAB_EXT+=("$2") ;;
     --env) LAB_ENV+=("$2") ;;
     --label) label="$2" ;;
@@ -147,7 +162,27 @@ done
 [ -z "$vu_cap" ] || [[ "$vu_cap" =~ ^[0-9]+$ ]] || { echo "--vu-cap must be a whole number, got '$vu_cap'" >&2; usage; }
 [ -z "$ramp" ] || [[ "$ramp" =~ ^[0-9]+$ ]] || { echo "--ramp must be a whole number of seconds, got '$ramp'" >&2; usage; }
 [ -z "$k6_memory" ] || [[ "$k6_memory" =~ ^[0-9]+$ ]] || { echo "--k6-memory must be a whole number of MiB, got '$k6_memory'" >&2; usage; }
-[ -n "$vu_cap" ] || vu_cap="$LAB_VU_CAP_FDS"
+# The soft connection limit, when --env sets it (the last one wins, like the server's environment).
+soft_conn_limit=""
+for kv in "${LAB_ENV[@]+"${LAB_ENV[@]}"}"; do [[ "$kv" != APP_SOFT_CONN_LIMIT=* ]] || soft_conn_limit="${kv#APP_SOFT_CONN_LIMIT=}"; done
+# The memory k6 may use: the VM's, minus 2 GiB for the server, what the client that holds the idle connections may take (LAB_IDLE_CLIENT_MIB,
+# reserved whether or not --idle is given, so that runs with and without share one budget) and 1 GiB of margin. --k6-memory sets it by
+# hand (a test hook: a budget k6 cannot live in).
+vm_bytes="$(docker info --format '{{.MemTotal}}')"
+k6_budget_mib=$(( vm_bytes / 1048576 - 2048 - LAB_IDLE_CLIENT_MIB - 1024 ))
+[ -z "$k6_memory" ] || k6_budget_mib="$k6_memory"
+[ "$k6_budget_mib" -gt 16 ] || fail "the VM has $(( vm_bytes / 1048576 )) MiB: not enough for a server (2 GiB), an idle client ($LAB_IDLE_CLIENT_MIB MiB), a margin (1 GiB) and k6"
+vu_cap_bound_by="--vu-cap"
+if [ -z "$vu_cap" ] && [ -n "$soft_conn_limit" ] && [ -z "$calibrate" ]; then
+  first_ip="${local_ips%-*}" last_ip="${local_ips#*-}"
+  ip_count=$(( ${last_ip##*.} - ${first_ip##*.} + 1 ))
+  [ "$ip_count" -ge 1 ] || { echo "--local-ips must be <first ip>-<last ip>, got '$local_ips'" >&2; usage; }
+  mem_cap="$(awk -v b="$k6_budget_mib" -v p="$LAB_K6_MIB_PER_VU" 'BEGIN { printf "%d", b / p }')"
+  port_cap=$(( ip_count * LAB_PORTS_PER_ADDRESS ))
+  if [ "$mem_cap" -le "$port_cap" ]; then vu_cap="$mem_cap" vu_cap_bound_by="k6 memory"; else vu_cap="$port_cap" vu_cap_bound_by="local ports"; fi
+elif [ -z "$vu_cap" ]; then
+  vu_cap="$LAB_VU_CAP_FDS" vu_cap_bound_by="file descriptors"
+fi
 [ -z "$idle" ] || [[ "$idle" =~ ^[1-9][0-9]*$ ]] || { echo "--idle must be a whole number above 0, got '$idle'" >&2; usage; }
 [ -z "$idle" ] || [ -z "$calibrate" ] || { echo "--idle does not go with --calibrate (the calibration prices k6's VUs alone)" >&2; usage; }
 [ -z "$profile_out" ] || [ -z "$calibrate" ] || { echo "--profile does not go with --calibrate" >&2; usage; }
@@ -208,7 +243,7 @@ fi
 max_vus=0
 for v in "${steps_vus[@]}"; do [ "$v" -le "$max_vus" ] || max_vus="$v"; done
 if [ -z "$calibrate" ] && [ "$max_vus" -gt "$vu_cap" ]; then
-  echo "realistic: $max_vus VUs are above the VU cap of $vu_cap (--vu-cap; lab/realistic.sh --calibrate prints the cap): refusing to start" >&2
+  echo "realistic: $max_vus VUs are above the VU cap of $vu_cap, bound by $vu_cap_bound_by (--vu-cap sets it; lab/realistic.sh --calibrate prints the cap): refusing to start" >&2
   exit 2
 fi
 
@@ -223,14 +258,6 @@ for c in "$SERVER" "$K6C" "$PROBE" "$AGG" "$IDLEC"; do
   fi
 done
 docker image inspect "$LAB_K6_IMAGE" >/dev/null 2>&1 || { echo "pulling $LAB_K6_IMAGE" >&2; docker pull -q "$LAB_K6_IMAGE" >/dev/null || fail "cannot pull $LAB_K6_IMAGE"; }
-
-# The memory k6 may use: the VM's, minus 2 GiB for the server, what the client that holds the idle connections may take (LAB_IDLE_CLIENT_MIB,
-# reserved whether or not --idle is given, so that runs with and without share one budget) and 1 GiB of margin. --k6-memory sets it by
-# hand (a test hook: a budget k6 cannot live in).
-vm_bytes="$(docker info --format '{{.MemTotal}}')"
-k6_budget_mib=$(( vm_bytes / 1048576 - 2048 - LAB_IDLE_CLIENT_MIB - 1024 ))
-[ -z "$k6_memory" ] || k6_budget_mib="$k6_memory"
-[ "$k6_budget_mib" -gt 16 ] || fail "the VM has $(( vm_bytes / 1048576 )) MiB: not enough for a server (2 GiB), an idle client ($LAB_IDLE_CLIENT_MIB MiB), a margin (1 GiB) and k6"
 
 stamp="$(date -u +%Y%m%d-%H%M%S)"
 mode=staircase
@@ -556,6 +583,7 @@ if [ -n "$idle" ]; then
      closed_by_server_at_start: $start.closed_by_server, closed_by_server_at_end: $end.closed_by_server,
      server_established_at_start: $est_start, server_established_at_end: $est_end, server_fds_open_with_idle: $fds_start,
      seconds_to_open: $start.seconds, source_addresses: $start.source_addresses, ports_per_address: $start.ports_per_address,
+     bind_retries: ($start.bind_retries // 0),
      client: {nofile: $start.nofile, rss_mib: ($start.rss_kb / 1024 * 100 | round / 100), hwm_mib: ($end.hwm_kb / 1024 * 100 | round / 100),
               memory_current_mib_after_opening: ($mem_start.current | mib), memory_current_mib_at_end: ($mem_end.current | mib),
               memory_peak_mib: ($mem_end.peak | mib), anon_mib: ($mem_end.anon | mib), socket_buffers_mib: ($mem_end.sock | mib), kernel_mib: ($mem_end.kernel | mib),
@@ -632,12 +660,34 @@ for r in "${runs_for_json[@]}"; do
   jq -c --slurpfile run "$tmp/$r.run.json" '. + [$run[0]]' "$tmp/runs.json" >"$tmp/runs.next.json"
   mv "$tmp/runs.next.json" "$tmp/runs.json"
 done
+# What the server's telemetry counted about its connections, summed over its life (null when telemetry is off). The line of the last second
+# of the load is printed a moment after it, so the log is read a second later; nothing the server prints at exit is read, it is removed
+# with `docker rm -f`.
+telemetry_value=""
+for kv in "${LAB_ENV[@]+"${LAB_ENV[@]}"}"; do [[ "$kv" != APP_TELEMETRY=* ]] || telemetry_value="${kv#APP_TELEMETRY=}"; done
+conn_counts=null
+if [ "$telemetry_value" = 1 ]; then
+  sleep 1.2
+  conn_counts="$(docker logs "$SERVER" 2>&1 | sed -n 's/^telemetry //p' | jq -Rnc '
+    [inputs | fromjson?] as $l
+    | [$l[] | .connections // empty] as $c
+    | [$l[] | .group_commit // empty] as $g
+    | if ($c | length) == 0 then null
+      else {close_responses: ($c | map(.limit_closes) | add), accept_pauses: ($c | map(.accept_pauses) | add),
+            open_peak: ($c | map(.open_peak) | max), telemetry_seconds: ($c | length),
+            longest_callback_ms_max: ([$l[] | .longest_callback_ms // empty] | max),
+            group_commit: (if ($g | length) == 0 then null
+                           else {commits: ($g | map(.commits) | add), batch_mean: (($g | map(.commits * .batch_mean) | add) / ($g | map(.commits) | add) * 100 | round / 100),
+                                 batch_max: ($g | map(.batch_max) | max)} end)} end')"
+fi
 invalid_all="$(jq -r --arg extra "$extra_invalid" '(map(select(.invalid != "") | .invalid) + (if $extra == "" then [] else [$extra] end)) | join("; ")' "$tmp/runs.json")"
 
 jq -n \
   --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg command "$command_line" --arg mode "$mode" \
   --arg docker "$(docker version --format '{{.Server.Platform.Name}}')" --arg engine "$(docker version --format '{{.Server.Version}}')" \
   --arg kernel "$(docker info --format '{{.KernelVersion}}')" --arg arch "$(uname -m)" --arg limits "${LAB_RESOURCE_FLAGS[*]}" \
+  --arg cpu_layout "${LAB_CPU_LAYOUT:-default}" --arg cpuset_server "$LAB_CPUSET_SERVER" --arg cpuset_k6 "$LAB_CPUSET_K6" \
+  --arg cpuset_probe "$LAB_CPUSET_PROBE" --arg cpuset_idle_sibling "$LAB_CPUSET_IDLE_SIBLING" \
   --arg variant "$image" --arg image_id "$(docker image inspect -f '{{.Id}}' "$LAB_IMAGE:$image")" --arg php_version "$php_version" \
   --arg server_file "${server_in#/lab/}" --arg flags "${LAB_PHP_FLAGS[*]}" --argjson port "$port" --arg label "$label" \
   --argjson ext "$(json_array "${LAB_EXT[@]}")" --argjson env "$(json_array "${LAB_ENV[@]+"${LAB_ENV[@]}"}")" \
@@ -647,6 +697,7 @@ jq -n \
   --argjson steps_vus "$(jq -nc '$ARGS.positional | map(tonumber)' --args "${steps_vus[@]}")" \
   --arg k6_image "$LAB_K6_IMAGE" --arg k6_version "$k6_version" --arg local_ips "$local_ips" --argjson k6_budget "$k6_budget_mib" \
   --argjson lag_gate "$lag_gate" --argjson before "$cpu_before" --argjson after "$cpu_after" --argjson idle "$idle_json" --argjson cold "$cold_json" \
+  --argjson conn_counts "$conn_counts" --arg soft_limit "$soft_conn_limit" --arg vu_cap_bound_by "$vu_cap_bound_by" \
   --slurpfile runs_file "$tmp/runs.json" --argjson calibration "$calibration_json" --argjson profile "$profile_json" --argjson per_second_probes "$([ -n "$series" ] && echo true || echo false)" --arg invalid "$invalid_all" '
   def mib: . / 1048576 * 100 | round / 100;
   ($after.time.us - $before.time.us) as $window_us
@@ -657,12 +708,14 @@ jq -n \
     other_containers: $other_containers,
     valid: ($invalid == ""), invalid_reasons: (if $invalid == "" then [] else [$invalid] end),
     idle: $idle, cold: $cold, profile: $profile, per_second_probes: $per_second_probes,
-    host: {docker_desktop: $docker, engine: $engine, vm_kernel: $kernel, arch: $arch, limits: $limits},
+    host: {docker_desktop: $docker, engine: $engine, vm_kernel: $kernel, arch: $arch, limits: $limits,
+            cpu_layout: $cpu_layout, cpuset_server: $cpuset_server, cpuset_k6: $cpuset_k6, cpuset_probe: $cpuset_probe,
+            cpuset_idle_sibling: (if $cpuset_idle_sibling == "" then null else $cpuset_idle_sibling end)},
     server: {variant: $variant, image_id: $image_id, php_version: $php_version, file: $server_file, port: $port, php_flags: $flags,
              ext: $ext, env: $env, fds_open_at_boot: $server_fds,
              socket: (if $socket_line == "" then null else $socket_line end)},
     load: {think_scale: $think_scale, per_vu_rate_rps: $per_vu_rate, users_per_rps: $users_per_rps, ramp_s: $ramp, plateau_s: $plateau,
-           vus: $steps_vus, vu_cap: $vu_cap, warmup: (if $warmup == "" then null else $warmup end),
+           vus: $steps_vus, vu_cap: $vu_cap, vu_cap_bound_by: $vu_cap_bound_by, warmup: (if $warmup == "" then null else $warmup end),
            pass_rule: "p95 < 500 ms, p99 < 1000 ms, errors < 1 %, achieved >= 97 % of offered"},
     k6: {image: $k6_image, version: $k6_version, script: "macro/k6/realistic.js", local_ips: $local_ips,
          client_ips_seen: $last.client_ips_seen, memory_budget_mib: $k6_budget,
@@ -675,6 +728,9 @@ jq -n \
     k6_error_codes: ($runs | map(.aggregator.error_codes | to_entries) | add | group_by(.key) | map({key: .[0].key, value: (map(.value) | add)}) | from_entries),
     server_memory: {pss_anon_peak_mib: ([$runs[].server_pss_anon_peak_mib] | max),
                     memory_current_peak_mib: ([$runs[].server_memory_current_peak_mib] | max)},
+    server_connections: {soft_limit: (if $soft_limit == "" then null else ($soft_limit | tonumber?) end), telemetry: $conn_counts,
+                         fds_peak: (if $last.series == null then null else ([$last.series[].server.fds? // empty] | max) end),
+                         fds_peak_note: (if $last.series == null then "not read: --no-series runs no sampler" else null end)},
     server_cpu_usec_over_the_runs: ($after.server.usage_usec - $before.server.usage_usec),
     results: $last,
     calibration: $calibration,
@@ -685,7 +741,7 @@ jq -n \
 # The table reads the JSON just written, so what is printed is what is stored.
 echo
 echo "image $image (PHP $php_version), $(basename "$server_file"), $k6_version, k6 from $local_ips"
-jq -r '"think scale \(.load.think_scale): one VU offers \(.load.per_vu_rate_rps) req/s, \(.load.users_per_rps) users per req/s, ramp \(.load.ramp_s) s, plateau \(.load.plateau_s) s, VU cap \(.load.vu_cap)"' "$out"
+jq -r '"think scale \(.load.think_scale): one VU offers \(.load.per_vu_rate_rps) req/s, \(.load.users_per_rps) users per req/s, ramp \(.load.ramp_s) s, plateau \(.load.plateau_s) s, VU cap \(.load.vu_cap) (bound by \(.load.vu_cap_bound_by))"' "$out"
 if [ -z "$calibrate" ]; then
   printf '%4s %6s %9s %9s %7s %9s %8s %8s %7s  %s\n' step VUs offered achieved users us/req "p95 ms" "p99 ms" errors result
   jq -r '.results.steps[] | [.step, .vus, (.offered_rps | . * 10 | round / 10), (.achieved_rps | . * 10 | round / 10), (.users | round),
@@ -707,6 +763,7 @@ else
 fi
 jq -r '"k6 connection errors: \(.k6_connection_errors)" + (if (.k6_error_codes | length) > 0 then " (k6 error codes: \(.k6_error_codes | to_entries | map("\(.key) x \(.value)") | join(", ")))" else "" end)' "$out"
 jq -r '.cold | "database copy in the page cache when the server opened it (fincore): \(.resident_bytes) of \(.size_bytes) bytes, \(.resident_share * 100 | round) %, --cold \(if .requested then "on" else "off" end)"' "$out"
+jq -r '.server_connections | "server connections: soft limit \(.soft_limit // "off"), " + (if .telemetry == null then "no telemetry" else "\(.telemetry.close_responses) Connection: close responses, \(.telemetry.accept_pauses) accept pauses, \(.telemetry.open_peak) open at most" end) + ", file descriptors peak \(.fds_peak // .fds_peak_note)"' "$out"
 jq -r 'select(.idle != null) | .idle | "idle connections: \(.requested) requested, \(.held_at_start) held at the start and \(.held_at_end) at the end, \(.closed_by_server_at_end) closed by the server; the server counted \(.server_established_at_start) and \(.server_established_at_end) established, \(.server_fds_open_with_idle) file descriptors open with them",
   "idle client memory: \(.client.memory_current_mib_at_end) MiB memory.current at the end (peak \(.client.memory_peak_mib), anon \(.client.anon_mib), kernel \(.client.kernel_mib), socket buffers \(.client.socket_buffers_mib)), the process RSS \(.client.rss_mib) MiB after opening them, opened in \(.seconds_to_open) s from \(.source_addresses | length) source addresses"' "$out"
 jq -r '"k6 peak memory \(.k6.peak_memory_mib) MiB of its \(.k6.memory_budget_mib) MiB budget, k6 CPU \(.k6.cpu_percent_of_one_cpu) % of one CPU, aggregator max lag \(.aggregator.max_lag_s) s (gate \(.aggregator.lag_gate_s) s), server Pss_Anon peak \(if .server_memory.pss_anon_peak_mib == null then "not read (--no-series)" else "\(.server_memory.pss_anon_peak_mib) MiB" end), memory.current peak \(if .server_memory.memory_current_peak_mib == null then "not read" else "\(.server_memory.memory_current_peak_mib) MiB" end)"' "$out"

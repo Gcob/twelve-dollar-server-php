@@ -1,0 +1,76 @@
+{
+  "floor_us": null,
+  "rule": "a variant is beyond the noise when it has at least 2 pairs, every paired difference (its µs CPU/req minus the reference's in the same round) has the same sign and the median paired difference is at least the floor in absolute value; otherwise it is within the noise. A round where either run is invalid has no pair. One pair with a floor: a screen (beats the floor when lower by at least the floor, else not better), never a verdict. No pair: no verdict. No floor: not judged (the floor comes from an A/A calibration).",
+  "reference": "skeleton",
+  "runs": [
+    {
+      "variant": "skeleton",
+      "index": 0,
+      "round": 1,
+      "valid": true,
+      "counted": true,
+      "achieved_rps": 7394.241379310345,
+      "us_per_request": 54.41748623246572,
+      "p95_ms": 9.541,
+      "p99_ms": 19.79,
+      "result": "pass",
+      "time_wait_before_max": 0,
+      "other_containers": 0
+    },
+    {
+      "variant": "php-swoole-mattsplat",
+      "index": 1,
+      "round": 1,
+      "valid": true,
+      "counted": true,
+      "achieved_rps": 7384.6551724137935,
+      "us_per_request": 57.6908793278515,
+      "p95_ms": 11.408,
+      "p99_ms": 21.639,
+      "result": "pass",
+      "time_wait_before_max": 27732,
+      "other_containers": 0
+    }
+  ],
+  "variants": [
+    {
+      "variant": "skeleton",
+      "index": 0,
+      "reference": true,
+      "runs": 1,
+      "valid_runs": 1,
+      "median_us": 54.41748623246572,
+      "min_us": 54.41748623246572,
+      "max_us": 54.41748623246572,
+      "median_p99_ms": 19.79,
+      "pairs": [],
+      "median_difference_us": null,
+      "same_sign": false,
+      "verdict": "reference",
+      "reason": "the others are judged against it"
+    },
+    {
+      "variant": "php-swoole-mattsplat",
+      "index": 1,
+      "reference": false,
+      "runs": 1,
+      "valid_runs": 1,
+      "median_us": 57.6908793278515,
+      "min_us": 57.6908793278515,
+      "max_us": 57.6908793278515,
+      "median_p99_ms": 21.639,
+      "pairs": [
+        {
+          "round": 1,
+          "us_per_request": 57.6908793278515,
+          "reference_us": 54.41748623246572,
+          "difference_us": 3.273393095385778
+        }
+      ],
+      "median_difference_us": 3.273393095385778,
+      "same_sign": true,
+      "verdict": "no floor: not judged",
+      "reason": "run with --floor <µs> from an A/A calibration"
+    }
+  ]
+}

@@ -13,10 +13,26 @@ require __DIR__ . '/../servers/diy-connection.php';
  * else echoes `<method> <path> <body>`. The Authorization value is the fourth argument: a handler that takes three (the
  * bake-off's) ignores it, which is what keeps the bake-off servers working.
  *
- * @return array{int, string}
+ * /write/<n> is a write that waits for its commit (what the app's handler answers under group commit): a Closure that appends n to
+ * $diy_committed, and answers 201 with the values committed so far; /committed answers that list. $diy_committed is what the commit
+ * did, so a read that comes after a write's response must see it.
+ *
+ * @return array{int, string}|Closure
  */
-function handler_handle(string $method, string $path, string $body, string $authorization = ''): array
+function handler_handle(string $method, string $path, string $body, string $authorization = ''): array|Closure
 {
+    global $diy_committed;
+    if (str_starts_with($path, '/write/')) {
+        $n = (int) substr($path, 7);
+        return static function () use ($n): array {
+            global $diy_committed;
+            $diy_committed[] = $n;
+            return [201, '{"committed":[' . implode(',', $diy_committed) . ']}'];
+        };
+    }
+    if ($path === '/committed') {
+        return [200, '{"committed":[' . implode(',', $diy_committed) . ']}'];
+    }
     if (str_starts_with($path, '/status/')) {
         return [(int) substr($path, 8), '{}'];
     }
@@ -64,6 +80,8 @@ function diy_read_all($peer): string
 }
 
 $diy_failed = false;
+/** @var list<int> what the /write/<n> stubs have done, in order */
+$diy_committed = [];
 
 /** Runs one case: $fn returns null when it holds, or the reason it does not. */
 function diy_case(string $name, callable $fn): void
