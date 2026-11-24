@@ -1,0 +1,33 @@
+steplab: 2 variant(s) x 1 round(s), 7500 req/s for 60s (think scale 0.02, 60000 idle connections), warm-up 750,60, order alternate, into lab/results/2026-11-24-x86-s1b/reconnect
+steplab: floor: 0.386 us (|median -0.142| + interquartile range 0.244 of 3 paired differences of lab/results/2026-11-23-x86-calibration/pairs; every valid run counted)
+[1/2] round 1, s1d-every (position 1 of 2, order: s1d-every s1a)
+  TIME_WAIT before: 0 on the busiest address, 0 in all on the clients' addresses, 0 on the VM, waited 0 s
+  valid, 7372.3 req/s, 73.8 us/req, p99 20.694 ms, pass, TIME_WAIT after: 14125 on the busiest address
+[2/2] round 1, s1a (position 2 of 2, order: s1d-every s1a)
+  TIME_WAIT: 14125 on the busiest of k6's addresses, above 2500: waiting for them to drain (60 s a socket)
+  TIME_WAIT: 14108 on the busiest of k6's addresses, above 2500: waiting for them to drain (60 s a socket)
+  TIME_WAIT: 14088 on the busiest of k6's addresses, above 2500: waiting for them to drain (60 s a socket)
+  TIME_WAIT: 14063 on the busiest of k6's addresses, above 2500: waiting for them to drain (60 s a socket)
+  TIME_WAIT: 13933 on the busiest of k6's addresses, above 2500: waiting for them to drain (60 s a socket)
+  TIME_WAIT: 13818 on the busiest of k6's addresses, above 2500: waiting for them to drain (60 s a socket)
+  TIME_WAIT: 13590 on the busiest of k6's addresses, above 2500: waiting for them to drain (60 s a socket)
+  TIME_WAIT: 12542 on the busiest of k6's addresses, above 2500: waiting for them to drain (60 s a socket)
+  TIME_WAIT: 11442 on the busiest of k6's addresses, above 2500: waiting for them to drain (60 s a socket)
+  TIME_WAIT: 9565 on the busiest of k6's addresses, above 2500: waiting for them to drain (60 s a socket)
+  TIME_WAIT before: 4549 on the busiest address, 12260 in all on the clients' addresses, 12260 on the VM, waited 51 s
+  valid, 7381.3 req/s, 50.4 us/req, p99 21.964 ms, pass, TIME_WAIT after: 27732 on the busiest address
+
+runs, in the order they ran (one round runs every variant once, the first variant is the reference; the order alternates: odd rounds run it last, even rounds first)
+round  variant        valid      req/s    us/req   p95 ms   p99 ms   tw/addr  load1 fsync ms  result
+    1  s1d-every      yes       7372.3      73.8    10.59    20.69         0   3.06     1.05  pass
+    1  s1a            yes       7381.3      50.4    10.91    21.96      4549   1.46        1  pass
+tw/addr: the most TIME_WAIT sockets on any one address, k6's or the idle client's, when the run started (- when the runner did not count)
+load1: the VM's 1-minute load average in the middle of the plateau; fsync ms: the median fdatasync of a 4 KiB write before the warm-up (- when a run has no host reading)
+
+variants (us is the server's CPU per request over the plateau)
+variant         valid failed median us        min to max   p99 ms  paired differences us     median  verdict
+s1a               1/1      0      50.4      50.4 to 50.4    21.96  reference                      -  reference
+s1d-every         1/1      0      73.8      73.8 to 73.8    20.69  +23.4                      +23.4  screen: not better in one pair
+
+Floor: 0.386 us, from lab/results/2026-11-23-x86-calibration/pairs: |median -0.142| + interquartile range 0.244 of 3 paired differences (quartiles by linear interpolation, inclusive)
+Rule: a variant is beyond the noise when it has at least 2 pairs, every paired difference (its µs CPU/req minus the reference's in the same round) has the same sign and the median paired difference is at least 0.386 µs in absolute value; otherwise it is within the noise. A round where either run is invalid has no pair. One pair with a floor: a screen (beats the floor when lower by at least the floor, else not better), never a verdict. No pair: no verdict. No floor: not judged (the floor comes from an A/A calibration).

@@ -1,12 +1,20 @@
 #!/usr/bin/env bash
 # The step lab: compares server variants by interleaved realistic runs, the median of each variant's runs, and the paired differences
 # against the first variant (the reference). Each run is a fresh `lab/realistic.sh --hold` (seed copy, server, idle connections, warm-up),
-# without the per-second probes and with the server's telemetry off unless the variant sets it. A round runs every variant once, in the
-# order given, and `--pairs` rounds follow each other, so a drift of the machine (heat, a neighbour on the VM) hits every variant alike.
+# without the per-second probes and with the server's telemetry off unless the variant sets it. A round runs every variant once and
+# `--pairs` rounds follow each other, so a drift of the machine (heat, a neighbour on the VM) hits every variant alike.
+#
+# The order of a round alternates (`--order alternate`, the default): odd rounds run the variants in reverse (B A; C B A with three), even
+# rounds in the order given (A B; A B C), counted from the round's own number, so `--first-round` keeps the alternation. Round 1 runs the
+# reference last on purpose: a one-pair screen is round 1 alone, and the second run of a pair reads about 0.2 us lower (5a's A/A pairs at
+# 24,000 req/s that passed the 97 % rule were all negative), which then works against the variant, never for it. `--order fixed` runs the
+# order given in every round. Each run's `steplab` object records its `position` in the round (0-based) and the `order` rule.
+#
+# FIXME(pending): Jacob must confirm the round order and the floor rule (plan/plan.md, Q19). Assumes A: alternate the order, floor = |median| + interquartile range of an A/A folder, every run counted.
 #
 #   bash lab/steplab.sh --image 8.5 --rate 24000 --think-scale 0.02 --idle 60000 --seconds 60 --pairs 3 \
 #       --variant ref= --variant telemetry-on=APP_TELEMETRY=1 [--server-variant <name>=<php file under lab/>]... \
-#       [--warmup <req/s>,<s>] [--floor <us>] [--label <text>] [--out <folder>] [--first-round <n>] [--time-wait-max <n>] [--idle-time-wait-max <n>] [--time-wait-wait <s>]
+#       [--warmup <req/s>,<s>] [--floor <us> | --floor-from <A/A folder>] [--order alternate|fixed] [--label <text>] [--out <folder>] [--first-round <n>] [--time-wait-max <n>] [--idle-time-wait-max <n>] [--time-wait-wait <s>]
 #                       [--local-ips <range>] [--lag-gate <s>] [--port <n>] [--vu-cap <n>] [--ramp <s>] [--k6-memory <MiB>] [--ext <name>]...
 #
 # --variant <name>=<K=V,K=V...> sets environment variables on the server (an empty list, `ref=`, is the skeleton as it is);
@@ -35,7 +43,11 @@
 #
 # The output folder (default lab/results/steplab-...) holds each run's JSON (<variant>-<round>.json, the realistic run's JSON with a
 # `steplab` object added), its table (<variant>-<round>.txt), summary.json and summary.txt, which lab/steplab-summary.sh rebuilds from
-# the JSON files alone. The verdict needs a floor (--floor <us>, from an A/A calibration): without it nothing is judged.
+# the JSON files alone. The verdict needs a floor: without it nothing is judged. --floor <us> types one, --floor-from <A/A folder> computes it
+# from the run files of a folder where two identical variants ran (lab/steplab-floor.sh: |median of the paired differences| + their
+# interquartile range, every valid run counted, whether its step passed the 97 % rule or not) and records the folder and the value in
+# summary.json; both together are a usage error, and a folder that gives no floor stops the comparison before its first run. --dry-run
+# validates the options, prints the order of each round and the floor, and runs nothing.
 # Exit codes: 0 every run ran (an invalid run or a failing step is a result), 1 a harness failure, 2 usage.
 set -euo pipefail
 
@@ -48,7 +60,8 @@ usage() {
   cat >&2 <<'EOF'
 usage: lab/steplab.sh --image <variant> --rate <req/s> --think-scale <s> --seconds <plateau s> --pairs <n>
                       --variant <name>=<K=V,K=V...> [--variant ...] [--server-variant <name>=<php file under lab/>]...
-                      [--variant-args <name>=<arguments>]... [--idle <n>] [--warmup <req/s>,<s>] [--floor <us>] [--label <text>] [--out <folder>]
+                      [--variant-args <name>=<arguments>]... [--idle <n>] [--warmup <req/s>,<s>] [--floor <us> | --floor-from <A/A folder>]
+                      [--order alternate|fixed] [--dry-run] [--label <text>] [--out <folder>]
                       [--first-round <n>] [--time-wait-max <n>] [--idle-time-wait-max <n>] [--time-wait-wait <s>] [--local-ips <range>] [--lag-gate <s>] [--port <n>]
                       [--vu-cap <n>] [--ramp <s>] [--k6-memory <MiB>] [--ext <name>]...
 the first variant is the reference; an empty list (`ref=`) is the skeleton as it is
@@ -60,7 +73,7 @@ fail() { echo "steplab: $*" >&2; exit 1; }
 command_line="lab/steplab.sh $*"
 command_line="${command_line//$REPO/.}"
 
-image="" rate="" think_scale="" seconds="" pairs="" idle="" warmup="" floor="" label="" out="" first_round=1
+image="" rate="" think_scale="" seconds="" pairs="" idle="" warmup="" floor="" floor_from="" label="" out="" first_round=1 order=alternate dry_run=""
 tw_max=2500 idle_tw_max=100000 tw_wait=150 local_ips="127.0.1.1-127.0.1.4"
 # The idle client's source addresses (FIRST_OCTET to LAST_OCTET of lab/conns/client.php): its sockets keep their ports for 60 s too.
 idle_ips="127.0.0.2-127.0.0.254"
@@ -79,6 +92,7 @@ variant_index() {
   VI=$(( ${#v_names[@]} - 1 ))
 }
 while [ "$#" -gt 0 ]; do
+  if [ "$1" = --dry-run ]; then dry_run=1; shift; continue; fi
   [ "$#" -ge 2 ] || { echo "missing value for $1" >&2; usage; }
   case "$1" in
     --image) image="$2" ;;
@@ -90,6 +104,8 @@ while [ "$#" -gt 0 ]; do
     --idle) idle="$2" ;;
     --warmup) warmup="$2" ;;
     --floor) floor="$2" ;;
+    --floor-from) floor_from="$2" ;;
+    --order) order="$2" ;;
     --label) label="$2" ;;
     --out) out="$2" ;;
     --time-wait-max) tw_max="$2" ;;
@@ -145,6 +161,9 @@ done
 [[ "$think_scale" =~ ^[0-9]+([.][0-9]+)?$ ]] || { echo "--think-scale must be a number, got '$think_scale'" >&2; usage; }
 [ -z "$idle" ] || [[ "$idle" =~ ^[1-9][0-9]*$ ]] || { echo "--idle must be a whole number above 0, got '$idle'" >&2; usage; }
 [ -z "$floor" ] || [[ "$floor" =~ ^[0-9]+([.][0-9]+)?$ ]] || { echo "--floor must be a number of microseconds, got '$floor'" >&2; usage; }
+[ -z "$floor" ] || [ -z "$floor_from" ] || { echo "--floor and --floor-from are two ways to give the floor, use one" >&2; usage; }
+[ -z "$floor_from" ] || [ -d "$floor_from" ] || { echo "--floor-from wants the folder of an A/A comparison, no folder $floor_from" >&2; usage; }
+[[ "$order" == alternate || "$order" == fixed ]] || { echo "--order wants alternate or fixed, got '$order'" >&2; usage; }
 [[ -z "$label" || "$label" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "--label may only hold letters, digits, . _ and -, got '$label'" >&2; usage; }
 if [ -z "$warmup" ]; then
   warmup="$(( rate / 10 > 0 ? rate / 10 : 1 )),60"
@@ -154,6 +173,39 @@ fi
 ips_ok='^[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+-[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+$'
 first_ip="${local_ips%-*}" last_ip="${local_ips#*-}"
 { [[ "$local_ips" =~ $ips_ok ]] && [ "${first_ip%.*}" = "${last_ip%.*}" ]; } || { echo "--local-ips must be a range of one /24 (127.0.1.1-127.0.1.4) for the TIME_WAIT count, got '$local_ips'" >&2; usage; }
+
+# Why before the first run: a folder that gives no floor (fewer than 2 pairs) must stop the comparison here, not after hours of runs.
+floor_note=""
+if [ -n "$floor_from" ]; then
+  floor_json="$(bash "$LAB/steplab-floor.sh" "$floor_from")" || fail "--floor-from $floor_from gives no floor"
+  floor_note="$(jq -r --arg from "${floor_from#"$REPO"/}" '"floor: \(.floor_us) us (|median \(.median_difference_us)| + interquartile range \(.iqr_us) of \(.pairs) paired differences of \($from); every valid run counted)"' <<<"$floor_json")"
+fi
+
+# round_order <round>: sets ROUND_ORDER to the indexes of the variants in the order the round runs them. Alternating, an odd round runs them
+# in reverse (the reference last) and an even one in the order given; the round's own number decides, so --first-round keeps the alternation.
+ROUND_ORDER=()
+round_order() {
+  local i n="${#v_names[@]}"
+  ROUND_ORDER=()
+  if [ "$order" = alternate ] && [ $(( $1 % 2 )) = 1 ]; then
+    for (( i = n - 1; i >= 0; i-- )); do ROUND_ORDER+=("$i"); done
+  else
+    for (( i = 0; i < n; i++ )); do ROUND_ORDER+=("$i"); done
+  fi
+}
+round_names() { # <round>: the names in that round's order, on one line
+  local i names=""
+  round_order "$1"
+  for i in "${ROUND_ORDER[@]}"; do names="${names:+$names }${v_names[$i]}"; done
+  echo "$names"
+}
+
+if [ -n "$dry_run" ]; then
+  echo "steplab (dry run): ${#v_names[@]} variant(s) x $pairs round(s), order $order"
+  for round in $(seq "$first_round" $(( first_round + pairs - 1 ))); do echo "round $round: $(round_names "$round")"; done
+  [ -z "$floor_note" ] || echo "$floor_note"
+  exit 0
+fi
 
 docker image inspect "$LAB_IMAGE:$image" >/dev/null 2>&1 || fail "image $LAB_IMAGE:$image is missing (run lab/build.sh $image)"
 
@@ -214,16 +266,21 @@ wait_for_time_wait() {
   TW_BEFORE="$(jq --argjson w "$waited" --argjson lim "$tw_max" --argjson idle_lim "$idle_tw_max" '. + {waited_s: $w, limit_per_address: $lim, idle_limit_per_address: $idle_lim}' <<<"$TW_BEFORE")"
 }
 
-echo "steplab: ${#v_names[@]} variant(s) x $pairs round(s), $rate req/s for ${seconds}s (think scale $think_scale${idle:+, $idle idle connections}), warm-up $warmup, into ${out#"$REPO"/}"
+echo "steplab: ${#v_names[@]} variant(s) x $pairs round(s), $rate req/s for ${seconds}s (think scale $think_scale${idle:+, $idle idle connections}), warm-up $warmup, order $order, into ${out#"$REPO"/}"
+[ -z "$floor_note" ] || echo "steplab: $floor_note"
 total=$(( ${#v_names[@]} * pairs ))
 done_runs=0
 last_round=$(( first_round + pairs - 1 ))
 for round in $(seq "$first_round" "$last_round"); do
-  for i in "${!v_names[@]}"; do
+  round_order "$round"
+  round_line="$(round_names "$round")"
+  position=-1
+  for i in "${ROUND_ORDER[@]}"; do
+    position=$(( position + 1 ))
     name="${v_names[$i]}"
     id="$name-$round"
     done_runs=$(( done_runs + 1 ))
-    echo "[$done_runs/$total] round $round, $name"
+    echo "[$done_runs/$total] round $round, $name (position $(( position + 1 )) of ${#v_names[@]}, order: $round_line)"
     wait_for_time_wait
     echo "  TIME_WAIT before: $(jq -r '"\(.max) on the busiest address, \(.in_range) in all on the clients'"'"' addresses, \(.all) on the VM, waited \(.waited_s) s"' <<<"$TW_BEFORE")"
 
@@ -256,10 +313,10 @@ for round in $(seq "$first_round" "$last_round"); do
 
     # The run's own JSON stays as it is, but for the runner's temp folder (a per-user path on the Mac, in the run's `command`): the
     # results are committed to a public repository, so `<tmp>` takes its place. The runner adds one object.
-    jq --arg tmp "$tmp" --arg variant "$name" --argjson index "$i" --argjson round "$round" --argjson rounds "$last_round" --arg reference "${v_names[0]}" \
+    jq --arg tmp "$tmp" --arg variant "$name" --argjson index "$i" --argjson round "$round" --argjson rounds "$last_round" --argjson position "$position" --arg order "$order" --arg reference "${v_names[0]}" \
       --argjson env "$(jq -Rnc '[inputs | select(length > 0)]' <<<"${v_env[$i]}")" --arg server "${v_server[$i]:+${v_server[$i]#"$LAB"/}}" \
       --argjson rate "$rate" --arg warmup "$warmup" --argjson before "$TW_BEFORE" --argjson after "$tw_after" --arg command "$command_line" '
-      . + {steplab: {variant: $variant, variant_index: $index, round: $round, rounds: $rounds, reference: $reference, variant_env: $env,
+      . + {steplab: {variant: $variant, variant_index: $index, round: $round, rounds: $rounds, position: $position, order: $order, reference: $reference, variant_env: $env,
                      variant_server_file: (if $server == "" then null else $server end), rate: $rate, warmup: $warmup,
                      time_wait: {before: $before, after: $after}, command: $command}}
       | walk(if type == "string" then (split("/private" + $tmp) | join("<tmp>") | split($tmp) | join("<tmp>")) else . end)' "$tmp/$id.json" >"$out/$id.json"
@@ -275,4 +332,5 @@ done
 echo
 summary_args=("$out")
 [ -z "$floor" ] || summary_args+=(--floor "$floor")
+[ -z "$floor_from" ] || summary_args+=(--floor-from "$floor_from")
 bash "$LAB/steplab-summary.sh" "${summary_args[@]}" --json "$out/summary.json" | tee "$out/summary.txt"

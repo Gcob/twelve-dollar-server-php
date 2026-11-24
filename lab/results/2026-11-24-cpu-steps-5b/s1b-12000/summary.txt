@@ -1,0 +1,18 @@
+runs, in the order they ran (one round runs every variant once, the first variant is the reference; the order alternates: odd rounds run it last, even rounds first)
+round  variant        valid      req/s    us/req   p95 ms   p99 ms   tw/addr  load1 fsync ms  result
+    1  s1b            yes      11923.8        27     0.95     3.68         0   3.05     0.51  pass
+    1  s1a            yes      11921.7      24.9      1.6      4.6     10036   2.79     0.46  pass
+    2  s1a            yes      11930.4      24.8     1.51     4.53      8442   2.88     0.46  pass
+    2  s1b            yes      11914.3        27     1.01     3.96      8495   4.66     0.49  pass
+    3  s1b            yes      11922.4        27     1.01     3.96      8463   3.42     0.44  pass
+    3  s1a            yes      11919.6      24.9      1.7     4.67      8509   3.36      0.5  pass
+tw/addr: the most TIME_WAIT sockets on any one address, k6's or the idle client's, when the run started (- when the runner did not count)
+load1: the VM's 1-minute load average in the middle of the plateau; fsync ms: the median fdatasync of a 4 KiB write before the warm-up (- when a run has no host reading)
+
+variants (us is the server's CPU per request over the plateau)
+variant         valid failed median us        min to max   p99 ms  paired differences us     median  verdict
+s1a               3/3      0      24.9      24.8 to 24.9      4.6  reference                      -  reference
+s1b               3/3      0        27          27 to 27     3.96  +2.1 +2.3 +2.1              +2.1  beyond the noise
+
+Floor: 0.516 us, from lab/results/2026-11-23-s1-fd-wall/aa-12000: |median -0.172| + interquartile range 0.345 of 5 paired differences (quartiles by linear interpolation, inclusive)
+Rule: a variant is beyond the noise when it has at least 2 pairs, every paired difference (its µs CPU/req minus the reference's in the same round) has the same sign and the median paired difference is at least 0.516 µs in absolute value; otherwise it is within the noise. A round where either run is invalid has no pair. One pair with a floor: a screen (beats the floor when lower by at least the floor, else not better), never a verdict. No pair: no verdict. No floor: not judged (the floor comes from an A/A calibration).

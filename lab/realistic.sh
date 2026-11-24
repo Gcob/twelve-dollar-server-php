@@ -49,6 +49,11 @@
 #   probe   on CPUs 0-1: reads memory and /proc from outside, and the aggregator's status file, once a second; one sampler loop
 #           (lab/macro/sampler.php) takes the server's per-second readings (CPU, Pss_Anon, memory.current, WAL size and frames, fds,
 #           page faults) for the series (not with --no-series).
+# The host's state is in the JSON's `host` object, read by the probe container (never the Mac's own host): `before` (before the warm-up) and
+# `plateau` (over the 5 seconds, or the plateau when it is shorter, around the middle of the first step's plateau) hold `load1` and `load5`
+# (the VM's /proc/loadavg), `cpu_busy_pct` and `steal_pct` (the VM's /proc/stat, all its CPUs, over those seconds); `fsync_ms` is the median of
+# 20 writes of 4 KiB each followed by fdatasync on the disk the server's copy of the seed lives on (the container layers of the VM), before the
+# warm-up only; `other_containers` is the count of `other_containers` below. A reading that fails is null, with a `<name>_reason` next to it.
 # Exit codes: 0 a valid run (a failing step is a result, not an error), 3 printed but INVALID (the aggregator fell behind, k6 reached
 # its memory budget, a row could not be parsed), 2 usage (a VU count above the cap included), 1 any other failure.
 set -euo pipefail
@@ -288,6 +293,11 @@ lines_to_json() {
   jq -Rn 'reduce (inputs | split(" ") | select(length == 3)) as $l ({}; .[$l[0]][$l[1]] = ($l[2] | tonumber? // $l[2]))'
 }
 
+# host_state_json: the lines of `probe.sh host` on stdin as {load1, load5, cpu_busy_pct, steal_pct}, or null when one is missing or not a number.
+host_state_json() {
+  lines_to_json | jq -c '.host // null | if . != null and ([.load1, .load5, .cpu_busy_pct, .steal_pct] | all(type == "number")) then . else null end'
+}
+
 # --- the containers ---------------------------------------------------------------------------------------------------------
 docker volume create "$VOLUME" >/dev/null
 docker run -d --name "$PROBE" --network host --cgroupns host --pid host --cpuset-cpus "$LAB_CPUSET_PROBE" \
@@ -320,6 +330,14 @@ server_fds="$(probe fds "$server_id" | lines_to_json | jq '.fds.open')"
 # Why disable SC2034: sampler_start (series.sh) reads server_pid.
 # shellcheck disable=SC2034
 server_pid="$(docker inspect -f '{{.State.Pid}}' "$SERVER")"
+
+# The VM's state before the load (the server has booted and its copy of the seed is written; nothing else of the run has started): load, CPU
+# busy and steal over 5 s, then the disk. Read from the probe container, which sees the VM's /proc and the same container layers the server's copy
+# lives on. A failed reading is null, never a stopped run.
+host_before="$(probe host 5 2>/dev/null | host_state_json || true)"
+[ -n "$host_before" ] || host_before=null
+host_fsync="$(probe fsync /tmp/fsync-probe.dat 20 2>/dev/null | lines_to_json | jq -c '.host.fsync_ms // null | if type == "number" and . > 0 then . else null end' || true)"
+[ -n "$host_fsync" ] || host_fsync=null
 
 # What the page cache held of the database copy just before the server opened it (printed by lab_start_app).
 fincore_line="$(lab_fincore_line "$SERVER")"
@@ -427,6 +445,12 @@ fi
 run_measured() {
   local name="$1" stop_on_fail="$2" steps_json config options
   shift 2
+  # The host's state in the middle of the plateau, read once (by the first measured run) in the background so the poll goes on: from the poll
+  # that sees the first step's VUs, wait until the window is centred on the plateau, then read over the window (5 s, or the plateau if shorter).
+  local first_vus="$1" host_job="" plateau_at=0 now_s host_window=5
+  local host_wanted=1
+  [ ! -e "$tmp/host-plateau.out" ] || host_wanted=0
+  [ "$plateau" -ge 5 ] || host_window="$plateau"
   steps_json="$(jq -nc --argjson p "$per_vu_rate" '$ARGS.positional | map(tonumber) | map({vus: ., offered: (. * $p)})' --args "$@")"
   config="$(jq -nc --argjson steps "$steps_json" --argjson stop "$stop_on_fail" --arg server "/sys/fs/cgroup/docker/$server_id" \
     --arg k6 "/sys/fs/cgroup/docker/$k6_id" --argjson users "$USERS_PER_RPS" --argjson p95 "$LIMIT_P95_MS" --argjson p99 "$LIMIT_P99_MS" \
@@ -471,6 +495,14 @@ run_measured() {
     IFS=$'\t' read -r failed_step failed_why lag_max vus_now unparsed < <(jq -r '[(.failed.step // 0), ((.failed.reasons // ["-"]) | join("; ")), (.lag_max_s // 0), (.vus_now // 0), (.unparsed // 0)] | @tsv' <<<"${status_json:-{\}}" 2>/dev/null || echo "")
     echo "${vus_now:-0} $k6_cur $pss $cur" >>"$tmp/$name.polls"
     polls=$(( polls + 1 ))
+    if [ "$host_wanted" = 1 ] && [ -z "$host_job" ] && [ "${vus_now:-0}" -ge "$first_vus" ]; then
+      now_s="$(date +%s)"
+      [ "$plateau_at" -gt 0 ] || plateau_at="$now_s"
+      if [ $(( now_s - plateau_at )) -ge $(( (plateau - host_window) / 2 )) ]; then
+        probe host "$host_window" >"$tmp/host-plateau.out" 2>/dev/null &
+        host_job=$!
+      fi
+    fi
     if [ -n "$series" ] && [ "$polls" -ge 4 ] && [ "${vus_now:-0}" -gt 0 ]; then
       run_clients="$(probe client-ips "$port" | lines_to_json | jq -c --argjson old "$run_clients" '(.clients // {}) as $now | if ($now | length) >= ($old | length) then $now else $old end')"
     fi
@@ -502,6 +534,7 @@ run_measured() {
   done
   wait "$k6_job" || run_k6_rc=$?
   k6_job=""
+  [ -z "$host_job" ] || wait "$host_job" || true
   [ -z "$series" ] || sampler_stop "$name"
   # 99: k6's thresholds failed (a result). 105: k6 stopped by a signal, which the harness sent on purpose.
   # A k6 killed for its memory before the poll saw it reach the budget is the same finding.
@@ -557,6 +590,11 @@ else
 fi
 cpu_after="$(probe cpu "$server_id" "$k6_id" | lines_to_json)"
 [ "$(docker inspect -f '{{.State.Running}}' "$SERVER")" = true ] || fail "the server container died during the run"
+
+# The host's state in the middle of the plateau (a file the first measured run left, empty when it never ran or failed).
+host_plateau=null
+[ ! -s "$tmp/host-plateau.out" ] || host_plateau="$(host_state_json <"$tmp/host-plateau.out" || true)"
+[ -n "$host_plateau" ] || host_plateau=null
 
 # The profile: the requests of the profiled window are the warm-up's, the measured run's and one GET /health per idle connection.
 if [ -n "$profile_out" ]; then
@@ -672,13 +710,19 @@ if [ "$telemetry_value" = 1 ]; then
     [inputs | fromjson?] as $l
     | [$l[] | .connections // empty] as $c
     | [$l[] | .group_commit // empty] as $g
+    | [$l[] | select(.connections != null)] as $with
+    | ([$with[] | .pid // empty] | unique) as $pids
     | if ($c | length) == 0 then null
       else {close_responses: ($c | map(.limit_closes) | add), accept_pauses: ($c | map(.accept_pauses) | add),
-            open_peak: ($c | map(.open_peak) | max), telemetry_seconds: ($c | length),
+            open_peak: ($with | group_by(.pid) | map(map(.connections.open_peak) | max) | add),
+            telemetry_seconds: ($with | map(.second) | unique | length),
             longest_callback_ms_max: ([$l[] | .longest_callback_ms // empty] | max),
             group_commit: (if ($g | length) == 0 then null
                            else {commits: ($g | map(.commits) | add), batch_mean: (($g | map(.commits * .batch_mean) | add) / ($g | map(.commits) | add) * 100 | round / 100),
-                                 batch_max: ($g | map(.batch_max) | max)} end)} end')"
+                                 batch_max: ($g | map(.batch_max) | max)} end)}
+           # Why: with several processes (APP_WORKERS) each prints its own lines with its pid; the peak is then the sum of the peaks of the
+           # processes, the most connections the server could have held at once, and a harness must not read it as one process peak.
+           + (if ($pids | length) == 0 then {} else {processes: ($pids | length), open_peak_note: "sum of the peak of each process"} end) end')"
 fi
 invalid_all="$(jq -r --arg extra "$extra_invalid" '(map(select(.invalid != "") | .invalid) + (if $extra == "" then [] else [$extra] end)) | join("; ")' "$tmp/runs.json")"
 
@@ -692,6 +736,7 @@ jq -n \
   --arg server_file "${server_in#/lab/}" --arg flags "${LAB_PHP_FLAGS[*]}" --argjson port "$port" --arg label "$label" \
   --argjson ext "$(json_array "${LAB_EXT[@]}")" --argjson env "$(json_array "${LAB_ENV[@]+"${LAB_ENV[@]}"}")" \
   --arg socket_line "$socket_line" --argjson server_fds "$server_fds" --argjson other_containers "$other_json" \
+  --argjson host_before "$host_before" --argjson host_plateau "$host_plateau" --argjson host_fsync "$host_fsync" \
   --argjson think_scale "$think_scale" --argjson per_vu_rate "$per_vu_rate" --argjson users_per_rps "$USERS_PER_RPS" \
   --argjson ramp "$ramp" --argjson plateau "$plateau" --argjson vu_cap "$vu_cap" --arg warmup "$warmup" \
   --argjson steps_vus "$(jq -nc '$ARGS.positional | map(tonumber)' --args "${steps_vus[@]}")" \
@@ -708,9 +753,13 @@ jq -n \
     other_containers: $other_containers,
     valid: ($invalid == ""), invalid_reasons: (if $invalid == "" then [] else [$invalid] end),
     idle: $idle, cold: $cold, profile: $profile, per_second_probes: $per_second_probes,
-    host: {docker_desktop: $docker, engine: $engine, vm_kernel: $kernel, arch: $arch, limits: $limits,
+    host: ({docker_desktop: $docker, engine: $engine, vm_kernel: $kernel, arch: $arch, limits: $limits,
             cpu_layout: $cpu_layout, cpuset_server: $cpuset_server, cpuset_k6: $cpuset_k6, cpuset_probe: $cpuset_probe,
-            cpuset_idle_sibling: (if $cpuset_idle_sibling == "" then null else $cpuset_idle_sibling end)},
+            cpuset_idle_sibling: (if $cpuset_idle_sibling == "" then null else $cpuset_idle_sibling end),
+            before: $host_before, plateau: $host_plateau, fsync_ms: $host_fsync, other_containers: $other_containers.count}
+          + (if $host_before == null then {before_reason: "the probe container could not read /proc/loadavg or /proc/stat before the warm-up"} else {} end)
+          + (if $host_plateau == null then {plateau_reason: "no step reached its plateau, or the probe container could not read /proc/loadavg or /proc/stat during it"} else {} end)
+          + (if $host_fsync == null then {fsync_reason: "the probe container could not write and fdatasync its file"} else {} end)),
     server: {variant: $variant, image_id: $image_id, php_version: $php_version, file: $server_file, port: $port, php_flags: $flags,
              ext: $ext, env: $env, fds_open_at_boot: $server_fds,
              socket: (if $socket_line == "" then null else $socket_line end)},
@@ -763,9 +812,10 @@ else
 fi
 jq -r '"k6 connection errors: \(.k6_connection_errors)" + (if (.k6_error_codes | length) > 0 then " (k6 error codes: \(.k6_error_codes | to_entries | map("\(.key) x \(.value)") | join(", ")))" else "" end)' "$out"
 jq -r '.cold | "database copy in the page cache when the server opened it (fincore): \(.resident_bytes) of \(.size_bytes) bytes, \(.resident_share * 100 | round) %, --cold \(if .requested then "on" else "off" end)"' "$out"
-jq -r '.server_connections | "server connections: soft limit \(.soft_limit // "off"), " + (if .telemetry == null then "no telemetry" else "\(.telemetry.close_responses) Connection: close responses, \(.telemetry.accept_pauses) accept pauses, \(.telemetry.open_peak) open at most" end) + ", file descriptors peak \(.fds_peak // .fds_peak_note)"' "$out"
+jq -r '.server_connections | "server connections: soft limit \(.soft_limit // "off"), " + (if .telemetry == null then "no telemetry" else "\(.telemetry.close_responses) Connection: close responses, \(.telemetry.accept_pauses) accept pauses, \(.telemetry.open_peak) open at most" + (if .telemetry.processes == null then "" else " (\(.telemetry.open_peak_note), \(.telemetry.processes) processes)" end) end) + ", file descriptors peak \(.fds_peak // .fds_peak_note)"' "$out"
 jq -r 'select(.idle != null) | .idle | "idle connections: \(.requested) requested, \(.held_at_start) held at the start and \(.held_at_end) at the end, \(.closed_by_server_at_end) closed by the server; the server counted \(.server_established_at_start) and \(.server_established_at_end) established, \(.server_fds_open_with_idle) file descriptors open with them",
   "idle client memory: \(.client.memory_current_mib_at_end) MiB memory.current at the end (peak \(.client.memory_peak_mib), anon \(.client.anon_mib), kernel \(.client.kernel_mib), socket buffers \(.client.socket_buffers_mib)), the process RSS \(.client.rss_mib) MiB after opening them, opened in \(.seconds_to_open) s from \(.source_addresses | length) source addresses"' "$out"
+jq -r '.host | def n: if . == null then "not read" else tostring end; "host: load1 \(.before.load1 | n) before the warm-up and \(.plateau.load1 | n) on the plateau (load5 \(.before.load5 | n) and \(.plateau.load5 | n)), CPU busy \(.before.cpu_busy_pct | n) % and \(.plateau.cpu_busy_pct | n) %, steal \(.before.steal_pct | n) % and \(.plateau.steal_pct | n) %, fsync \(.fsync_ms | n) ms, \(.other_containers) other containers"' "$out"
 jq -r '"k6 peak memory \(.k6.peak_memory_mib) MiB of its \(.k6.memory_budget_mib) MiB budget, k6 CPU \(.k6.cpu_percent_of_one_cpu) % of one CPU, aggregator max lag \(.aggregator.max_lag_s) s (gate \(.aggregator.lag_gate_s) s), server Pss_Anon peak \(if .server_memory.pss_anon_peak_mib == null then "not read (--no-series)" else "\(.server_memory.pss_anon_peak_mib) MiB" end), memory.current peak \(if .server_memory.memory_current_peak_mib == null then "not read" else "\(.server_memory.memory_current_peak_mib) MiB" end)"' "$out"
 [ -z "$other_warning" ] || echo "$other_warning"
 if [ -z "$calibrate" ]; then

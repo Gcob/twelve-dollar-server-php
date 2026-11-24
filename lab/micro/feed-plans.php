@@ -31,3 +31,5 @@ plan($db, 'GET /feed, APP_FEED_SQL=two-step (statement 2 of 2)', app_feed_likes_
 foreach (['reference', 'join'] as $variant) {
     plan($db, "GET /posts/:id, APP_FEED_SQL=$variant", app_post_sql($variant));
 }
+plan($db, 'GET /feed, APP_JSON=sqlite', app_feed_json_sql());
+plan($db, 'GET /posts/:id, APP_JSON=sqlite', app_post_json_sql());

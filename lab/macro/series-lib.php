@@ -58,7 +58,9 @@ function proc_stat_faults(string $stat): ?array
 }
 
 /**
- * The server's telemetry lines (`telemetry {json}`, one per second) of its log, by the second each one describes.
+ * The server's telemetry lines (`telemetry {json}`, one per second) of its log, by the second each one describes. A server of several
+ * processes (APP_WORKERS) prints one line per process per second, each with its `pid`: the lines of one second become one row
+ * (telemetry_sum) with a `processes` count and no `pid`. A line without a `pid` is kept as it is.
  *
  * @return array<int, array<string, mixed>>
  */
@@ -70,11 +72,61 @@ function telemetry_parse(string $log): array
             continue;
         }
         $row = json_decode(substr($line, 10), true);
-        if (is_array($row) && isset($row['second']) && is_int($row['second'])) {
+        if (!is_array($row) || !isset($row['second']) || !is_int($row['second'])) {
+            continue;
+        }
+        if (isset($row['pid'])) {
+            $out[$row['second']] = telemetry_sum($out[$row['second']] ?? null, $row);
+        } else {
             $out[$row['second']] = $row;
         }
     }
     return $out;
+}
+
+/**
+ * The line of one process added to what the other processes of the same second printed (null: it is the first). Counts and the
+ * connections' numbers are summed (a peak too: the processes' peaks may fall at different moments of the second, so the sum is an upper
+ * bound of the connections open at once); the longest callback is the largest; the WAL is one file, read by each process; the mean batch
+ * of group commit is weighted by each process's commits.
+ *
+ * @param array<string, mixed>|null $sum
+ * @param array<string, mixed> $row a line with a `pid`
+ * @return array<string, mixed>
+ */
+function telemetry_sum(?array $sum, array $row): array
+{
+    unset($row['pid']);
+    if ($sum === null) {
+        $row['processes'] = 1;
+        return $row;
+    }
+    $sum['processes']++;
+    $requests = (array) ($sum['requests'] ?? []);
+    foreach ((array) ($row['requests'] ?? []) as $endpoint => $count) {
+        $requests[$endpoint] = ($requests[$endpoint] ?? 0) + $count;
+    }
+    $sum['requests'] = $requests;
+    foreach (['gc_runs', 'gc_collected', 'minflt', 'majflt'] as $key) {
+        $sum[$key] = ($sum[$key] ?? 0) + ($row[$key] ?? 0);
+    }
+    foreach (['longest_callback_ms', 'wal_bytes'] as $key) {
+        $sum[$key] = max($sum[$key] ?? 0, $row[$key] ?? 0);
+    }
+    if (isset($row['connections'])) {
+        foreach (['open_peak', 'limit_closes', 'accept_pauses'] as $key) {
+            $sum['connections'][$key] = ($sum['connections'][$key] ?? 0) + $row['connections'][$key];
+        }
+    }
+    if (isset($row['group_commit'])) {
+        $a = $sum['group_commit'] ?? ['commits' => 0, 'batch_mean' => 0.0, 'batch_max' => 0];
+        $b = $row['group_commit'];
+        $commits = $a['commits'] + $b['commits'];
+        $sum['group_commit'] = ['commits' => $commits,
+            'batch_mean' => $commits === 0 ? 0.0 : round(($a['commits'] * $a['batch_mean'] + $b['commits'] * $b['batch_mean']) / $commits, 2),
+            'batch_max' => max($a['batch_max'], $b['batch_max'])];
+    }
+    return $sum;
 }
 
 /**

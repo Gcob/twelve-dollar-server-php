@@ -570,16 +570,18 @@ variant of every step of a request, on purpose: later work measures the alternat
   here. No published image was used for the four tools: building them from the pinned Ubuntu is less to trust than a third-party
   image.
 
-### The S6 variants (SQL, fetch and pragmas)
+### The S6 variants (SQL, fetch, JSON and pragmas)
 
-Three switches on `lab/app/server.php`, read once at boot by `app_variants` (`lab/app/app.php`). Unset (or empty) is the reference: the
+Four switches on `lab/app/server.php`, read once at boot by `app_variants` (`lab/app/app.php`). Unset (or empty) is the reference: the
 same statements and the same bytes as before. A value that is not a name is refused (exit 1, the message names the variable and the
-names). When one is set, the boot prints `app variants: feed_sql=... fetch=... pragmas=...`.
+names). When one is set, the boot prints `app variants: feed_sql=... fetch=... json=... pragmas=...`.
 
 | Switch | Values | What it does |
 | --- | --- | --- |
 | `APP_FEED_SQL` | `reference`, `join`, `two-step` | `reference`: the like count is a correlated subquery per post. `join`: the 20 newest posts come from a subquery with the `LIMIT`, then `JOIN users`, `LEFT JOIN likes`, `GROUP BY p.created_at, p.id` (`GET /posts/:id` gets a `LEFT JOIN ... GROUP BY p.id` too). `two-step`: the 20 posts with their authors, then one `SELECT post_id, count(*) FROM likes WHERE post_id IN (20 ids) GROUP BY post_id` with that request's own ids, merged in PHP (both statements are the request's own: nothing is read for another request). `GET /posts/:id` reads as the reference in `two-step`: splitting one id into two statements is the reference with one more call. |
 | `APP_FETCH` | `assoc`, `num`, `assoc-loop`, `num-loop` | The rows as arrays keyed by column name, or by position (`FETCH_NUM`, the JSON then built from positions: `feed_json_positions`, `post_json_positions`). `-loop` reads with `fetch()` in a loop instead of `fetchAll()`. |
+| `APP_JSON` | `encode`, `concat`, `sqlite` | How the JSON of the feed and of one post is built. `encode`: `json_encode` of the rows (the reference). `concat`: the same bytes by string concatenation, the two numbers cast to int and appended, `json_encode` (same flags) only on `body`, `created_at` and `author`, the posts joined with `implode` (`feed_json_concat`, `post_object_json_concat`). `sqlite`: SQLite builds the JSON in the statement: the feed is one row of one column, `json_group_array(json_object('id', ..., 'like_count', ...) ORDER BY created_at DESC, id DESC)` over the reference's 20-post subquery (`app_feed_json_sql`), and PHP wraps it in `{"posts":` and `}`; a post is its `json_object` (`app_post_json_sql`) wrapped in `{"post":` and `}`. Writes, likes, health and errors are `json_encode` as before. `sqlite` decodes to the same values as `encode`; its bytes differ only where SQLite escapes less than PHP's flags do: U+2028 and U+2029 (SQLite writes them raw, PHP writes `\u2028` and `\u2029`), and the spec allows both. Control characters (`\b \f \n \r \t`, the others as `\u00xx` in lower case) and `/` come out the same. `concat` and `sqlite` need `APP_FETCH=assoc`, and `sqlite` needs `APP_FEED_SQL=reference` (one SQL shape is enough); the app refuses the other combinations at boot with the reason. |
+| `APP_DRIVER` | `pdo`, `ffi` | What runs the statements. `pdo`: PDO (`pdo_sqlite`), the reference. `ffi`: PHP's FFI calls the system's `libsqlite3` directly (`lab/app/sqlite-ffi.php`; no C is compiled, FFI is given the library's prototypes): the same SQL, the same pragmas (`app_connection_pragmas`), the same 60 s connect timeout PDO sets, a prepared statement per query kept for the connection's life and reset after every use, and PDO's own messages in its errors. The boot refuses a `libsqlite3` that is not the SQLite version PDO runs (3.45.1 on both in the images). **It reads only** (the feed and the posts, with `encode`, `concat` and `sqlite`) and boots only with `APP_DRIVER_BENCH=1`, which `lab/micro/benches/feed.php` sets: the micro bench found it saves nothing against PDO (`lab/micro/driver-run/README.md`), so the writes, health and the group commit were not written. It needs `APP_FEED_SQL=reference` and `APP_FETCH=assoc`. A server with it says `driver: ffi (SQLite ..., reads only: for the micro bench)` at boot. |
 | `APP_PRAGMAS` | `default`, `mmap-off`, `cache-256m`, `cache-8m` | Today's: `cache_size` 64 MiB and `mmap_size` 256 MiB (the seed is 250 MB). `mmap-off`: reads go through `pread` and the 64 MiB cache. `cache-256m`: the whole seed fits in the page cache and the map is off (the cache against the map). `cache-8m`: a cache too small for the data and the map on (how much the cache matters when the map does the reading). |
 
 `bash lab/challenge-test.sh --image 8.5 --env APP_FEED_SQL=join --env APP_FETCH=num` runs the 42 checks on a variant.
@@ -587,12 +589,29 @@ names). When one is set, the boot prints `app variants: feed_sql=... fetch=... p
 one (and with a literal answer).
 
 **The micro bench:** `lab/micro/benches/feed.php` (`bash lab/micro.sh lab/micro/benches/feed.php --images 8.5 --jit on`) times `route_feed()`
-(the query and the JSON) for every SQL and fetch pair, the query alone for each SQL, the pragmas on the reference, and `GET /posts/:id`, on a
+(the query and the JSON) for every SQL and fetch pair, `APP_JSON` on the reference, the query alone for each SQL, the pragmas on the reference, and `GET /posts/:id` (with `APP_JSON` too), on a
 warm copy of the seed whose 20 newest posts got 0 to 50 more likes first. Each case checks its answer against the reference's, computed in
-the same process. `lab/micro/feed-plans.php` prints the `EXPLAIN QUERY PLAN` of every statement (`bash lab/run.sh 8.5 php
+the same process (the same bytes; `APP_JSON=sqlite`: the same decoded value). `lab/micro/feed-plans.php` prints the `EXPLAIN QUERY PLAN` of every statement (`bash lab/run.sh 8.5 php
 /lab/micro/feed-plans.php`); `lab/micro/feed-run/` has one run's rows (`feed-8.5-jit-on.txt` and its JSON) and the plans
 (`feed-plans.txt`, which `lab/check.sh` regenerates and compares). That run is a developer's look at the variants, not a result: the
 macro pairs are `lab/results/`'s.
+
+**The driver bench:** the same file times the routes with `APP_DRIVER=ffi` next to PDO's (the feed and a post, with the JSON of `encode` and of
+`sqlite`), and four cases that run the `APP_JSON=sqlite` statement straight on `libsqlite3` through FFI with no class around it (the statement
+stepped and reset with nothing read, and with the text read): what a driver costs at the least. The numbers, the reading and why the driver stops at
+reads are in `lab/micro/driver-run/README.md`.
+
+**The parse bench:** `lab/micro/benches/parse.php` (`bash lab/micro.sh lab/micro/benches/parse.php --images 8.5 --jit both`) times
+`DiyConnection::parseHead()` (the request line and the header lines of one request, before the handler) against a leaner parse written in the
+bench file (`ParseBenchLean`: the same rules and refusals, but it walks the head by offsets instead of `explode`-ing it into lines, and reads the
+request line by offsets too). The heads are k6's own (captured from its requests to a listening socket: `GET /feed` with `Host` and `User-Agent`,
+`POST /posts/<id>/like` and `POST /posts` with `Content-Length`, `Authorization` and `Content-Type`; the token is the seed's first, 179 characters).
+Each case checks, outside the timing, that the two parses find the same method, target, body length, authorization and close flag, and give the
+same verdict on a battery of 55 heads that holds every refusal of the server's parser (a space or a tab before the colon, a line fold, two
+`Content-Length`, a non-digit one, over 1 MiB, `Transfer-Encoding`, no colon, a colon only in the next line, a head ending in a line break, bad
+request lines). The lean parse is **not wired** into the server: on JIT on (the server's mode) it saves 18.7 % of the `GET /feed` head and about 10 % of
+the heads with an `Authorization`, under the 20 % a variant needed (and about 50 ns of a request that costs about 27 us). One run's rows are in
+`lab/micro/parse-run/` (`parse-8.5.txt` and its JSON), on a VM with no other container.
 
 ### The S8 variant (locking)
 
@@ -658,6 +677,63 @@ switches, the batch, a write that fails inside it through a trigger of the test'
 the real app in the test's process, and `lab/app/server.php` as a child process: a 201 survives SIGKILL, the checkpointer copies the WAL
 back and ends with the server, the telemetry line has the batches), and `check_challenge_test_passes_with_group_commit_and_checkpointer`
 (the 42 checks with each switch and both).
+
+### Several processes on one port (`APP_WORKERS`)
+
+`APP_WORKERS=<n>` on `lab/app/server.php` (1 to 64; unset, empty or `1` is the one process it always was: the same boot lines and bytes). With
+`n` of 2 or more the parent reads and checks the configuration and forks `n` children **before** it opens the database or any socket
+(`lab/app/workers.php`). Each child opens its own connection to the database (`app_boot`, never inherited), its own listening socket on the
+same host and port with `SO_REUSEPORT` (`diy_listen($host, $port, $backlog, true)`: the backlog and `TCP_NODELAY` are the single process's), its
+own event loop and its own 65,535 file descriptors, and tells the parent it listens. The kernel splits the new connections between the
+children by a hash of the client's address and port.
+
+- **Needs `pcntl`.** The lab's default extension list is `sockets event` and one `--ext` replaces the whole list: every run and check with
+  workers passes `--ext sockets --ext event --ext pcntl`. Without it the server says so on stderr and exits 1.
+- **Boot lines:** `workers: <n> (pids <a> <b>)`, then the lines of a single process, once the children all listen: `listening on`, `soft
+  connection limit: <n> per process` (the limit applies to each process's own connections), `app variants: ...`, `loop:` and `socket:` (the
+  first child's).
+- **The parent never restarts a child.** When one ends, however it ends, the parent stops the others and exits 1 (`server: worker <pid> was
+  killed by signal 9, stopping the others`), so that a bench sees the crash. SIGTERM or SIGINT to the parent stops the children and exits 0. A
+  container ends all its processes when it is removed. A child does not watch its parent: killing the parent alone (outside a container) leaves
+  the children serving.
+- **SQLite:** each child is a WAL reader and writer on the same file, with `busy_timeout = 5000`. A write that waits for the other child's lock
+  is held up by SQLite's busy handler, which sleeps inside the call: it blocks that child's whole event loop, every connection of that child,
+  until the lock frees or `busy_timeout` ends. The other child keeps serving. The write is committed before its response.
+- **Refused with 2 or more** (exit 1, a message on stderr): `APP_LOCKING=exclusive` (a second process cannot open the database),
+  `APP_CHECKPOINTER` (one more process on the database) and `APP_PROFILE` (one file, one process). With `APP_WORKERS=1` all three are as before.
+- **Telemetry** (`APP_TELEMETRY=1`): one line per child per second, with `"pid"` after `second`. `lab/macro/series-lib.php` (`telemetry_sum`)
+  sums the lines of one second into one row (`processes`: how many; requests, closes and faults added, the longest callback and the WAL size
+  the largest, the batch mean of group commit weighted by commits), and `lab/realistic.sh` sums the run: the closes and the accept pauses
+  added, **`open_peak` the sum of each process's own peak** (an upper bound of the connections open at once; `open_peak_note` says so), and
+  `processes`. With one process the JSON and the rows are what they were. The sampler already counts the file descriptors, memory and CPU of
+  every process of the server's container.
+- **Both processes answering** is read from the telemetry (`pid`), so the response bytes carry no extra header.
+
+**Checks:** `app-workers-test.php` (the switch and its refusals; the supervision with children that only report; the server as a process:
+boot lines, a database connection and a listening socket per child and none in the parent, 200 connections answered by both children and 60
+writes each committed before its 201, a child killed with SIGKILL, SIGTERM, the refusals, no pcntl, no database), `check_challenge_test_passes_with_workers`
+(the 42 checks, also with `APP_PRAGMAS=mmap-off`), `check_app_workers_in_a_container` (the same where the server is the container's first process:
+exit codes 1 and 0), `check_realistic_workers_run` (a realistic run with the telemetry summed), and the cases of `series-test.php`.
+
+### The event loop's presets (`APP_LOOP`)
+
+`APP_LOOP=nolock|changelist|poll` on `lab/app/server.php` (unset or empty: `new EventBase()`, the loop as it always was, and the `loop:` boot
+line says the method alone, `loop: epoll`). A name builds the loop's libevent base from an `EventConfig` (`diy_loop_presets()` and `diy_loop_config()`
+in `lab/servers/diy-server.php`, the constructor's last argument `$loopPreset`); any other value is refused at boot with the list. The boot line
+then says the method libevent chose, which is the proof the configuration reached the base, and the preset: `loop: epoll (with changelist), preset
+changelist (flags EPOLL_USE_CHANGELIST)`. It composes with the other switches, and with workers each process builds its own base. The bake-off's
+`bake-diy.php` never sets it.
+
+| Preset | What it builds | Why it could save CPU on one thread |
+| --- | --- | --- |
+| `nolock` | `EventBase::NOLOCK` | libevent takes no lock around its calls. The lab image's `event.so` never asks libevent for lock callbacks (no `evthread` symbol), so there may be none to drop: the preset is there to be counted, not expected to move anything. |
+| `changelist` | `EventBase::EPOLL_USE_CHANGELIST` | The `epoll_ctl` calls wait for the next `epoll_wait` and merge. Persistent read events cost none per request, but group commit deletes a connection's read event and adds it back in one turn, which the list drops. |
+| `poll` | `EventConfig::avoidMethod('epoll')` | `poll(2)` needs no `epoll_ctl` when a connection opens or closes, at the price of passing every descriptor at each wake-up. |
+
+The count that decides whether a preset gets a macro pair is `lab/syscalls.sh` (2,000 req/s) with the preset against the reference.
+**Checks:** `diy-loop-test.php` (each preset's base and boot line, a server on it serving, the unknown name), `diy-group-commit-test.php` run on
+each preset (its first argument), `check_challenge_test_passes_with_loop_presets` (42 checks, with and without group commit) and
+`check_app_loop_reaches_the_server` (the boot line, with workers, the refusal).
 
 ## The realistic mode
 
@@ -1051,25 +1127,33 @@ Each run is `lab/realistic.sh --hold <rate>,<seconds>` (a fresh seed copy, serve
 rate for 60 s (`--warmup <req/s>,<s>` changes it). `--variant <name>=<K=V,K=V...>` sets environment variables (an empty list is the
 skeleton as it is); `--server-variant <name>=<php file under lab/>` runs another server file; `--variant-args <name>=<arguments>` adds
 arguments to that variant's `lab/realistic.sh` call, split on spaces and given last, so a variant can run on another image and with its own
-extension and `php.ini` (`--variant-args "other=--image 8.3-apt --ext swoole"`). **The first variant is the reference.** Runs are **interleaved by round**: round 1 runs every variant once in the given order, round 2 again, and so on for
-`--pairs` rounds, so a slow drift of the VM hits every variant alike.
+extension and `php.ini` (`--variant-args "other=--image 8.3-apt --ext swoole"`). **The first variant is the reference.** Runs are **interleaved by round**: every round runs every variant once, and `--pairs` rounds follow each other, so a slow drift of the VM hits every variant alike.
 
-**The order inside a round is not rotated.** The reference runs first in every round. The A/A data shows an order effect of about -0.2 µs/req:
-the four A/A pairs at 24,000 req/s that passed the 97 % rule are all negative (-0.26, -0.16, -0.27, -0.06), the second run of an identical pair costing
-a little less, and the Mac's same-rate S1-d pair that never fires is lower in 3 of 3 rounds. The order stays for this phase: the A/A floor
-(0.27 µs/req, from those four pairs) absorbs an effect of that size, so a variant that clears the floor clears it with the bias in. Alternating the
-order of each round (ABBA: reference, variant, then variant, reference) cancels a steady bias and is the fix for a later phase; it needs no change to the
-verdict, only to the order the runner loops in.
+**The order inside a round alternates** (`--order alternate`, the default). Odd rounds run the variants in reverse (B A; C B A with three), even rounds in the order
+given (A B; A B C), counted from the round's own number, so `--first-round` keeps the alternation. **Round 1 runs the reference last**, on purpose: the A/A data
+shows an order effect of about -0.2 µs/req (the four A/A pairs at 24,000 req/s that passed the 97 % rule were all negative: -0.26, -0.16, -0.27, -0.06; the second
+run of an identical pair costs a little less), and a one-pair screen is round 1 alone, where that bias must work against the variant, never for it. Over a
+pair of rounds the bias cancels in the median. `--order fixed` keeps the order given in every round. Each run's `steplab` object records its `position` in the
+round (0-based) and the `order` rule, the progress line says each round's order, and the table lists the runs in the order they ran. `--dry-run` validates the options,
+prints the order of each round (and the floor of `--floor-from`) and runs nothing.
 
 **The judgment** (`lab/steplab-verdict.jq`, a pure function of the run JSON files): the number of a run is the server's CPU per
-request over the plateau (what the aggregator reads from the cgroup). A run counts when its JSON is valid. A variant's **paired
+request over the plateau (what the aggregator reads from the cgroup). A run counts when its JSON is valid and its step has a CPU per request: **a run whose step failed the 97 % rule counts too**, and the table flags it with a `*` next to its µs/req (and a `failed_rule` count per variant in `summary.json`), so a reader sees which numbers rest on such runs; a run the harness marked invalid (lag, k6's memory, idle connections closed) has no pair. A variant's **paired
 differences** are its number minus the reference's of the same round; a round where either run is invalid has no pair. A variant is
 `beyond the noise` when it has at least 2 pairs, **every pair has the same sign** (a zero has none) **and** the median paired difference
 is at least `--floor <us>` in absolute value; otherwise `within the noise`. **One pair is a screen, not a verdict:** with a floor, a
 variant that is lower than the reference by at least the floor is `screen: beats the floor`, any other is `screen: not better in one
 pair` (the first look that decides which variants deserve more pairs). No pair: `no verdict`. Without
-`--floor`: `no floor: not judged` (the floor comes from an A/A calibration: two identical variants, the largest median paired difference
-they show). The rule is printed under the tables.
+a floor: `no floor: not judged`. The rule is printed under the tables.
+
+**The floor** comes from an A/A calibration (two identical variants, `ref=` and a second variant that sets nothing) and one rule for every pair, A/A included:
+`--floor-from <A/A folder>` computes it (`lab/steplab-floor.sh`), `--floor <us>` types it (fixtures, a known value); both together are a usage error. The floor is
+`|median of the A/A's paired differences| + their interquartile range` (q3 - q1, quartiles by linear interpolation, inclusive: numpy's default `percentile`,
+Excel's `QUARTILE.INC`; with 5 differences, the 2nd and 4th sorted values), rounded to 3 decimals, so one outlier does not set it. 5a's A/A at 24,000 req/s: its
+differences -0.260, +2.565, -0.161, -0.267, -0.063 give median -0.161, quartiles -0.260 and -0.063, floor **0.358 µs/req**; the largest absolute difference (2.57) was
+the old floor, set by one run that failed the 97 % rule. At least 2 pairs are needed (`steplab-floor.sh` exits 1 otherwise). `summary.json` records `floor_us`,
+`floor_from` (the folder), `floor_rule`, `floor_detail` and `order`, and `steplab.sh` reads the floor before its first run, so a folder that gives none stops the
+comparison at once. The tables of runs that carry no `order` (5a's results folders, whose READMEs hold them byte for byte) print as they always did.
 
 **TIME_WAIT sockets.** Before each run the runner counts the TIME_WAIT sockets on every source address the lab's clients use, k6's and
 the idle client's (`127.0.0.2` to `127.0.0.254`) (`probe.sh time-wait`, one /24 range per comma-separated item: the VM's
@@ -1092,14 +1176,40 @@ and the most TIME_WAIT sockets on any one address (k6's or the idle client's) be
 
 **What it writes** into `--out` (default `lab/results/steplab-<label>-<image>-<time>/`): `<variant>-<round>.json` (the realistic run's
 JSON with a `steplab` object: variant, index, round, the variant's env and server file, the TIME_WAIT counts), `<variant>-<round>.txt`
-(that run's table; the runner's temp folder is a per-user path on the Mac, so both files hold `<tmp>` where it was), `summary.json` and `summary.txt`. `bash lab/steplab-summary.sh <folder> [--floor <us>] [--json <file>]` rebuilds the
+(that run's table; the runner's temp folder is a per-user path on the Mac, so both files hold `<tmp>` where it was), `summary.json` and `summary.txt`. `bash lab/steplab-summary.sh <folder> [--floor <us> | --floor-from <A/A folder>] [--json <file>]` rebuilds the
 two tables and the verdicts from the JSON files alone, so a results folder's `summarize.sh` calls it. Exit codes: 0 every run ran (an
 invalid run or a failing step is a result), 1 a harness failure, 2 usage. The runs of a comparison take what they take: a 60 s plateau
 with 60,000 idle connections is about 4 minutes a run, plus the drain of the TIME_WAIT sockets.
 
+**The host's state.** A slow series with an idle neighbour count of 0 has happened (the Mac ran 25 % slower, the x86 box failed the 97 % rule at
+43 % CPU), so each run's JSON says what the machine was doing, in its `host` object (next to the machine's description), read by the probe
+container: `before` (before the warm-up) and `plateau` (around the middle of the first step's plateau, over 5 s or the plateau if shorter) each hold
+`load1`, `load5` (the VM's `/proc/loadavg`), `cpu_busy_pct` and `steal_pct` (the VM's `/proc/stat`, all its CPUs, over those seconds; busy is
+everything but idle and iowait); `fsync_ms` is the median of 20 writes of 4 KiB each followed by `fdatasync` (`lab/macro/fsync.php`) on the disk
+the server's copy of the seed lives on, before the warm-up only so it does not load the plateau; `other_containers` is the count already in
+`other_containers.count`. Counts and timings only. A reading that fails is `null` with a `before_reason`, `plateau_reason` or `fsync_reason` next to
+it. The run table of `steplab-summary.sh` shows `load1` (plateau) and `fsync ms` when a run has these readings (a folder of earlier runs prints the table it always did).
+
+### `lab/stages.sh`: a file of series, one quiet check each
+
+```bash
+bash lab/stages.sh series.txt --out /tmp/stages            # the series of the file, one after the other, a 60 s gap between them
+bash lab/stages.sh series.txt --dry-run                    # the commands, when each would start and end, the gaps: nothing runs
+```
+
+A series file is plain text, one series per line: a name, then the arguments of one `lab/steplab.sh` call (`--out` is the driver's:
+`<dir>/<name>`); blank lines and `#` lines are skipped, and quotes group a word. For each series the driver counts the running containers on
+the VM that are not the lab's (`lab_other_containers_count`) and **refuses to start it unless there are 0** (`--allow-busy` runs it anyway and
+marks it `busy: true`, for a smoke), notes the start with `date`, runs `steplab.sh`, notes the end and its exit code, then waits `--gap <s>` (default
+60) so the machine settles; none after the last. A series that exits non-zero stops the file and its code is the driver's (`--keep-going` goes on and
+returns the first); a refusal always stops it. `<dir>/stages.json` (default `lab/results/stages-<time>/`) holds `{commit, dirty, gap_s, allow_busy, keep_going,
+series: [{name, command, start, end, exit_code, other_containers, busy, refused}]}`, rewritten after every series, with counts only. `commit` is the checkout's HEAD when the file starts and `dirty` is true when a tracked file differs from it (`git diff --quiet HEAD`: the untracked results folder does not count), so a results folder is tied to its code.
+`check_stages_dry_run`, `check_stages_stops_and_refuses` (it starts an unlabelled `sleep` container of its own, removed whatever happens, to prove the
+refusal) and `check_stages_live` cover it; `check_host_cpu_share_parse` and `check_host_fsync_probe` cover the host's readings.
+
 `check_steplab_verdicts` runs the verdict on recorded run files (`lab/check/fixtures/steplab/<case>/`: identical variants, a variant
 1 ms slower in every round, mixed signs, the same sign under the floor, an invalid round of the variant or of the reference, a single
-pair that is slower, lower by less than the floor or lower by more than it, and no pair), and `check_steplab_live` runs two variants for two rounds at a low rate and reads the tables' shape.
+pair that is slower, lower by less than the floor or lower by more than it, and no pair), `check_steplab_order` reads the order of rounds 1 to 4 (two and three variants, `--first-round`, `--order fixed`) from `steplab.sh --dry-run`, `check_steplab_floor` the floor of two fixture A/A folders worked out by hand (5a's five differences, and an even count with an invalid run) and the `*` flag, and `check_steplab_live` runs two variants for two rounds at a low rate and reads the tables' shape and the order.
 
 ### `lab/syscalls.sh`: syscalls per request
 

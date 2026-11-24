@@ -246,12 +246,22 @@ check_public_guard_catches_temp_folder() {
   done
 }
 
-check_results_hold_no_container_names() {
-  local json named=""
+# The JSON files of a folder that name another container. Only an object is a run's record: a file that is an array (a list of counts,
+# say) has no `other_containers` to read, and jq would fail on it.
+files_naming_containers() {
+  local json
   while IFS= read -r json; do
-    jq -e '(.other_containers.names // []) | length == 0' "$json" >/dev/null 2>&1 || named="$named $json"
-  done < <(find "$LAB/results" -name '*.json')
+    jq -e 'if type == "object" then ((.other_containers.names // []) | length == 0) else true end' "$json" >/dev/null 2>&1 || printf ' %s' "$json"
+  done < <(find "$1" -name '*.json')
+}
+
+check_results_hold_no_container_names() {
+  local named
+  named="$(files_naming_containers "$LAB/results")"
   [ -z "$named" ] || { echo "container names in:$named"; return 1; }
+  # The fixtures: an array file and an object with no name pass, an object with a name is caught.
+  named="$(files_naming_containers "$LAB/check/fixtures/container-names")"
+  [ "$named" = " $LAB/check/fixtures/container-names/object-named.json" ] || { echo "the fixtures: expected only object-named.json, got:$named"; return 1; }
 }
 
 # The bake-off server under k6 on /posts/<id>, with --env, --label and the default file name: the run is valid, the JSON holds
@@ -509,22 +519,24 @@ check_app_cases() {
   return 0
 }
 
-# The S6 variants (APP_FEED_SQL, APP_FETCH, APP_PRAGMAS) through the app's entry point on a small database: every combination answers the
-# same bytes as the unset one, and the literal answers, the refused values, the presets and the join's plan hold (65 cases).
+# The S6 variants (APP_FEED_SQL, APP_FETCH, APP_JSON, APP_PRAGMAS) through the app's entry point on a small database: every combination answers
+# the same bytes as the unset one (APP_JSON=sqlite: the same decoded values, and the same bytes but for U+2028 and U+2029), and the literal answers,
+# the refused values and combinations, the presets and the join's plan hold (96 cases).
 check_app_variants_cases() {
   local out ok rc=0
   out="$(bash "$LAB/run.sh" 8.5 php /lab/check/app-variants-test.php 2>&1)" || rc=$?
   [ "$rc" = 0 ] || { echo "app-variants-test.php exited $rc: ${out//$'\n'/ | }"; return 1; }
   ok="$(grep -c '^ok  ' <<<"$out")"
-  [ "$ok" = 65 ] || { echo "expected 65 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
+  [ "$ok" = 96 ] || { echo "expected 96 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
   ! grep -q 'FAIL' <<<"$out" || { echo "a case failed: ${out//$'\n'/ | }"; return 1; }
 }
 
-# The challenge's 42 checks (the golden feed byte for byte) against the server with each non-default value of the S6 switches, and with
-# three of them together.
+# The challenge's 42 checks (the golden feed byte for byte) against the server with each non-default value of the S6 switches (APP_JSON
+# included: concat and sqlite each give the golden feed and posts), and with three of them together.
 check_challenge_test_passes_each_s6_variant() {
   local out env left rc
   for env in APP_FEED_SQL=join APP_FEED_SQL=two-step APP_FETCH=num APP_FETCH=assoc-loop APP_FETCH=num-loop \
+             APP_JSON=concat APP_JSON=sqlite "APP_JSON=sqlite APP_PRAGMAS=mmap-off" "APP_JSON=concat APP_FEED_SQL=join APP_PRAGMAS=mmap-off" \
              APP_PRAGMAS=mmap-off APP_PRAGMAS=cache-256m APP_PRAGMAS=cache-8m "APP_FEED_SQL=join APP_FETCH=num-loop APP_PRAGMAS=cache-8m"; do
     rc=0
     # shellcheck disable=SC2046 # one --env per word on purpose
@@ -542,7 +554,7 @@ check_s6_switches_reach_the_server() {
   start_app_for_check lab-check-variants 18164 0 APP_FEED_SQL=join APP_FETCH=num APP_PRAGMAS=mmap-off || return 1
   log="$(docker logs lab-check-variants 2>&1)"
   docker rm -f lab-check-variants >/dev/null 2>&1
-  grep -qx 'app variants: feed_sql=join fetch=num pragmas=mmap-off locking=normal group_commit=off checkpointer=off' <<<"$log" || { echo "the boot lines do not name the variants: ${log//$'\n'/ | }"; return 1; }
+  grep -qx 'app variants: feed_sql=join fetch=num json=encode pragmas=mmap-off locking=normal group_commit=off checkpointer=off' <<<"$log" || { echo "the boot lines do not name the variants: ${log//$'\n'/ | }"; return 1; }
   start_app_for_check lab-check-variants 18164 0 || return 1
   log="$(docker logs lab-check-variants 2>&1)"
   docker rm -f lab-check-variants >/dev/null 2>&1
@@ -550,6 +562,48 @@ check_s6_switches_reach_the_server() {
   log="$(start_app_for_check lab-check-variants 18164 0 APP_FETCH=both)" && { docker rm -f lab-check-variants >/dev/null 2>&1; echo "a bad APP_FETCH was accepted"; return 1; }
   docker rm -f lab-check-variants >/dev/null 2>&1
   grep -q 'APP_FETCH must be one of assoc, num, assoc-loop, num-loop, got "both"' <<<"$log" || { echo "the refusal does not say why: $log"; return 1; }
+  # APP_JSON shows in the boot line, and a combination it cannot work with is refused at boot with the reason.
+  start_app_for_check lab-check-variants 18164 0 APP_JSON=sqlite || return 1
+  log="$(docker logs lab-check-variants 2>&1)"
+  docker rm -f lab-check-variants >/dev/null 2>&1
+  grep -qx 'app variants: feed_sql=reference fetch=assoc json=sqlite pragmas=default locking=normal group_commit=off checkpointer=off' <<<"$log" || { echo "the boot lines do not name APP_JSON: ${log//$'\n'/ | }"; return 1; }
+  log="$(start_app_for_check lab-check-variants 18164 0 APP_JSON=sqlite APP_FEED_SQL=join)" && { docker rm -f lab-check-variants >/dev/null 2>&1; echo "APP_JSON=sqlite with APP_FEED_SQL=join was accepted"; return 1; }
+  docker rm -f lab-check-variants >/dev/null 2>&1
+  grep -q 'APP_JSON=sqlite cannot be set with APP_FEED_SQL=join' <<<"$log" || { echo "the refusal does not say why: $log"; return 1; }
+}
+
+# APP_DRIVER=ffi reads the feed and the posts through FFI straight to libsqlite3, on a small database: the same bytes as PDO's for every APP_JSON value
+# and pragma preset, rows with escapes and a NUL byte, the PDO pragmas on the connection, the boot refusing another SQLite version than PDO's, no
+# statement left un-reset, and the switch refused without the bench flag and with the SQL and fetch shapes it cannot read (31 cases).
+check_app_ffi_cases() {
+  local out ok rc=0
+  out="$(bash "$LAB/run.sh" 8.5 php /lab/check/app-ffi-test.php 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "app-ffi-test.php exited $rc: ${out//$'\n'/ | }"; return 1; }
+  ok="$(grep -c '^ok  ' <<<"$out")"
+  [ "$ok" = 31 ] || { echo "expected 31 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
+  ! grep -q 'FAIL' <<<"$out" || { echo "a case failed: ${out//$'\n'/ | }"; return 1; }
+}
+
+# APP_DRIVER reaches the server: unset it says nothing about a driver, ffi alone is refused with the reason, and with the bench flag the boot says the
+# driver and SQLite's version and the feed and a post come out as PDO's bytes.
+check_app_driver_reaches_the_server() {
+  local log pdo ffi json
+  start_app_for_check lab-check-driver 18167 0 || return 1
+  log="$(docker logs lab-check-driver 2>&1)"
+  pdo="$(docker exec lab-check-driver sh -c 'curl -s http://127.0.0.1:18167/feed; curl -s http://127.0.0.1:18167/posts/250000')"
+  docker rm -f lab-check-driver >/dev/null 2>&1
+  ! grep -q 'driver:' <<<"$log" || { echo "the default names a driver: ${log//$'\n'/ | }"; return 1; }
+  log="$(start_app_for_check lab-check-driver 18167 0 APP_DRIVER=ffi)" && { docker rm -f lab-check-driver >/dev/null 2>&1; echo "APP_DRIVER=ffi without the bench flag was accepted"; return 1; }
+  docker rm -f lab-check-driver >/dev/null 2>&1
+  grep -q 'APP_DRIVER_BENCH=1' <<<"$log" || { echo "the refusal does not say why: $log"; return 1; }
+  for json in APP_JSON=encode APP_JSON=sqlite; do
+    start_app_for_check lab-check-driver 18167 0 APP_DRIVER=ffi APP_DRIVER_BENCH=1 "$json" || return 1
+    log="$(docker logs lab-check-driver 2>&1)"
+    ffi="$(docker exec lab-check-driver sh -c 'curl -s http://127.0.0.1:18167/feed; curl -s http://127.0.0.1:18167/posts/250000')"
+    docker rm -f lab-check-driver >/dev/null 2>&1
+    grep -Eqx 'driver: ffi \(SQLite [0-9.]+, reads only: for the micro bench\)' <<<"$log" || { echo "the boot lines do not name the driver: ${log//$'\n'/ | }"; return 1; }
+    [ "$ffi" = "$pdo" ] || { echo "$json: the feed and a post differ from PDO's: ${ffi:0:200}"; return 1; }
+  done
 }
 
 # The 42 checks against the server with APP_LOCKING=exclusive, and no container left behind.
@@ -571,7 +625,7 @@ check_app_locking_reaches_the_server() {
     log="$(docker logs lab-check-locking 2>&1)"
     # Unset (or the default name) the server says nothing about variants.
     if [ "$value" = exclusive ]; then
-      grep -qx 'app variants: feed_sql=reference fetch=assoc pragmas=default locking=exclusive group_commit=off checkpointer=off' <<<"$log" \
+      grep -qx 'app variants: feed_sql=reference fetch=assoc json=encode pragmas=default locking=exclusive group_commit=off checkpointer=off' <<<"$log" \
         || { docker rm -f lab-check-locking >/dev/null 2>&1; echo "the boot lines do not name the variant: ${log//$'\n'/ | }"; return 1; }
     else
       ! grep -q 'app variants' <<<"$log" || { docker rm -f lab-check-locking >/dev/null 2>&1; echo "the default names a variant: ${log//$'\n'/ | }"; return 1; }
@@ -622,6 +676,65 @@ check_diy_group_commit() {
   ! grep -q 'FAIL' <<<"$out" || { echo "a case failed: ${out//$'\n'/ | }"; return 1; }
 }
 
+# The loop presets (APP_LOOP) on the DIY server in the test's process: each builds the base it names (libevent's own method text proves it), a
+# server on it serves requests, an unknown name is refused (9 cases); then the group commit's own cases (the order of the responses, the
+# writes of a turn in one commit) on each preset.
+check_diy_loop_presets() {
+  local out ok rc=0 preset
+  out="$(bash "$LAB/run.sh" 8.5 php -d extension=sockets -d extension=event /lab/check/diy-loop-test.php 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "diy-loop-test.php exited $rc: ${out//$'\n'/ | }"; return 1; }
+  ok="$(grep -c '^ok  ' <<<"$out")"
+  [ "$ok" = 9 ] || { echo "expected 9 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
+  ! grep -q 'FAIL' <<<"$out" || { echo "a case failed: ${out//$'\n'/ | }"; return 1; }
+  for preset in nolock changelist poll; do
+    rc=0
+    out="$(bash "$LAB/run.sh" 8.5 php -d extension=sockets -d extension=event /lab/check/diy-group-commit-test.php "$preset" 2>&1)" || rc=$?
+    [ "$rc" = 0 ] || { echo "$preset: diy-group-commit-test.php exited $rc: ${out//$'\n'/ | }"; return 1; }
+    ok="$(grep -c '^ok  ' <<<"$out")"
+    [ "$ok" = 9 ] || { echo "$preset: expected 9 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
+    ! grep -q 'FAIL' <<<"$out" || { echo "$preset: a case failed: ${out//$'\n'/ | }"; return 1; }
+  done
+}
+
+# The challenge's 42 checks against the server with each loop preset, and with each of them and group commit, and no container left behind.
+check_challenge_test_passes_with_loop_presets() {
+  local out preset left group rc extra
+  for preset in nolock changelist poll; do
+    for group in 0 1; do
+      extra=()
+      [ "$group" = 0 ] || extra=(--env APP_GROUP_COMMIT=1)
+      rc=0
+      out="$(bash "$LAB/challenge-test.sh" --image 8.5 --env "APP_LOOP=$preset" "${extra[@]+"${extra[@]}"}" 2>&1)" || rc=$?
+      [ "$rc" = 0 ] || { echo "$preset (group commit $group): lab/challenge-test.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
+      grep -qx 'passed=42 failed=0' <<<"$out" || { echo "$preset (group commit $group): the summary is not 'passed=42 failed=0': ${out//$'\n'/ | }"; return 1; }
+    done
+  done
+  left="$(docker ps -a --format '{{.Names}}' | grep '^lab-challenge-' || true)"
+  [ -z "$left" ] || { echo "containers left behind: ${left//$'\n'/ }"; return 1; }
+}
+
+# APP_LOOP reaches the server: the `loop:` line says the method alone when it is unset (as it always did) and the preset with its flags when
+# it is set (alone, and with 2 workers), and a name that is not a preset is refused at boot with the list.
+check_app_loop_reaches_the_server() {
+  local log
+  start_app_for_check lab-check-loop 18166 0 || return 1
+  log="$(docker logs lab-check-loop 2>&1)"
+  docker rm -f lab-check-loop >/dev/null 2>&1
+  grep -qx 'loop: epoll' <<<"$log" || { echo "unset, the loop line is not 'loop: epoll': ${log//$'\n'/ | }"; return 1; }
+  start_app_for_check lab-check-loop 18166 0 APP_LOOP=changelist || return 1
+  log="$(docker logs lab-check-loop 2>&1)"
+  docker rm -f lab-check-loop >/dev/null 2>&1
+  grep -qx 'loop: epoll (with changelist), preset changelist (flags EPOLL_USE_CHANGELIST)' <<<"$log" || { echo "the loop line does not name the preset: ${log//$'\n'/ | }"; return 1; }
+  ! grep -q 'app variants' <<<"$log" || { echo "a loop preset is named as an app variant: ${log//$'\n'/ | }"; return 1; }
+  CHECK_APP_EXT_EXTRA=pcntl start_app_for_check lab-check-loop 18166 0 APP_LOOP=poll APP_WORKERS=2 || return 1
+  log="$(docker logs lab-check-loop 2>&1)"
+  docker rm -f lab-check-loop >/dev/null 2>&1
+  grep -qx 'loop: poll, preset poll (avoids epoll)' <<<"$log" || { echo "with workers the loop line does not name the preset: ${log//$'\n'/ | }"; return 1; }
+  log="$(start_app_for_check lab-check-loop 18166 0 APP_LOOP=epoll)" && { docker rm -f lab-check-loop >/dev/null 2>&1; echo "a bad APP_LOOP was accepted"; return 1; }
+  docker rm -f lab-check-loop >/dev/null 2>&1
+  grep -q 'APP_LOOP must be one of nolock, changelist, poll, got "epoll"' <<<"$log" || { echo "the refusal does not say why: $log"; return 1; }
+}
+
 # The S9 switches through the app: the values and their refusals, the writes of a batch each in a savepoint (one that fails rolls back
 # alone and answers 500), a DiyServer in the test's process with the real app (two writes in one turn, a like then a read pipelined, two
 # likes pipelined), and lab/app/server.php as a process (a 201 survives SIGKILL, the checkpointer copies the WAL back and ends with the server,
@@ -649,16 +762,96 @@ check_challenge_test_passes_with_group_commit_and_checkpointer() {
   [ -z "$left" ] || { echo "containers left behind: ${left//$'\n'/ }"; return 1; }
 }
 
-# The feed bench times every case of the S6 variants and none is skipped (each case checked its answer against the reference's), and the
+# APP_WORKERS (several processes on one port, lab/app/workers.php): the switch's values and refusals, the supervision with children that only
+# report, and lab/app/server.php as a process with 2 workers (boot lines, each worker's own database connection, both answering 200
+# connections, every write committed before its response, a worker killed, SIGTERM, the refusals).
+check_app_workers_cases() {
+  local out ok rc=0
+  out="$(bash "$LAB/run.sh" 8.5 php -d extension=sockets -d extension=event -d extension=pcntl /lab/check/app-workers-test.php 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "app-workers-test.php exited $rc: ${out//$'\n'/ | }"; return 1; }
+  ok="$(grep -c '^ok  ' <<<"$out")"
+  [ "$ok" = 25 ] || { echo "expected 25 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
+  ! grep -q 'FAIL' <<<"$out" || { echo "a case failed: ${out//$'\n'/ | }"; return 1; }
+}
+
+# The challenge's 42 checks against the server with 2 workers (and with the reference's pragmas, which the step lab measures against), started
+# the way the lab starts it (`--ext sockets --ext event --ext pcntl`), and no container left behind.
+check_challenge_test_passes_with_workers() {
+  local out env left rc
+  for env in APP_WORKERS=2 "APP_WORKERS=2 APP_PRAGMAS=mmap-off"; do
+    rc=0
+    # shellcheck disable=SC2046 # one --env per word on purpose
+    out="$(bash "$LAB/challenge-test.sh" --image 8.5 --ext sockets --ext event --ext pcntl $(printf -- '--env %s ' $env) 2>&1)" || rc=$?
+    [ "$rc" = 0 ] || { echo "$env: lab/challenge-test.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
+    grep -qx 'passed=42 failed=0' <<<"$out" || { echo "$env: the summary is not 'passed=42 failed=0': ${out//$'\n'/ | }"; return 1; }
+  done
+  left="$(docker ps -a --format '{{.Names}}' | grep '^lab-challenge-' || true)"
+  [ -z "$left" ] || { echo "containers left behind: ${left//$'\n'/ }"; return 1; }
+}
+
+# wait_container_ends <container> <seconds>: waits until the container is no longer running; returns 1 when it still is.
+wait_container_ends() {
+  for _ in $(seq 1 $(( $2 * 5 ))); do
+    [ "$(docker inspect -f '{{.State.Running}}' "$1")" = true ] || return 0
+    sleep 0.2
+  done
+  return 1
+}
+
+# Two workers in a container, where the server is the container's first process: the boot lines, 200 connections with a request each answered
+# by both processes (the telemetry lines say their pid), a worker killed with SIGKILL ends the container with exit code 1 (the parent stops
+# the other worker and exits), and SIGTERM to the container's first process ends it with exit code 0.
+check_app_workers_in_a_container() {
+  local name=lab-check-workers log pid answered total code
+  CHECK_APP_EXT_EXTRA=pcntl start_app_for_check "$name" 18166 0 APP_WORKERS=2 APP_TELEMETRY=1 || return 1
+  log="$(docker logs "$name" 2>&1)"
+  grep -Eqx 'workers: 2 \(pids [0-9]+ [0-9]+\)' <<<"$log" || { docker rm -f "$name" >/dev/null 2>&1; echo "the boot lines do not say the workers: ${log//$'\n'/ | }"; return 1; }
+  docker exec "$name" php /lab/check/conn-client.php 18166 seq 200 >/dev/null
+  sleep 2.2
+  log="$(docker logs "$name" 2>&1)"
+  answered="$(sed -n 's/^telemetry //p' <<<"$log" | jq -s '[.[] | select((.requests["GET /health"] // 0) > 0) | .pid] | unique | length')"
+  total="$(sed -n 's/^telemetry //p' <<<"$log" | jq -s '[.[].requests["GET /health"] // 0] | add')"
+  if [ "$answered" != 2 ] || [ "$total" != 200 ]; then
+    docker rm -f "$name" >/dev/null 2>&1
+    echo "expected 200 health checks answered by 2 processes, the telemetry says $total by $answered: $(grep '^telemetry' <<<"$log" | head -n 3 | tr '\n' ' ')"
+    return 1
+  fi
+  pid="$(sed -n 's/^workers: 2 (pids \([0-9]*\) [0-9]*)$/\1/p' <<<"$log")"
+  docker exec "$name" sh -c "kill -9 $pid"
+  wait_container_ends "$name" 10 || { docker logs "$name" 2>&1 | tail -n 3; docker rm -f "$name" >/dev/null 2>&1; echo "the container still runs 10 s after a worker was killed"; return 1; }
+  code="$(docker inspect -f '{{.State.ExitCode}}' "$name")"
+  log="$(docker logs "$name" 2>&1)"
+  docker rm -f "$name" >/dev/null 2>&1
+  [ "$code" = 1 ] || { echo "after a worker was killed the container exited $code, not 1: ${log//$'\n'/ | }"; return 1; }
+  grep -qx "server: worker $pid was killed by signal 9, stopping the others" <<<"$log" || { echo "the parent did not say which worker was killed: ${log//$'\n'/ | }"; return 1; }
+  CHECK_APP_EXT_EXTRA=pcntl start_app_for_check "$name" 18166 0 APP_WORKERS=2 || return 1
+  docker kill -s TERM "$name" >/dev/null
+  wait_container_ends "$name" 10 || { docker rm -f "$name" >/dev/null 2>&1; echo "the container still runs 10 s after SIGTERM"; return 1; }
+  code="$(docker inspect -f '{{.State.ExitCode}}' "$name")"
+  docker rm -f "$name" >/dev/null 2>&1
+  [ "$code" = 0 ] || { echo "after SIGTERM the container exited $code, not 0"; return 1; }
+}
+
+# The feed bench times every case of the S6 variants (APP_JSON's and APP_DRIVER's too, and the raw FFI floor) and none is skipped (each case checked its answer against the reference's), and the
 # plans saved next to its output are what SQLite says today.
 check_micro_feed_bench() {
   local out rows plans
   out="$(bash "$LAB/micro.sh" "$LAB/micro/benches/feed.php" --images 8.5 --jit on --quick --procs 1 --out "$(mktemp -d)/micro.json" 2>&1)" || { echo "lab/micro.sh failed: ${out//$'\n'/ | }"; return 1; }
   ! grep -q 'SKIPPED' <<<"$out" || { echo "a case was skipped: $(grep 'SKIPPED' <<<"$out" | head -3 | tr '\n' '|')"; return 1; }
   rows="$(grep -c -E '^8\.5 +8\.5\.[0-9]+ +on +.* [0-9.]+ +[0-9.]+ \.\. [0-9.]+ +[0-9]+( +UNSTABLE.*)?$' <<<"$out")"
-  [ "$rows" = 22 ] || { echo "expected 22 rows (21 cases and the empty loop), got $rows: ${out//$'\n'/ | }"; return 1; }
+  [ "$rows" = 34 ] || { echo "expected 34 rows (33 cases and the empty loop), got $rows: ${out//$'\n'/ | }"; return 1; }
   plans="$(bash "$LAB/run.sh" 8.5 php /lab/micro/feed-plans.php 2>&1)" || { echo "feed-plans.php failed: ${plans//$'\n'/ | }"; return 1; }
   [ "$plans" = "$(cat "$LAB/micro/feed-run/feed-plans.txt")" ] || { echo "lab/micro/feed-run/feed-plans.txt is not what lab/micro/feed-plans.php prints: regenerate it"; return 1; }
+}
+
+# The parse bench times today's head parse and the lean one on k6's heads, and none is skipped: each case's check found the same five things
+# (method, target, body length, authorization, close flag) in both, and the same verdict on the battery that holds every refusal.
+check_micro_parse_bench() {
+  local out rows
+  out="$(bash "$LAB/micro.sh" "$LAB/micro/benches/parse.php" --images 8.5 --jit on --quick --procs 1 --out "$(mktemp -d)/micro.json" 2>&1)" || { echo "lab/micro.sh failed: ${out//$'\n'/ | }"; return 1; }
+  ! grep -q 'SKIPPED' <<<"$out" || { echo "a case was skipped: $(grep 'SKIPPED' <<<"$out" | head -3 | tr '\n' '|')"; return 1; }
+  rows="$(grep -c -E '^8\.5 +8\.5\.[0-9]+ +on +.* [0-9.]+ +[0-9.]+ \.\. [0-9.]+ +[0-9]+( +UNSTABLE.*)?$' <<<"$out")"
+  [ "$rows" = 7 ] || { echo "expected 7 rows (6 cases and the empty loop), got $rows: ${out//$'\n'/ | }"; return 1; }
 }
 
 # The challenge app passes the challenge's own test suite (42 checks), twice in a row: the second run starts from a fresh copy of the
@@ -1013,7 +1206,7 @@ check_series_cases() {
   [ "$rc" = 0 ] || { echo "series-test.php exited $rc: ${out//$'\n'/ | }"; return 1; }
   grep -q '^FAIL' <<<"$out" && { echo "a case failed: ${out//$'\n'/ | }"; return 1; }
   ok="$(grep -c '^ok  ' <<<"$out")"
-  [ "$ok" -ge 23 ] || { echo "expected at least 23 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
+  [ "$ok" -ge 30 ] || { echo "expected at least 30 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
   return 0
 }
 
@@ -1029,14 +1222,15 @@ check_telemetry_cases() {
 }
 
 # start_app_for_check <container> <port> <cold 0|1> [K=V]...: the app on a fresh copy of the seed through lab_start_app, waited on until it
-# listens. Prints the failure and returns 1 when it never does.
+# listens. Prints the failure and returns 1 when it never does. CHECK_APP_EXT_EXTRA (one extension name, set for that one call) is loaded after
+# sockets and event: `pcntl` for APP_WORKERS.
 # Why disable SC2034: LAB_COLD, LAB_EXT and LAB_ENV are read by lab_start_app and lab_build_php_flags (lib.sh), which shellcheck does not follow.
 # shellcheck disable=SC2034
 start_app_for_check() {
   local name="$1" port="$2"
   LAB_COLD="$3"
   shift 3
-  LAB_EXT=(sockets event)
+  LAB_EXT=(sockets event ${CHECK_APP_EXT_EXTRA:+"$CHECK_APP_EXT_EXTRA"})
   LAB_ENV=("$@")
   lab_build_php_flags
   docker rm -f "$name" >/dev/null 2>&1
@@ -1238,6 +1432,42 @@ check_realistic_soft_limit_run() {
   [ "$rc" = 0 ] || { echo "--no-series: lab/realistic.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
   jq -e '.server_connections.fds_peak == null and (.server_connections.fds_peak_note | contains("--no-series")) and .server_connections.telemetry.close_responses > 0' "$json" >/dev/null \
     || { echo "--no-series: the JSON should say the fd peak was not read: $(jq -c '.server_connections' "$json")"; return 1; }
+  [ -z "$(docker ps -a --format '{{.Names}}' | grep '^lab-realistic-' || true)" ] || { echo "containers left behind"; return 1; }
+}
+
+# The realistic mode with 2 workers, 300 idle connections, about 190 VUs and a soft limit of 180 a process. The 300 idle connections split about
+# 150 and 150 (never past 180, so none is closed), and with the VUs' connections each process hovers around its limit, so a good share of the
+# responses of k6 say close (a connection that closes frees a seat, so not all of them). Valid; the telemetry of both processes summed (the
+# closes are above a tenth of k6's request count and not above it; the peak is the sum of the two peaks and says so; the rows say 2 processes and count the requests the aggregator counted within
+# 2 %); the file descriptors of both processes counted; the extensions recorded.
+check_realistic_workers_run() {
+  local out rc=0 json verdict
+  json="$(mktemp -d)/realistic.json"
+  out="$(bash "$LAB/realistic.sh" --image 8.5 --think-scale 0.1 --idle 300 --hold 200,15 --ext sockets --ext event --ext pcntl --env APP_WORKERS=2 --env APP_SOFT_CONN_LIMIT=180 --label test --out "$json" 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "lab/realistic.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
+  grep -qx 'VALID' <<<"$out" || { echo "the run is not marked VALID: ${out//$'\n'/ | }"; return 1; }
+  verdict="$(jq -c '
+    ($ARGS.named.requests) as $k6
+    | .server_connections as $c
+    | .results.series as $rows
+    | ($rows | .[1:-1]) as $inner
+    | ([$inner[].telemetry.requests // {} | to_entries[].value] | add // 0) as $tel
+    | ([$inner[].requests] | add // 0) as $agg
+    | {clauses: {
+         idle_held: (.idle.held_at_start == 300 and .idle.held_at_end == 300 and .idle.closed_by_server_at_end == 0),
+         no_k6_connection_error: (.k6_connection_errors == 0),
+         two_processes_in_the_summary: ($c.telemetry.processes == 2 and $c.telemetry.open_peak_note != null),
+         some_responses_close: ($c.telemetry != null and $c.telemetry.close_responses > 0.1 * $k6 and $c.telemetry.close_responses <= $k6),
+         no_accept_pause: ($c.telemetry.accept_pauses == 0),
+         peak_is_the_sum_of_two_peaks: ($c.telemetry.open_peak >= 300 and $c.telemetry.open_peak <= 600),
+         rows_say_two_processes: (([$rows[].telemetry.processes // 0] | max) == 2),
+         telemetry_counts_the_requests: (($tel - $agg | fabs) <= 0.02 * $agg + 8),
+         fds_of_both_processes: ($c.fds_peak > 300 and $c.fds_peak_note == null),
+         extensions_recorded: (.server.ext == ["sockets", "event", "pcntl"] and (.server.env | index("APP_WORKERS=2") != null))},
+       numbers: {k6_requests: $k6, server_connections: $c, telemetry_requests: $tel, aggregator_requests: $agg}}' --argjson requests "$(jq '.results.run_total | map(.count) | add' "$json")" "$json")"
+  jq -e '.clauses | all' <<<"$verdict" >/dev/null \
+    || { echo "the JSON does not hold the run, failing clauses $(jq -c '[.clauses | to_entries[] | select(.value == false) | .key]' <<<"$verdict"), numbers $(jq -c '.numbers' <<<"$verdict")"; return 1; }
+  grep -q '^server connections: soft limit 180, .* open at most (sum of the peak of each process, 2 processes), ' <<<"$out" || { echo "the table does not say the peak is a sum over 2 processes: ${out//$'\n'/ | }"; return 1; }
   [ -z "$(docker ps -a --format '{{.Names}}' | grep '^lab-realistic-' || true)" ] || { echo "containers left behind"; return 1; }
 }
 
@@ -1473,6 +1703,105 @@ check_steplab_verdicts() {
     || { echo "the rows are not one per run in round order: ${out//$'\n'/ | }"; return 1; }
   grep -q '^Rule: a variant is beyond the noise when' <<<"$out" || { echo "the rule is not printed: ${out//$'\n'/ | }"; return 1; }
   grep -qE '^slow +3/3 .*\+1000 \+1000 \+1000 .*beyond the noise' <<<"$out" || { echo "the variant table has no row for slow with its pairs and verdict: ${out//$'\n'/ | }"; return 1; }
+  # The host's state per run: the load average in the middle of the plateau and the fsync median, from each run's `host` object, in columns that only appear when a run has them.
+  grep -qE '^ +2 +slow +yes +[0-9.]+ +[0-9.]+ +[0-9.]+ +[0-9.]+ +[0-9-]+ +1\.6 +2\.5 +pass$' <<<"$out" \
+    || { echo "the run table has no load1 1.6 and fsync ms 2.5 on the row of slow, round 2: ${out//$'\n'/ | }"; return 1; }
+  grep -qE '^ +1 +ref +.* +0\.5 +1\.25 +pass$' <<<"$out" || { echo "the run table has no load1 0.5 and fsync ms 1.25 on the row of ref, round 1: ${out//$'\n'/ | }"; return 1; }
+  out="$(bash "$LAB/steplab-summary.sh" "$LAB/check/fixtures/steplab/identical" --floor 5 2>&1)" || { echo "summary.sh failed on a folder without host objects: ${out//$'\n'/ | }"; return 1; }
+  # Earlier runs have no host readings: their table has no such columns (the results folders' READMEs hold it byte for byte).
+  grep -q 'load1' <<<"$out" && { echo "a folder of runs without host readings prints the load1 column: ${out//$'\n'/ | }"; return 1; }
+  grep -qE '^ +1 +ref +.* +[0-9-]+ +pass$' <<<"$out" || { echo "the table of runs without host readings changed shape: ${out//$'\n'/ | }"; return 1; }
+}
+
+# steplab_order <variants and options...>: the order of each round that `lab/steplab.sh --dry-run` prints, one `round <n>: <names>` per line
+# joined with `|`, without starting a server.
+steplab_order() {
+  local out
+  out="$(bash "$LAB/steplab.sh" --dry-run --image 8.5 --rate 100 --think-scale 0.2 --seconds 6 "$@" 2>&1)" || { echo "steplab.sh --dry-run failed: ${out//$'\n'/ | }"; return 1; }
+  grep '^round ' <<<"$out" | paste -sd'|' -
+}
+
+# The order of the rounds: round 1 runs the reference last (a one-pair screen is round 1 alone, and the second run of a pair reads about 0.2 us
+# lower, which must work against the variant), the rounds alternate from there, counted from the folder's round number so that adding rounds with
+# --first-round keeps the alternation; with 3 variants the odd rounds run them in reverse; `--order fixed` is the order given in every round.
+check_steplab_order() {
+  local got out rc=0
+  got="$(steplab_order --pairs 4 --variant a= --variant b=)" || { echo "$got"; return 1; }
+  [ "$got" = "round 1: b a|round 2: a b|round 3: b a|round 4: a b" ] || { echo "2 variants, 4 rounds: $got"; return 1; }
+  got="$(steplab_order --pairs 4 --variant a= --variant b= --variant c=)" || { echo "$got"; return 1; }
+  [ "$got" = "round 1: c b a|round 2: a b c|round 3: c b a|round 4: a b c" ] || { echo "3 variants, 4 rounds: $got"; return 1; }
+  got="$(steplab_order --pairs 2 --first-round 2 --variant a= --variant b=)" || { echo "$got"; return 1; }
+  [ "$got" = "round 2: a b|round 3: b a" ] || { echo "--first-round 2: $got"; return 1; }
+  got="$(steplab_order --pairs 3 --first-round 5 --variant a= --variant b= --variant c=)" || { echo "$got"; return 1; }
+  [ "$got" = "round 5: c b a|round 6: a b c|round 7: c b a" ] || { echo "--first-round 5, 3 variants: $got"; return 1; }
+  got="$(steplab_order --pairs 3 --order fixed --variant a= --variant b=)" || { echo "$got"; return 1; }
+  [ "$got" = "round 1: a b|round 2: a b|round 3: a b" ] || { echo "--order fixed: $got"; return 1; }
+  got="$(steplab_order --pairs 2 --order alternate --variant a=)" || { echo "$got"; return 1; }
+  [ "$got" = "round 1: a|round 2: a" ] || { echo "one variant: $got"; return 1; }
+  out="$(bash "$LAB/steplab.sh" --dry-run --image 8.5 --rate 100 --think-scale 0.2 --seconds 6 --pairs 1 --order sideways --variant a= 2>&1)" || rc=$?
+  [ "$rc" = 2 ] || { echo "--order sideways: expected exit 2, got $rc: ${out//$'\n'/ | }"; return 1; }
+  rc=0
+  out="$(bash "$LAB/steplab.sh" --dry-run --image 8.5 --rate 100 --think-scale 0.2 --seconds 6 --pairs 1 --floor 3 --floor-from "$LAB/check/fixtures/steplab/aa-outlier" --variant a= 2>&1)" || rc=$?
+  [ "$rc" = 2 ] || { echo "--floor with --floor-from: expected exit 2, got $rc: ${out//$'\n'/ | }"; return 1; }
+  rc=0
+  out="$(bash "$LAB/steplab.sh" --dry-run --image 8.5 --rate 100 --think-scale 0.2 --seconds 6 --pairs 1 --floor-from "$LAB/check/fixtures/steplab/no-such-folder" --variant a= 2>&1)" || rc=$?
+  [ "$rc" = 2 ] || { echo "--floor-from a missing folder: expected exit 2, got $rc: ${out//$'\n'/ | }"; return 1; }
+  # Why a dry run reads the floor too: a folder that gives none must stop the comparison before hours of runs, not after them.
+  rc=0
+  out="$(bash "$LAB/steplab.sh" --dry-run --image 8.5 --rate 100 --think-scale 0.2 --seconds 6 --pairs 1 --floor-from "$LAB/check/fixtures/steplab/one-pair" --variant a= 2>&1)" || rc=$?
+  [ "$rc" = 1 ] || { echo "--floor-from a folder with one pair: expected exit 1, got $rc: ${out//$'\n'/ | }"; return 1; }
+  out="$(bash "$LAB/steplab.sh" --dry-run --image 8.5 --rate 100 --think-scale 0.2 --seconds 6 --pairs 1 --floor-from "$LAB/check/fixtures/steplab/aa-outlier" --variant a= 2>&1)" \
+    || { echo "--floor-from an A/A folder: ${out//$'\n'/ | }"; return 1; }
+  grep -qE '^floor: 0\.358 us ' <<<"$out" || { echo "the dry run does not say the floor: ${out//$'\n'/ | }"; return 1; }
+}
+
+# The floor of an A/A folder, one rule for every pair: |median of the paired differences| + their interquartile range (quartiles by linear
+# interpolation, inclusive), every run counted that is valid with a CPU per request, whether its step passed the 97 % rule or not.
+#  - aa-outlier is 5a's A/A at 24,000 req/s: its differences, in round order, -0.2604 +2.5650 -0.1607 -0.2665 -0.0633 (round 2's run of b failed the
+#    97 % rule). Worked out by hand: sorted -0.2665 -0.2604 -0.1607 -0.0633 +2.5650, median -0.1607, q1 -0.2604 (2nd), q3 -0.0633 (4th), range
+#    0.1971, floor 0.1607 + 0.1971 = 0.3578: neither the largest absolute difference (2.565) nor exclusive quartiles (1.68).
+#  - aa-even has 4 pairs (+1 +2 +3 +10; round 5's b is invalid and has none): median 2.5, q1 at position 0.75 = 1.75, q3 at 2.25 = 3 + 0.25 * 7 = 4.75,
+#    range 3, floor 5.5.
+check_steplab_floor() {
+  local got out rc=0 summary dir="$LAB/check/fixtures/steplab"
+  got="$(bash "$LAB/steplab-floor.sh" "$dir/aa-outlier" 2>&1 | jq -c '[.floor_us, .median_difference_us, .iqr_us, .pairs]')" || { echo "steplab-floor.sh failed on aa-outlier: $got"; return 1; }
+  [ "$got" = "[0.358,-0.161,0.197,5]" ] || { echo "aa-outlier: expected [0.358,-0.161,0.197,5], got $got"; return 1; }
+  got="$(bash "$LAB/steplab-floor.sh" "$dir/aa-even" 2>&1 | jq -c '[.floor_us, .median_difference_us, .iqr_us, .pairs]')" || { echo "steplab-floor.sh failed on aa-even: $got"; return 1; }
+  [ "$got" = "[5.5,2.5,3,4]" ] || { echo "aa-even: expected [5.5,2.5,3,4], got $got"; return 1; }
+  out="$(bash "$LAB/steplab-floor.sh" "$dir/one-pair" 2>&1)" || rc=$?
+  [ "$rc" = 1 ] || { echo "one pair: expected exit 1, got $rc: $out"; return 1; }
+  grep -q 'at least 2' <<<"$out" || { echo "one pair: the message does not say 2 pairs are needed: $out"; return 1; }
+  rc=0
+  out="$(bash "$LAB/steplab-floor.sh" 2>&1)" || rc=$?
+  [ "$rc" = 2 ] || { echo "no folder: expected exit 2, got $rc: $out"; return 1; }
+
+  # The summary reads it with --floor-from, records the folder and the value, and judges a variant against it; both flags together are a usage error.
+  summary="$(mktemp)"
+  out="$(bash "$LAB/steplab-summary.sh" "$dir/beyond" --floor-from "$dir/aa-outlier" --json "$summary" 2>&1)" || { echo "summary.sh --floor-from failed: ${out//$'\n'/ | }"; return 1; }
+  jq -e '.floor_us == 0.358 and (.floor_from | endswith("aa-outlier"))
+         and (.floor_rule | type) == "string" and (.variants[] | select(.variant == "slow") | .verdict) == "beyond the noise"' "$summary" >/dev/null \
+    || { echo "summary.json does not record the floor: $(jq -c '{floor_us, floor_from, floor_rule}' "$summary")"; rm -f "$summary"; return 1; }
+  grep -qE '^Floor: 0\.358 us, from .*aa-outlier' <<<"$out" || { echo "the table does not say where the floor comes from: ${out//$'\n'/ | }"; rm -f "$summary"; return 1; }
+  rc=0
+  out="$(bash "$LAB/steplab-summary.sh" "$dir/beyond" --floor 5 --floor-from "$dir/aa-outlier" 2>&1)" || rc=$?
+  [ "$rc" = 2 ] || { echo "summary.sh --floor with --floor-from: expected exit 2, got $rc: ${out//$'\n'/ | }"; rm -f "$summary"; return 1; }
+
+  # Runs that carry their position: listed in the order they ran, a run whose step failed the 97 % rule counts and is flagged with `*`
+  # (a failed_rule count per variant), and the folder says its order. Runs of 5a, with no position, print what they always printed.
+  out="$(bash "$LAB/steplab-summary.sh" "$dir/aa-outlier" --floor 1 --json "$summary" 2>&1)" || { echo "summary.sh failed on aa-outlier: ${out//$'\n'/ | }"; rm -f "$summary"; return 1; }
+  [ "$(grep -E '^ +[1-5] +[ab] +' <<<"$out" | awk '{ printf "%s%s ", $1, $2 }')" = "1b 1a 2a 2b 3b 3a 4a 4b 5b 5a " ] \
+    || { echo "the rows are not in the order the runs ran: ${out//$'\n'/ | }"; rm -f "$summary"; return 1; }
+  grep -qE '^ +2 +b +yes +[0-9.]+ +28\.5\* +.*FAIL: achieved below 97 % of offered$' <<<"$out" || { echo "the run of b that failed the rule has no * on its us/req: ${out//$'\n'/ | }"; rm -f "$summary"; return 1; }
+  [ "$(grep -cE '^ +[1-5] +[ab] +yes +[0-9.]+ +[0-9.]+\* ' <<<"$out")" = 1 ] || { echo "only that run should have a *: ${out//$'\n'/ | }"; rm -f "$summary"; return 1; }
+  jq -e '.order == "alternate" and .floor_from == null and (.variants | map({(.variant): .failed_rule}) | add) == {a: 0, b: 1}
+         and (.variants[] | select(.variant == "b") | .valid_runs == 5 and (.pairs | length) == 5)' "$summary" >/dev/null \
+    || { echo "summary.json: $(jq -c '{order, floor_from, failed: [.variants[] | {variant, failed_rule, valid_runs}]}' "$summary")"; rm -f "$summary"; return 1; }
+  out="$(bash "$LAB/steplab-summary.sh" "$LAB/results/2026-11-23-s1-fd-wall/aa-24000" --json "$summary" 2>&1)" || { echo "summary.sh failed on 5a's A/A: ${out//$'\n'/ | }"; rm -f "$summary"; return 1; }
+  grep -q '\*' <<<"$out" && { echo "runs without a position print a *: ${out//$'\n'/ | }"; rm -f "$summary"; return 1; }
+  grep -q '^Floor:' <<<"$out" && { echo "runs without a position print a Floor line: ${out//$'\n'/ | }"; rm -f "$summary"; return 1; }
+  [ "$(grep -E '^ +[1-5] +[ab] +' <<<"$out" | awk '{ printf "%s%s ", $1, $2 }')" = "1a 1b 2a 2b 3a 3b 4a 4b 5a 5b " ] || { echo "5a's rows changed order: ${out//$'\n'/ | }"; rm -f "$summary"; return 1; }
+  jq -e '.order == null and (.variants[] | select(.variant == "b") | .failed_rule) == 1' "$summary" >/dev/null || { echo "5a's summary.json: $(jq -c '{order}' "$summary")"; rm -f "$summary"; return 1; }
+  rm -f "$summary"
 }
 
 # The count of lab/syscalls.sh reads strace -c's table (a real one, lab/check/fixtures/strace-c.txt) into `<syscall> <calls> <errors>` lines,
@@ -1574,25 +1903,31 @@ check_steplab_live() {
   out="$(bash "$LAB/steplab.sh" --image 8.5 --rate 100 --think-scale 0.2 --idle 200 --seconds 6 --pairs 2 --warmup 20,3 --floor 5 \
     --idle-time-wait-max 0 --variant ref= --variant twin=APP_UNUSED=1 --out "$dir" 2>&1)" || rc=$?
   [ "$rc" = 0 ] || { echo "lab/steplab.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
-  [ "$(grep -E '^ +[12] +(ref|twin) +' <<<"$out" | awk '{ printf "%s%s ", $1, $2 }')" = "1ref 1twin 2ref 2twin " ] \
-    || { echo "the rows are not one per run in round order: ${out//$'\n'/ | }"; return 1; }
+  # Round 1 runs the reference last, round 2 in the order given; the progress line says each round's order.
+  [ "$(grep -E '^ +[12] +(ref|twin) +' <<<"$out" | awk '{ printf "%s%s ", $1, $2 }')" = "1twin 1ref 2ref 2twin " ] \
+    || { echo "the rows are not one per run in the order the runs ran: ${out//$'\n'/ | }"; return 1; }
+  grep -q '^\[1/4\] round 1, twin (position 1 of 2, order: twin ref)$' <<<"$out" && grep -q '^\[3/4\] round 2, ref (position 1 of 2, order: ref twin)$' <<<"$out" \
+    || { echo "the progress lines do not say the order of each round: ${out//$'\n'/ | }"; return 1; }
   grep -qE '^twin +2/2 .* (beyond|within) the noise$' <<<"$out" || { echo "no row for twin with its 2 valid runs and a verdict: ${out//$'\n'/ | }"; return 1; }
   grep -q '^Rule: a variant is beyond the noise when' <<<"$out" || { echo "the rule is not printed: ${out//$'\n'/ | }"; return 1; }
+  grep -qE '^ +load1 +fsync ms|load1 +fsync ms' <<<"$out" || { echo "the run table has no load1 and fsync ms columns: ${out//$'\n'/ | }"; return 1; }
   for f in ref-1 ref-2 twin-1 twin-2; do
     jq -e '.steplab.time_wait.before.max >= 0 and .steplab.time_wait.after.max >= 0 and .steplab.time_wait.before.all >= .steplab.time_wait.before.in_range
            and ([.steplab.time_wait.after.per_address | keys[] | select(startswith("127.0.0."))] | length) >= 1
            and .steplab.time_wait.before.limit_per_address == 2500 and .steplab.time_wait.before.idle_limit_per_address == 0
            and .steplab.time_wait.before.idle_max == 0
            and .per_second_probes == false and .valid == true and .idle.held_at_end == 200 and (.server.env | index("APP_TELEMETRY=0") != null)
-           and .load.warmup == "20,3" and .results.steps[0].cpu_usec_per_request > 0' "$dir/$f.json" >/dev/null \
+           and .load.warmup == "20,3" and .results.steps[0].cpu_usec_per_request > 0
+           and .host.fsync_ms > 0 and (.host.plateau.load1 | type) == "number" and .host.plateau.steal_pct >= 0 and (.host.before.cpu_busy_pct | type) == "number"' "$dir/$f.json" >/dev/null \
       || { echo "$f.json does not hold the run as the runner sets it up: $(jq -c '{valid, steplab: .steplab.time_wait, env: .server.env, idle: .idle.held_at_end}' "$dir/$f.json" 2>&1)"; return 1; }
   done
-  # The idle client of the run before left its sockets on the idle addresses: the next run waited for them to go (its 200 connections would
-  # collide with them at random), where the gate once let it through.
-  jq -e '.steplab.time_wait.before.waited_s > 0' "$dir/twin-1.json" >/dev/null || { echo "the run after one with idle connections did not wait for their TIME_WAIT sockets: $(jq -c '.steplab.time_wait.before' "$dir/twin-1.json")"; return 1; }
+  # The idle client of the run before left its sockets on the idle addresses: the next run (ref-1, the second of round 1) waited for them to go
+  # (its 200 connections would collide with them at random), where the gate once let it through.
+  jq -e '.steplab.time_wait.before.waited_s > 0' "$dir/ref-1.json" >/dev/null || { echo "the run after one with idle connections did not wait for their TIME_WAIT sockets: $(jq -c '.steplab.time_wait.before' "$dir/ref-1.json")"; return 1; }
   jq -e '.server.env | index("APP_UNUSED=1") != null' "$dir/twin-1.json" >/dev/null || { echo "the variant's environment did not reach the server"; return 1; }
   jq -e '.server.env | index("APP_UNUSED=1") == null' "$dir/ref-1.json" >/dev/null || { echo "the reference got the variant's environment"; return 1; }
-  jq -e '.steplab.variant_index == 1 and .steplab.round == 2 and .steplab.reference == "ref"' "$dir/twin-2.json" >/dev/null || { echo "the run's steplab object is wrong"; return 1; }
+  jq -e '.steplab.variant_index == 1 and .steplab.round == 2 and .steplab.reference == "ref" and .steplab.position == 1 and .steplab.order == "alternate"' "$dir/twin-2.json" >/dev/null || { echo "the run's steplab object is wrong"; return 1; }
+  jq -e '.steplab.variant_index == 0 and .steplab.round == 1 and .steplab.position == 1 and .steplab.order == "alternate"' "$dir/ref-1.json" >/dev/null || { echo "the reference of round 1 does not say it ran second: $(jq -c '.steplab | {round, position, order}' "$dir/ref-1.json")"; return 1; }
   pairs="$(jq -r '.variants[] | select(.variant == "twin") | .pairs | length' "$dir/summary.json")"
   [ "$pairs" = 2 ] || { echo "summary.json has $pairs pairs for twin, expected 2"; return 1; }
   # Why: the runner's temp folder is a per-user path on the Mac; the files go to a public repository, so they hold <tmp> instead.
@@ -1616,6 +1951,107 @@ check_steplab_cleans_up_after_failure() {
     --server-variant crash="$LAB/check/fixtures/crash-app.php" --out "$(mktemp -d)" 2>&1)" || rc=$?
   [ "$rc" = 1 ] || { echo "expected exit 1 when the server dies, got $rc: ${out//$'\n'/ | }"; return 1; }
   grep -q 'the server container exited' <<<"$out" || { echo "the reason is not reported: ${out//$'\n'/ | }"; return 1; }
+  [ -z "$(lab_containers_left)" ] || { echo "left behind: $(lab_containers_left)"; return 1; }
+}
+
+# probe.sh reads the VM's CPU state from two captures of /proc/stat (a real file's shape: the aggregate line first, then one line per CPU, guest time
+# already inside user time): between the fixtures the aggregate line moved by user 300, system 100, idle 500, iowait 50, softirq 20 and steal 30,
+# 1,000 jiffies in all, so 45.00 % of them were busy (everything but idle and iowait) and 3.00 % were stolen. The CPU lines would give other numbers.
+check_host_cpu_share_parse() {
+  local got want
+  got="$(bash "$LAB/macro/probe.sh" cpu-share "$LAB/check/fixtures/proc-stat-before.txt" "$LAB/check/fixtures/proc-stat-after.txt" 2>&1)" \
+    || { echo "probe.sh failed: ${got//$'\n'/ | }"; return 1; }
+  want=$'host cpu_busy_pct 45.00\nhost steal_pct 3.00'
+  [ "$got" = "$want" ] || { echo "the shares are not the fixtures': ${got//$'\n'/ | }"; return 1; }
+}
+
+# The disk probe, in the lab's own image: the median of 20 writes of 4 KiB each followed by fdatasync is a positive number of milliseconds, and the
+# probe leaves no file behind.
+check_host_fsync_probe() {
+  local out rc=0
+  docker image inspect "$LAB_IMAGE:8.5" >/dev/null 2>&1 || { echo "image $LAB_IMAGE:8.5 is missing (run lab/build.sh 8.5)"; return 1; }
+  out="$(docker run --rm -v "$LAB:/lab:ro" "$LAB_IMAGE:8.5" sh -c 'bash /lab/macro/probe.sh fsync /tmp/fsync-check.dat 20; test ! -e /tmp/fsync-check.dat && echo gone' 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "probe.sh fsync exited $rc: ${out//$'\n'/ | }"; return 1; }
+  grep -qE '^host fsync_ms [0-9]+(\.[0-9]+)?$' <<<"$out" && awk '$1 == "host" && $2 == "fsync_ms" { exit !($3 > 0) }' <<<"$out" \
+    || { echo "no positive fsync_ms line: ${out//$'\n'/ | }"; return 1; }
+  grep -qx gone <<<"$out" || { echo "the probe left its file behind: ${out//$'\n'/ | }"; return 1; }
+}
+
+# The series driver's dry run reads a series file (a comment, a blank line, a quoted argument) and prints each series' command, when it would start and
+# end and the gap, without a container, a folder or a file: the number of containers is the same before and after, and nothing is written.
+check_stages_dry_run() {
+  local out dir before after rc=0
+  dir="$(mktemp -d)/out"
+  before="$(docker ps -a -q | wc -l)"
+  out="$(bash "$LAB/stages.sh" "$LAB/check/fixtures/stages/two-series.txt" --dry-run --out "$dir" --gap 45 2>&1)" || rc=$?
+  after="$(docker ps -a -q | wc -l)"
+  [ "$rc" = 0 ] || { echo "lab/stages.sh --dry-run exited $rc: ${out//$'\n'/ | }"; return 1; }
+  [ "$before" = "$after" ] || { echo "a dry run changed the containers: $before before, $after after"; return 1; }
+  [ ! -e "$dir" ] || { echo "a dry run wrote $dir"; return 1; }
+  grep -qF -e 'command: bash lab/steplab.sh --image 8.5 --rate 100 --think-scale 0.2 --seconds 6 --pairs 1 --variant ref= --variant-args '"'"'ref=--image 8.5'"'"' --out ' <<<"$out" \
+    || { echo "the first series' command is not printed with its quoted argument as one word: ${out//$'\n'/ | }"; return 1; }
+  [ "$(grep -c '^  command: ' <<<"$out")" = 2 ] || { echo "expected 2 commands: ${out//$'\n'/ | }"; return 1; }
+  [ "$(grep -c '^  start: ' <<<"$out")" = 2 ] && [ "$(grep -c '^  end: ' <<<"$out")" = 2 ] || { echo "each series must show its start and end: ${out//$'\n'/ | }"; return 1; }
+  [ "$(grep -c '^  gap: 45 s' <<<"$out")" = 1 ] || { echo "the gap is printed once, after the first series only: ${out//$'\n'/ | }"; return 1; }
+}
+
+# A series that exits non-zero stops the file and its code is returned (a flag steplab does not know: exit 2): stages.json holds the one series that
+# ran, the second never started; with --keep-going both run and the first code is returned. With an unlabelled container on the VM (this check's
+# own `sleep`, removed whatever happens) the driver refuses before starting the series, exits 1 and stages.json says why; --allow-busy runs it
+# and marks it busy.
+check_stages_stops_and_refuses() {
+  local out dir rc=0 stranger=lab-check-stranger
+  dir="$(mktemp -d)"
+  out="$(bash "$LAB/stages.sh" "$LAB/check/fixtures/stages/bad-flags.txt" --allow-busy --gap 0 --out "$dir/stop" 2>&1)" || rc=$?
+  [ "$rc" = 2 ] || { echo "expected steplab's exit 2 to be returned, got $rc: ${out//$'\n'/ | }"; return 1; }
+  jq -e '(.series | length) == 1 and .series[0].name == "broken" and .series[0].exit_code == 2 and .series[0].refused == false' "$dir/stop/stages.json" >/dev/null \
+    || { echo "stages.json does not stop at the failing series: $(jq -c . "$dir/stop/stages.json" 2>&1)"; return 1; }
+  rc=0
+  out="$(bash "$LAB/stages.sh" "$LAB/check/fixtures/stages/bad-flags.txt" --allow-busy --keep-going --gap 0 --out "$dir/keep" 2>&1)" || rc=$?
+  [ "$rc" = 2 ] || { echo "--keep-going: expected the first code, 2, got $rc: ${out//$'\n'/ | }"; return 1; }
+  jq -e '(.series | map(.name)) == ["broken", "after"] and (.series | all(.exit_code == 2))' "$dir/keep/stages.json" >/dev/null \
+    || { echo "--keep-going did not run both series: $(jq -c . "$dir/keep/stages.json" 2>&1)"; return 1; }
+  docker run -d --name "$stranger" --network none "$LAB_IMAGE:8.5" sleep 120 >/dev/null 2>&1 || { echo "cannot start the unlabelled container"; return 1; }
+  rc=0
+  out="$(bash "$LAB/stages.sh" "$LAB/check/fixtures/stages/bad-flags.txt" --gap 0 --out "$dir/refuse" 2>&1)" || rc=$?
+  if [ "$rc" != 1 ]; then docker rm -f "$stranger" >/dev/null 2>&1; echo "expected a refusal (exit 1) with another container running, got $rc: ${out//$'\n'/ | }"; return 1; fi
+  grep -q 'not quiet' <<<"$out" || { docker rm -f "$stranger" >/dev/null 2>&1; echo "the refusal does not say the VM is not quiet: ${out//$'\n'/ | }"; return 1; }
+  jq -e '(.series | length) == 1 and .series[0].refused == true and .series[0].other_containers >= 1 and .series[0].start == null and .series[0].exit_code == null' \
+    "$dir/refuse/stages.json" >/dev/null || { docker rm -f "$stranger" >/dev/null 2>&1; echo "stages.json does not record the refusal: $(jq -c . "$dir/refuse/stages.json" 2>&1)"; return 1; }
+  [ ! -e "$dir/refuse/broken" ] || { docker rm -f "$stranger" >/dev/null 2>&1; echo "the refused series ran anyway"; return 1; }
+  rc=0
+  out="$(bash "$LAB/stages.sh" "$LAB/check/fixtures/stages/bad-flags.txt" --allow-busy --gap 0 --out "$dir/busy" 2>&1)" || rc=$?
+  docker rm -f "$stranger" >/dev/null 2>&1
+  [ "$rc" = 2 ] || { echo "--allow-busy: expected the series to run and exit 2, got $rc: ${out//$'\n'/ | }"; return 1; }
+  jq -e '.series[0].busy == true and .series[0].other_containers >= 1 and .allow_busy == true' "$dir/busy/stages.json" >/dev/null \
+    || { echo "--allow-busy does not mark the series busy: $(jq -c . "$dir/busy/stages.json" 2>&1)"; return 1; }
+  [ -z "$(docker ps -a --format '{{.Names}}' | grep -x "$stranger" || true)" ] || { echo "the unlabelled container is still there"; return 1; }
+}
+
+# Two one-run series live, a second of gap between them: stages.json names the commit (40 hex) and holds both with start before end and exit 0, the second starts at least the gap
+# after the first ended, each series has its folder with the summary, and each run's JSON has the host's state as numbers (--allow-busy: other
+# projects' containers may run during a smoke; the count and the flag agree).
+check_stages_live() {
+  local out dir rc=0 f
+  dir="$(mktemp -d)"
+  out="$(bash "$LAB/stages.sh" "$LAB/check/fixtures/stages/live.txt" --allow-busy --gap 1 --out "$dir" 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "lab/stages.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
+  jq -e '(.commit | test("^[0-9a-f]{40}$")) and (.dirty | type) == "boolean"' "$dir/stages.json" >/dev/null \
+    || { echo "stages.json does not name the commit (40 hex) and say whether a tracked file differs: $(jq -c '{commit, dirty}' "$dir/stages.json" 2>&1)"; return 1; }
+  [ "$(jq -r '.commit' "$dir/stages.json")" = "$(git -C "$REPO" rev-parse HEAD)" ] || { echo "stages.json's commit is not the checkout's HEAD"; return 1; }
+  jq -e '(.series | length) == 2 and (.series | map(.name)) == ["solo-a", "solo-b"] and (.series | all(.exit_code == 0 and .refused == false and (.start < .end)))
+         and (.series | all((.busy == (.other_containers > 0))))
+         and ((.series[1].start | fromdateiso8601) - (.series[0].end | fromdateiso8601)) >= 1 and .gap_s == 1' "$dir/stages.json" >/dev/null \
+    || { echo "stages.json is not as expected: $(jq -c . "$dir/stages.json" 2>&1)"; return 1; }
+  for f in solo-a/ref-1 solo-b/ref-1; do
+    [ -s "$dir/$f.json" ] && [ -s "$dir/${f%/*}/summary.txt" ] || { echo "$f.json or its summary is missing"; return 1; }
+    jq -e '.host as $h | ([$h.before.load1, $h.before.load5, $h.before.cpu_busy_pct, $h.before.steal_pct, $h.plateau.load1, $h.plateau.load5, $h.plateau.cpu_busy_pct,
+              $h.plateau.steal_pct, $h.fsync_ms, $h.other_containers] | all(type == "number")) and $h.fsync_ms > 0 and $h.before.steal_pct >= 0 and $h.plateau.steal_pct >= 0
+           and $h.before.cpu_busy_pct >= 0 and $h.before.cpu_busy_pct <= 100 and $h.plateau.cpu_busy_pct <= 100 and $h.other_containers == .other_containers.count
+           and ($h | has("before_reason") or has("plateau_reason") or has("fsync_reason") | not)' "$dir/$f.json" >/dev/null \
+      || { echo "$f.json has no complete host state: $(jq -c '.host | del(.docker_desktop, .vm_kernel, .limits)' "$dir/$f.json")"; return 1; }
+  done
+  grep -q 'load1' "$dir/solo-a/summary.txt" && grep -q 'fsync' "$dir/solo-a/summary.txt" || { echo "the summary does not print load1 and fsync ms"; return 1; }
   [ -z "$(lab_containers_left)" ] || { echo "left behind: $(lab_containers_left)"; return 1; }
 }
 
@@ -1792,6 +2228,7 @@ CHECKS=(
   check_micro_sample
   check_micro_ffi_bench
   check_micro_feed_bench
+  check_micro_parse_bench
   check_micro_skips_failed_case
   check_micro_skips_case_failing_in_later_process
   check_micro_refuses_wrong_state
@@ -1825,12 +2262,20 @@ CHECKS=(
   check_challenge_test_passes_with_soft_limit_zero
   check_challenge_test_passes_each_s6_variant
   check_s6_switches_reach_the_server
+  check_app_ffi_cases
+  check_app_driver_reaches_the_server
   check_challenge_test_passes_with_exclusive_locking
   check_app_locking_reaches_the_server
   check_app_locking_removes_the_lock_calls
   check_diy_group_commit
+  check_diy_loop_presets
+  check_challenge_test_passes_with_loop_presets
+  check_app_loop_reaches_the_server
   check_app_group_commit_cases
   check_challenge_test_passes_with_group_commit_and_checkpointer
+  check_app_workers_cases
+  check_challenge_test_passes_with_workers
+  check_app_workers_in_a_container
   check_soft_limit_closes_the_third_connection
   check_soft_limit_keeps_idle_connections
   check_soft_limit_serves_churn_at_256_fds
@@ -1853,6 +2298,7 @@ CHECKS=(
   check_idle_client_hold_mode
   check_realistic_idle_run
   check_realistic_soft_limit_run
+  check_realistic_workers_run
   check_realistic_idle_closed_by_the_server_fails
   check_macro_fresh_db_cold_per_second
   check_macro_cold_needs_fresh_db
@@ -1861,6 +2307,8 @@ CHECKS=(
   check_realistic_profile_smoke
   check_macro_profile
   check_steplab_verdicts
+  check_steplab_order
+  check_steplab_floor
   check_syscalls_table_parse
   check_time_wait_count
   check_cpu_layouts
@@ -1868,6 +2316,11 @@ CHECKS=(
   check_php_ini_flags
   check_steplab_live
   check_steplab_cleans_up_after_failure
+  check_host_cpu_share_parse
+  check_host_fsync_probe
+  check_stages_dry_run
+  check_stages_stops_and_refuses
+  check_stages_live
   check_syscalls_live
   check_syscalls_cleans_up_after_failure
   check_shellcheck
