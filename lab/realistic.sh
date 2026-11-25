@@ -8,7 +8,7 @@
 #   bash lab/realistic.sh --image 8.5 --think-scale 0.1 --hold 200,300                  # req/s, seconds of the plateau
 #   bash lab/realistic.sh --image 8.5 --think-scale 0.1 --calibrate                     # k6's memory per VU, the VU cap, the scale
 #   bash lab/realistic.sh --image 8.5 --think-scale 0.0286 --idle 60000 --cold --staircase 100,100,400,20
-#                         [--server <php file under lab/>] [--ext <name>]... [--env K=V]... [--label <text>]
+#                         [--server <php file under lab/ or submissions/>] [--ext <name>]... [--env K=V]... [--label <text>]
 #                         [--warmup <req/s>,<seconds>] [--vu-cap <n>] [--ramp <s>] [--out <path>] [--port <n>]
 #                         [--local-ips <range>] [--lag-gate <s>] [--k6-memory <MiB>] [--calibrate-vus <a>,<b>] [--calibrate-seconds <s>]
 #                         [--profile <collapsed stacks file>]
@@ -97,7 +97,7 @@ LIMIT_ACHIEVED_RATIO=0.97
 usage() {
   cat >&2 <<'EOF'
 usage: lab/realistic.sh --image <variant> (--staircase <from>,<step>,<to>,<s> | --hold <rate>,<s> | --calibrate) [--think-scale <s>]
-                        [--server <php file under lab/>] [--php-ini <php.ini under lab/>] [--ext <name>]... [--env K=V]... [--label <text>]
+                        [--server <php file under lab/ or submissions/>] [--php-ini <php.ini under lab/>] [--ext <name>]... [--env K=V]... [--label <text>]
                         [--warmup <rate>,<s>] [--vu-cap <n>] [--ramp <s>] [--out <path>] [--port <n>] [--local-ips <range>] [--lag-gate <s>] [--k6-memory <MiB>]
                         [--calibrate-vus <a>,<b>] [--calibrate-seconds <s>] [--idle <n>] [--cold] [--no-series]
                         [--profile <collapsed stacks file>]

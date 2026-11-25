@@ -832,6 +832,189 @@ check_app_workers_in_a_container() {
   [ "$code" = 0 ] || { echo "after SIGTERM the container exited $code, not 0"; return 1; }
 }
 
+# The submission, submissions/php-Gcob: the lab's chosen variants in a clean copy, with no switch.
+SUBMISSION="$REPO/submissions/php-Gcob"
+
+# The lab's runners take a server file under submissions/ too: its path in the containers is under /submissions, a file under neither
+# lab/ nor submissions/ is refused, and the folder is mounted only for a start whose command names a path in it.
+check_lab_hook_accepts_submissions() {
+  local got tmp args
+  got="$(lab_in_container_path "$SUBMISSION/server.php" 2>&1)" || { echo "refused the submission's server.php: $got"; return 1; }
+  [ "$got" = /submissions/php-Gcob/server.php ] || { echo "the submission's server.php is at '$got' in the containers, not /submissions/php-Gcob/server.php"; return 1; }
+  got="$(lab_in_container_path "$REPO/README.md" 2>&1)" && { echo "accepted a file under neither lab/ nor submissions/"; return 1; }
+  grep -qF 'under lab/ or submissions/' <<<"$got" || { echo "the refusal does not say where a file may be: $got"; return 1; }
+  tmp="$(mktemp)"
+  # Why a function in place of docker: only what is passed to docker matters here, and nothing may start.
+  (
+    docker() { printf '%s\n' "$@" >"$tmp"; }
+    LAB_ENV=()
+    lab_run_server_container probe 8.5 1 php /lab/app/server.php
+    args="$(cat "$tmp")"
+    ! grep -q '/submissions' <<<"$args" || { echo "a server under lab/ got the submissions mount"; exit 1; }
+    lab_run_server_container probe 8.5 1 php /submissions/php-Gcob/server.php
+    grep -qxF "$REPO/submissions:/submissions:ro" "$tmp" || { echo "a server under submissions/ did not get it, read-only: $(tr '\n' ' ' <"$tmp")"; exit 1; }
+  ) || { local rc=$?; rm -f "$tmp"; return "$rc"; }
+  rm -f "$tmp"
+}
+
+# Where a submission's rules are read from; what each part of check_submission looks at is named by the prefix of the problem it prints.
+SUBMISSION_SWITCHES='APP_WORKERS|APP_PRAGMAS|APP_SOFT_CONN_LIMIT|APP_TELEMETRY|APP_PROFILE|APP_JSON|APP_FEED_SQL|APP_FETCH|APP_DRIVER|APP_LOCKING|APP_GROUP_COMMIT|APP_CHECKPOINTER|APP_LOOP'
+
+# submission_static_problems <folder>: one line per rule the folder breaks, none when it keeps them all (no Docker: the lint is apart).
+#  getenv     the PHP reads only SQLITE_PATH, JWT_SECRET, HOST and PORT (getenv with one of the four, no $_ENV, no $_SERVER)
+#  switch     none of the lab's switch names, matched as words: a constant like APP_JSON_FLAGS is not one
+#  instrument none of the lab's instruments (FFI, Excimer, the telemetry and the profiler, the checkpointer, group commit)
+#  flags      start.sh runs /opt/php-gcob/bin/php with the three extensions, then LAB_SERVER_PHP_FLAGS, in that order (read from lib.sh)
+#  folder     only install.sh, build.sh, start.sh, README.md, .gitignore and *.php files
+submission_static_problems() {
+  local dir="$1" f name call want got entry getenv_ok="^getenv\\(['\"](SQLITE_PATH|JWT_SECRET|HOST|PORT)['\"]\\)\$"
+  for f in "$dir"/*.php; do
+    [ -f "$f" ] || continue
+    name="$(basename "$f")"
+    while IFS= read -r call; do
+      [[ "$call" =~ $getenv_ok ]] || echo "getenv: $name has $call (only SQLITE_PATH, JWT_SECRET, HOST and PORT are read)"
+    done < <(grep -o 'getenv([^)]*)' "$f")
+    grep -q '\$_ENV\|\$_SERVER\|putenv(' "$f" && echo "getenv: $name reads or sets the environment another way (\$_ENV, \$_SERVER or putenv)"
+    grep -nwE "$SUBMISSION_SWITCHES" "$f" | sed "s|^|switch: $name:|"
+    { grep -nE 'FFI|Excimer|DiyTelemetry|DiyProfile' "$f"; grep -niE 'checkpointer|group_commit' "$f"; } | sed "s|^|instrument: $name:|"
+  done
+  if [ -f "$dir/start.sh" ]; then
+    got="$(grep -v '^[[:space:]]*#' "$dir/start.sh" | grep -o -- '-d [^ ]*' | cut -c4- | paste -sd' ' -)"
+    want="extension=pcntl extension=sockets extension=event"
+    for entry in "${LAB_SERVER_PHP_FLAGS[@]}"; do
+      [ "$entry" = -d ] || want="$want $entry"
+    done
+    [ "$got" = "$want" ] || echo "flags: start.sh passes '$got', not '$want'"
+    grep -q '^exec /opt/php-gcob/bin/php ' "$dir/start.sh" || echo "flags: start.sh does not exec /opt/php-gcob/bin/php"
+  else
+    echo "flags: there is no start.sh"
+  fi
+  while IFS= read -r entry; do
+    name="$(basename "$entry")"
+    case "$name" in
+      # Why: Finder leaves it in a folder it opened; it is not part of what is committed.
+      .DS_Store) ;;
+      install.sh | build.sh | start.sh | README.md | .gitignore | *.php) [ -f "$entry" ] || echo "folder: $name is not a file" ;;
+      *) echo "folder: $name is not allowed (install.sh, build.sh, start.sh, README.md, .gitignore and *.php files only)" ;;
+    esac
+  done < <(find "$dir" -mindepth 1 -maxdepth 1 | sort)
+}
+
+# submission_lint_problems <folder>: `php -l` on every PHP file of the folder, in the lab's php-lab:8.5 image; a line `lint: ...` per file that fails.
+submission_lint_problems() {
+  local out
+  docker image inspect "$LAB_IMAGE:8.5" >/dev/null 2>&1 || { echo "lint: image $LAB_IMAGE:8.5 is missing (run lab/build.sh 8.5)"; return 0; }
+  out="$(docker run --rm "${LAB_RESOURCE_FLAGS[@]}" -v "$1:/src:ro" "$LAB_IMAGE:8.5" sh -c '
+    for f in /src/*.php; do
+      [ -f "$f" ] || continue
+      msg="$(php -l "$f" 2>&1)" || echo "$(basename "$f"): $(echo "$msg" | head -n 1)"
+    done' 2>&1)"
+  [ -z "$out" ] || sed 's|^|lint: |' <<<"$out"
+}
+
+check_submission() {
+  local problems
+  [ -d "$SUBMISSION" ] || { echo "submissions/php-Gcob does not exist"; return 1; }
+  problems="$(submission_static_problems "$SUBMISSION"; submission_lint_problems "$SUBMISSION")"
+  [ -z "$problems" ] || { echo "${problems//$'\n'/ | }"; return 1; }
+}
+
+# Each rule of check_submission fails on a copy that breaks only that rule, and a constant that looks like a switch (APP_JSON_FLAGS) passes.
+check_submission_catches_violations() {
+  local tmp kind prefix problems
+  [ -d "$SUBMISSION" ] || { echo "submissions/php-Gcob does not exist"; return 1; }
+  tmp="$(mktemp -d)"
+  problems="$(submission_static_problems "$SUBMISSION")"
+  [ -z "$problems" ] || { rm -rf "$tmp"; echo "the submission itself breaks a rule: ${problems//$'\n'/ | }"; return 1; }
+  cp -R "$SUBMISSION" "$tmp/ok"
+  printf '<?php\nconst APP_JSON_FLAGS = 1;\nconst APP_BODY_MAX_CHARS = 2;\n$x = getenv("PORT");\n' >"$tmp/ok/constants.php"
+  problems="$(submission_static_problems "$tmp/ok")"
+  [ -z "$problems" ] || { rm -rf "$tmp"; echo "constants named like a switch, and getenv of PORT, were refused: ${problems//$'\n'/ | }"; return 1; }
+  for kind in getenv getenv-all env-array switch instrument-ffi instrument-checkpointer flags flags-order folder subfolder lint; do
+    rm -rf "$tmp/f"
+    cp -R "$SUBMISSION" "$tmp/f"
+    case "$kind" in
+      getenv) prefix=getenv; printf '<?php\n$x = getenv("APP_HOME");\n' >"$tmp/f/extra.php" ;;
+      getenv-all) prefix=getenv; printf '<?php\n$x = getenv();\n' >"$tmp/f/extra.php" ;;
+      env-array) prefix=getenv; printf '<?php\n$x = $_ENV["PORT"];\n' >"$tmp/f/extra.php" ;;
+      switch) prefix=switch; printf '<?php\n// APP_WORKERS=2 is built in\n' >"$tmp/f/extra.php" ;;
+      instrument-ffi) prefix=instrument; printf '<?php\n// FFI\n' >"$tmp/f/extra.php" ;;
+      instrument-checkpointer) prefix=instrument; printf '<?php\nfunction run_checkpointer() {}\n' >"$tmp/f/extra.php" ;;
+      flags) prefix=flags; sed 's/opcache.jit=tracing/opcache.jit=function/' "$SUBMISSION/start.sh" >"$tmp/f/start.sh" ;;
+      flags-order) prefix=flags; sed 's/-d extension=sockets -d extension=event/-d extension=event -d extension=sockets/' "$SUBMISSION/start.sh" >"$tmp/f/start.sh"
+        cmp -s "$SUBMISSION/start.sh" "$tmp/f/start.sh" && { rm -rf "$tmp"; echo "the flags-order fixture changed nothing: start.sh does not put the extensions on one line"; return 1; } ;;
+      folder) prefix=folder; printf 'x\n' >"$tmp/f/notes.txt" ;;
+      subfolder) prefix=folder; mkdir "$tmp/f/vendor" ;;
+      lint) prefix=lint; printf '<?php\nfunction (\n' >"$tmp/f/broken.php" ;;
+    esac
+    if [ "$kind" = lint ]; then problems="$(submission_lint_problems "$tmp/f")"; else problems="$(submission_static_problems "$tmp/f")"; fi
+    grep -q "^$prefix: " <<<"$problems" || { rm -rf "$tmp"; echo "a copy with the '$kind' violation passes: ${problems:-no problem printed}"; return 1; }
+  done
+  rm -rf "$tmp"
+}
+
+# The challenge's 42 checks against the submission, started the way the lab's runners start a server file (the three extensions, no --env:
+# the copy reads no switch), and no container left behind.
+check_submission_passes_challenge_test() {
+  local out left rc=0
+  out="$(bash "$LAB/challenge-test.sh" --image 8.5 --server "$SUBMISSION/server.php" --ext pcntl --ext sockets --ext event 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "lab/challenge-test.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
+  grep -qx 'passed=42 failed=0' <<<"$out" || { echo "the summary is not 'passed=42 failed=0': ${out//$'\n'/ | }"; return 1; }
+  left="$(docker ps -a --format '{{.Names}}' | grep '^lab-challenge-' || true)"
+  [ -z "$left" ] || { echo "containers left behind: ${left//$'\n'/ }"; return 1; }
+}
+
+# The submission as a container's first process: the boot lines (2 workers, the soft limit per process, the pragmas as SQLite reads them
+# back, the loop, the socket), and 200 connections held open at once, each answered, with sockets in the process table of each worker (the
+# copy has no telemetry to name the process that answered). A socket the worker did not have before is a connection it accepted.
+check_submission_both_workers_answer() {
+  local name=lab-check-submission log pids result
+  CHECK_APP_SERVER=/submissions/php-Gcob/server.php CHECK_APP_EXT_EXTRA=pcntl start_app_for_check "$name" 18168 0 || return 1
+  log="$(docker logs "$name" 2>&1)"
+  if [ "$(grep -cE '^(workers: 2 \(pids [0-9]+ [0-9]+\)|listening on 0\.0\.0\.0:18168|soft connection limit: 64000 per process|sqlite: journal_mode=wal synchronous=1 mmap_size=0 cache_size=-65536|loop: [a-z]+|socket: backlog=4096 tcp_nodelay=1)$' <<<"$log")" != 6 ]; then
+    docker rm -f "$name" >/dev/null 2>&1
+    echo "the boot lines are not the six expected: ${log//$'\n'/ | }"
+    return 1
+  fi
+  pids="$(sed -n 's/^workers: 2 (pids \([0-9]*\) \([0-9]*\))$/\1 \2/p' <<<"$log")"
+  # shellcheck disable=SC2086 # the two process ids, one word each
+  result="$(docker exec "$name" php /lab/check/hold-and-count.php 18168 200 $pids 2>&1)"
+  docker rm -f "$name" >/dev/null 2>&1
+  jq -e '.answered == 200 and ([.workers[] | .during - .before] | length == 2 and all(. > 0))' >/dev/null 2>&1 <<<"$result" \
+    || { echo "expected 200 answers and new sockets in both workers: $result"; return 1; }
+}
+
+# Without HOST and PORT the submission listens on 0.0.0.0:80, the challenge's direct setup. Run in a container with a network of its own (as
+# root, which may bind port 80 there): on the host network it could take, or collide with, the port 80 of another project's container.
+check_submission_default_host_and_port() {
+  local name=lab-check-submission-net log answer
+  docker rm -f "$name" >/dev/null 2>&1
+  docker run -d --name "$name" "${LAB_RESOURCE_FLAGS[@]}" --cpuset-cpus "$LAB_CPUSET_SERVER" -v "$LAB/data:/lab/data:ro" -v "$SUBMISSION:/submission:ro" \
+    "$LAB_IMAGE:8.5" sh -c 'cp /lab/data/feed.db /tmp/feed.db && SQLITE_PATH=/tmp/feed.db JWT_SECRET=a-secret exec php -d extension=pcntl -d extension=sockets -d extension=event /submission/server.php' >/dev/null \
+    || { echo "docker run failed"; return 1; }
+  for _ in $(seq 1 120); do
+    docker logs "$name" 2>&1 | grep -q '^listening on' && break
+    [ "$(docker inspect -f '{{.State.Running}}' "$name")" = true ] || { log="$(docker logs "$name" 2>&1 | tr '\n' ' ')"; docker rm -f "$name" >/dev/null 2>&1; echo "the server exited: $log"; return 1; }
+    sleep 0.5
+  done
+  log="$(docker logs "$name" 2>&1)"
+  answer="$(docker exec "$name" php -r 'echo @file_get_contents("http://127.0.0.1:80/health");' 2>&1)"
+  docker rm -f "$name" >/dev/null 2>&1
+  grep -qx 'listening on 0.0.0.0:80' <<<"$log" || { echo "the boot line does not say 0.0.0.0:80: ${log//$'\n'/ | }"; return 1; }
+  grep -q '"status":"ok"' <<<"$answer" || { echo "GET /health on port 80 inside the container answered: $answer"; return 1; }
+}
+
+# The submission's own cases (lab/check/submission-test.php, run with the submissions folder mounted): the configuration refusals leave
+# nothing listening, SIGTERM and a killed worker end the process as they should, and the soft limit's path on socket pairs.
+check_submission_cases() {
+  local out ok rc=0
+  out="$(LAB_RUN_SUBMISSIONS=1 bash "$LAB/run.sh" 8.5 php -d extension=sockets -d extension=event -d extension=pcntl /lab/check/submission-test.php 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "submission-test.php exited $rc: ${out//$'\n'/ | }"; return 1; }
+  ok="$(grep -c '^ok  ' <<<"$out")"
+  [ "$ok" = 16 ] || { echo "expected 16 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
+  ! grep -q 'FAIL' <<<"$out" || { echo "a case failed: ${out//$'\n'/ | }"; return 1; }
+}
+
 # The feed bench times every case of the S6 variants (APP_JSON's and APP_DRIVER's too, and the raw FFI floor) and none is skipped (each case checked its answer against the reference's), and the
 # plans saved next to its output are what SQLite says today.
 check_micro_feed_bench() {
@@ -1223,7 +1406,8 @@ check_telemetry_cases() {
 
 # start_app_for_check <container> <port> <cold 0|1> [K=V]...: the app on a fresh copy of the seed through lab_start_app, waited on until it
 # listens. Prints the failure and returns 1 when it never does. CHECK_APP_EXT_EXTRA (one extension name, set for that one call) is loaded after
-# sockets and event: `pcntl` for APP_WORKERS.
+# sockets and event: `pcntl` for APP_WORKERS. CHECK_APP_SERVER (set for that one call) is the server file as the container sees it (default
+# /lab/app/server.php; /submissions/php-Gcob/server.php for the submission).
 # Why disable SC2034: LAB_COLD, LAB_EXT and LAB_ENV are read by lab_start_app and lab_build_php_flags (lib.sh), which shellcheck does not follow.
 # shellcheck disable=SC2034
 start_app_for_check() {
@@ -1234,7 +1418,7 @@ start_app_for_check() {
   LAB_ENV=("$@")
   lab_build_php_flags
   docker rm -f "$name" >/dev/null 2>&1
-  lab_start_app "$name" 8.5 "$port" /lab/app/server.php || { echo "lab_start_app failed"; return 1; }
+  lab_start_app "$name" 8.5 "$port" "${CHECK_APP_SERVER:-/lab/app/server.php}" || { echo "lab_start_app failed"; return 1; }
   for _ in $(seq 1 120); do
     docker logs "$name" 2>&1 | grep -q '^listening on' && return 0
     [ "$(docker inspect -f '{{.State.Running}}' "$name")" = true ] || { echo "the app exited: $(docker logs "$name" 2>&1 | tr '\n' ' ')"; return 1; }
@@ -2276,6 +2460,13 @@ CHECKS=(
   check_app_workers_cases
   check_challenge_test_passes_with_workers
   check_app_workers_in_a_container
+  check_lab_hook_accepts_submissions
+  check_submission
+  check_submission_catches_violations
+  check_submission_cases
+  check_submission_passes_challenge_test
+  check_submission_both_workers_answer
+  check_submission_default_host_and_port
   check_soft_limit_closes_the_third_connection
   check_soft_limit_keeps_idle_connections
   check_soft_limit_serves_churn_at_256_fds

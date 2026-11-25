@@ -71,6 +71,8 @@ The times in `results/build-times.md` are one build after the other (`8.6` is sh
 An unknown variant exits non-zero and lists the known ones. `lab/run.sh` runs a command in the image with 1 CPU, 2 GiB,
 no swap, 65535 file descriptors, on the host network, pinned to CPU 2; `lab/` is mounted at `/lab` (read-only, except
 `lab/results/` and `lab/data/`). The CPU layout and the limits live in `lab/lib.sh`, shared by every lab script.
+A server file may also be under the repo's `submissions/` folder (`--server submissions/php-Gcob/server.php`): it is mounted read-only at
+`/submissions`, and only in a container that starts such a file (`LAB_RUN_SUBMISSIONS=1 bash lab/run.sh ...` mounts it for a check).
 `php-info` prints the PHP, Swoole and SQLite versions, OPcache and JIT, and which extensions are present (`swoole:
 not built` when the image has no Swoole), then `pcntl`, `sockets`, `event` (its version, or `not built`), `excimer` (the same) and the
 Workerman version of its two trees (`workerman: 5.2.4 (stock, nocache)`).
@@ -1125,7 +1127,7 @@ bash lab/steplab.sh --image 8.5 --rate 24000 --think-scale 0.02 --idle 60000 --s
 Each run is `lab/realistic.sh --hold <rate>,<seconds>` (a fresh seed copy, server and idle connections each time), with `--no-series`
 (no per-second probes) and the server's telemetry off unless the variant sets `APP_TELEMETRY`. The default warm-up is a tenth of the
 rate for 60 s (`--warmup <req/s>,<s>` changes it). `--variant <name>=<K=V,K=V...>` sets environment variables (an empty list is the
-skeleton as it is); `--server-variant <name>=<php file under lab/>` runs another server file; `--variant-args <name>=<arguments>` adds
+skeleton as it is); `--server-variant <name>=<php file under lab/ or submissions/>` runs another server file; `--variant-args <name>=<arguments>` adds
 arguments to that variant's `lab/realistic.sh` call, split on spaces and given last, so a variant can run on another image and with its own
 extension and `php.ini` (`--variant-args "other=--image 8.3-apt --ext swoole"`). **The first variant is the reference.** Runs are **interleaved by round**: every round runs every variant once, and `--pairs` rounds follow each other, so a slow drift of the VM hits every variant alike.
 
@@ -1378,6 +1380,14 @@ bash lab/check.sh
 
 One line per check, `ok` or `FAIL`, non-zero exit if any fails. To add one, write a `check_<name>` function in the
 script and list it in `CHECKS`.
+
+**The submission** (`submissions/php-Gcob`, the chosen variants in a clean copy with no switch) has its own checks:
+`check_submission` (it reads only `SQLITE_PATH`, `JWT_SECRET`, `HOST` and `PORT`, holds none of the lab's switch names or instruments,
+`start.sh` passes the three extensions then the lab's `LAB_SERVER_PHP_FLAGS` in order, `php -l` passes in `php-lab:8.5`, and the folder holds
+only the allowed files) with `check_submission_catches_violations` (a fixture for each rule), `check_submission_passes_challenge_test`
+(42/42, no `--env`), `check_submission_both_workers_answer` (the boot lines, and 200 held connections that grow the socket table of each
+worker), `check_submission_default_host_and_port` (0.0.0.0:80 in a container with a network of its own) and `check_submission_cases`
+(`lab/check/submission-test.php`: the configuration refusals, SIGTERM, a killed worker, and the soft limit on socket pairs and through the loop).
 
 `check_results_regenerate` keeps the results folders honest: it runs every `lab/results/*/summarize.sh` (from its
 folder, reading only the raw files next to it) and checks the folder's `README.md` against it, byte for byte, so a

@@ -127,19 +127,24 @@ lab_build_php_flags() {
 
 # lab_run_server_container <container name> <variant> <port> <command...>: the `docker run` of every server container (1 CPU,
 # 2 GiB, the server CPU, host network, lab/ at /lab, the seed read-only at /lab/data), running <command> in php-lab:<variant>.
+# The repo's submissions/ folder is mounted read-only at /submissions only when an argument of <command> is a path under it (what
+# lab_in_container_path prints for a server file there): a bind mount of a folder that does not exist would make an empty one.
 # Needs LAB (the lab/ folder); LAB_ENV, an array of K=V, is passed with -e after PORT. Never mount lab/data writable here: a
 # server must copy feed.db, not open it (WAL files). LAB_SERVER_NOFILE, when set, replaces the container's `nofile` limit (a test
 # hook for lab/conns.sh: the later --ulimit of the same name wins). LAB_SERVER_SECCOMP_UNCONFINED=1 starts the container without
 # Docker's default seccomp filter, which refuses the io_uring syscalls (EPERM): only the io_uring server uses it, through the
 # --seccomp-unconfined option of lab/macro.sh, lab/conformance.sh, lab/conns.sh and lab/stress.sh.
 lab_run_server_container() {
-  local name="$1" variant="$2" port="$3" env_args=() nofile_args=() seccomp_args=() kv
+  local name="$1" variant="$2" port="$3" env_args=() nofile_args=() seccomp_args=() submissions_args=() kv arg
   shift 3
+  for arg in "$@"; do
+    case "$arg" in /submissions/*) submissions_args=(-v "$(dirname "$LAB")/submissions:/submissions:ro"); break ;; esac
+  done
   for kv in "${LAB_ENV[@]+"${LAB_ENV[@]}"}"; do env_args+=(-e "$kv"); done
   [ -z "${LAB_SERVER_NOFILE:-}" ] || nofile_args=(--ulimit "nofile=$LAB_SERVER_NOFILE:$LAB_SERVER_NOFILE")
   [ "${LAB_SERVER_SECCOMP_UNCONFINED:-}" != 1 ] || seccomp_args=(--security-opt seccomp=unconfined)
   docker run -d --name "$name" "${LAB_RESOURCE_FLAGS[@]}" "${nofile_args[@]+"${nofile_args[@]}"}" "${seccomp_args[@]+"${seccomp_args[@]}"}" --network host --cpuset-cpus "$LAB_CPUSET_SERVER" \
-    -v "$LAB:/lab:ro" -v "$LAB/data:/lab/data:ro" -e "PORT=$port" "${env_args[@]+"${env_args[@]}"}" \
+    -v "$LAB:/lab:ro" -v "$LAB/data:/lab/data:ro" "${submissions_args[@]+"${submissions_args[@]}"}" -e "PORT=$port" "${env_args[@]+"${env_args[@]}"}" \
     "$LAB_IMAGE:$variant" "$@" >/dev/null
 }
 
@@ -208,15 +213,17 @@ lab_ensure_strace_image() {
   docker build -q -t "$LAB_STRACE_IMAGE" -f "$LAB/images/Dockerfile.strace" "$LAB/images" >/dev/null
 }
 
-# lab_in_container_path <file under lab/>: prints the file's path in the containers (lab/ is mounted at /lab). Returns 1 with a
-# message on stderr when the file is missing or is not under lab/. Needs LAB.
+# lab_in_container_path <file under lab/ or submissions/>: prints the file's path in the containers (lab/ is mounted at /lab, the
+# repo's submissions/ at /submissions). Returns 1 with a message on stderr when the file is missing or is under neither. Needs LAB.
 lab_in_container_path() {
-  local abs
+  local abs submissions
+  submissions="$(dirname "$LAB")/submissions"
   [ -f "$1" ] || { echo "file not found: $1" >&2; return 1; }
   abs="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
   case "$abs" in
     "$LAB"/*) echo "/lab/${abs#"$LAB"/}" ;;
-    *) echo "the file must be under lab/ (it is mounted in the containers): $1" >&2; return 1 ;;
+    "$submissions"/*) echo "/submissions/${abs#"$submissions"/}" ;;
+    *) echo "the file must be under lab/ or submissions/ (they are mounted in the containers): $1" >&2; return 1 ;;
   esac
 }
 

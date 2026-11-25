@@ -13,7 +13,7 @@
 # FIXME(pending): Jacob must confirm the round order and the floor rule (plan/plan.md, Q19). Assumes A: alternate the order, floor = |median| + interquartile range of an A/A folder, every run counted.
 #
 #   bash lab/steplab.sh --image 8.5 --rate 24000 --think-scale 0.02 --idle 60000 --seconds 60 --pairs 3 \
-#       --variant ref= --variant telemetry-on=APP_TELEMETRY=1 [--server-variant <name>=<php file under lab/>]... \
+#       --variant ref= --variant telemetry-on=APP_TELEMETRY=1 [--server-variant <name>=<php file under lab/ or submissions/>]... \
 #       [--warmup <req/s>,<s>] [--floor <us> | --floor-from <A/A folder>] [--order alternate|fixed] [--label <text>] [--out <folder>] [--first-round <n>] [--time-wait-max <n>] [--idle-time-wait-max <n>] [--time-wait-wait <s>]
 #                       [--local-ips <range>] [--lag-gate <s>] [--port <n>] [--vu-cap <n>] [--ramp <s>] [--k6-memory <MiB>] [--ext <name>]...
 #
@@ -59,7 +59,7 @@ source "$LAB/lib.sh"
 usage() {
   cat >&2 <<'EOF'
 usage: lab/steplab.sh --image <variant> --rate <req/s> --think-scale <s> --seconds <plateau s> --pairs <n>
-                      --variant <name>=<K=V,K=V...> [--variant ...] [--server-variant <name>=<php file under lab/>]...
+                      --variant <name>=<K=V,K=V...> [--variant ...] [--server-variant <name>=<php file under lab/ or submissions/>]...
                       [--variant-args <name>=<arguments>]... [--idle <n>] [--warmup <req/s>,<s>] [--floor <us> | --floor-from <A/A folder>]
                       [--order alternate|fixed] [--dry-run] [--label <text>] [--out <folder>]
                       [--first-round <n>] [--time-wait-max <n>] [--idle-time-wait-max <n>] [--time-wait-wait <s>] [--local-ips <range>] [--lag-gate <s>] [--port <n>]
@@ -128,11 +128,11 @@ while [ "$#" -gt 0 ]; do
       fi
       ;;
     --server-variant)
-      [[ "$2" == ?*=?* ]] || { echo "--server-variant wants <name>=<php file under lab/>, got '$2'" >&2; usage; }
+      [[ "$2" == ?*=?* ]] || { echo "--server-variant wants <name>=<php file under lab/ or submissions/>, got '$2'" >&2; usage; }
       vname="${2%%=*}" vfile="${2#*=}"
       [[ "$vname" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "a variant's name may only hold letters, digits, . _ and -, got '$vname'" >&2; usage; }
       [ -f "$vfile" ] || { [ ! -f "$LAB/$vfile" ] || vfile="$LAB/$vfile"; }
-      [ -f "$vfile" ] || { echo "--server-variant '$vname': no file $vfile (give a path under lab/)" >&2; usage; }
+      [ -f "$vfile" ] || { echo "--server-variant '$vname': no file $vfile (give a path under lab/ or submissions/)" >&2; usage; }
       variant_index "$vname"
       vi="$VI"
       v_server[vi]="$vfile"

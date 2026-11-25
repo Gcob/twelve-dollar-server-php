@@ -5,7 +5,7 @@
 #
 #   bash lab/syscalls.sh --image 8.5                                  # the skeleton, 2,000 req/s, 20 s of strace
 #   bash lab/syscalls.sh --image 8.5 --env APP_SOMETHING=1 --out /tmp/count.json
-#                        [--rate 2000] [--think-scale 0.1] [--seconds 20] [--server <php file under lab/>] [--env K=V]...
+#                        [--rate 2000] [--think-scale 0.1] [--seconds 20] [--server <php file under lab/ or submissions/>] [--env K=V]...
 #
 # Only counts are kept. strace stops the server at every syscall, so it slows it down and its times mean nothing; its time columns are
 # dropped (lab/syscalls-table.awk). The requests are the aggregator's (lab/macro/aggregate.php, one row per second of k6's own samples),
@@ -38,7 +38,7 @@ WRITE_FAMILY='["write", "sendto", "writev"]'
 
 usage() {
   cat >&2 <<'EOF'
-usage: lab/syscalls.sh --image <variant> [--rate <req/s>] [--think-scale <s>] [--seconds <s>] [--server <php file under lab/>]
+usage: lab/syscalls.sh --image <variant> [--rate <req/s>] [--think-scale <s>] [--seconds <s>] [--server <php file under lab/ or submissions/>]
                        [--env K=V]... [--out <path>]
 defaults: --rate 2000, --think-scale 0.1, --seconds 20
 EOF
