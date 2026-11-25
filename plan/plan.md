@@ -1,23 +1,20 @@
 # $12 server challenge in PHP
 
-**Status:** 🏁 Phase 6 delivered (the submission, `submissions/php-Gcob/`), branch `phase-6-claude` at `e5a9fde`, to review and merge · approved on 2026-11-21 · snapshot 2026-11-21-0920 ·
+**Status:** 🏁 Phase 6 merged (the submission, `submissions/php-Gcob/`; merge `b1823cb`); phase 7 next, to plan with Jacob · approved on 2026-11-21 · snapshot 2026-11-21-0920 ·
 **Round:** 6
 **Since your last read:** phase 6 is delivered. `submissions/php-Gcob/` passes the challenge's `test/run.sh` 42/42 in
 a clean `ubuntu:24.04` as `deploy` on port 80 (1 CPU, 2 GiB, `nofile` 65535, only `CAP_NET_BIND_SERVICE`) and in a copy
 of the challenge's CI runner (D85); `install.sh` builds PHP 8.5.13 in about 4 minutes on one arm64 core. The copy shows
 no difference the step lab detects against the lab's server at 12,000 req/s (D88; at 24,000 the pairs couldn't
 decide). The blind review found one real bug, fixed: a new post whose commit failed still answered 201 (D87). Both
-final reviews OK. Delivery, merge command and retro in [run.md](run.md) ("Delivery").
+final reviews OK. Merged on Jacob's go (`b1823cb`). Delivery and retro in [runs/phase-6/run.md](runs/phase-6/run.md)
+("Delivery").
 **Project:** this repo, `plan/` · **Submission:** `submissions/php-Gcob/` (D80) · **Jira:** none
 
 ## 👉 Your turn
 
 > **Answer freely:** a letter or `ok`, your own choice (`other: …`), `?` if it's unclear, or
 > `badly framed: …` if an option is missing or the question doesn't hold.
-
-**🔴 Review and merge phase 6** (`phase-6-claude`, 9 commits): the merge command is in [run.md](run.md), "Delivery";
-or say "merge it" and the project manager runs it. The README's links go to `main` on GitHub: they 404 until the
-merge. Phase 7 (the score on x86) needs your go for AWS.
 
 **🟠 Delete the AWS policy `twelve-dollar-x86-calibration`** (detach it from your CLI user, then delete it): scope 9
 is done and `teardown.sh --verify` shows nothing tagged left (only the terminated instance).
@@ -110,7 +107,7 @@ step's choice backed by a measurement.
 **Decisions:** 88 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
 is a prediction we re-measure, not an answer.
 
-### Phase 6 scopes (delivered, to merge)
+### Phase 6 scopes (merged)
 
 Detail, seams, cases and the predictions in [details/phase-6.md](details/phase-6.md). One commit each, on branch
 `phase-6-claude` (D14). Scope 4 measures, so it needs a quiet Docker VM (D15).
@@ -224,5 +221,5 @@ You don't need to read this part: it's the index of the execution details, in `d
 - [Phase 5](details/phase-5.md): the step lab's first run (5a): scopes, seams, cases and the predictions.
 - [Phase 5b](details/phase-5b.md): the step lab's second run: scopes, seams, cases and the predictions.
 - [Phase 6](details/phase-6.md): the submission: scopes, seams, cases and the predictions.
-- [Phase 2's run](runs/phase-2/run.md), [phase 3's](runs/phase-3/run.md), [phase 4's](runs/phase-4/run.md), [phase 5a's](runs/phase-5a/run.md) and [phase 5b's](runs/phase-5b/run.md): progress, reviews and retro, with
+- [Phase 2's run](runs/phase-2/run.md), [phase 3's](runs/phase-3/run.md), [phase 4's](runs/phase-4/run.md), [phase 5a's](runs/phase-5a/run.md), [phase 5b's](runs/phase-5b/run.md) and [phase 6's](runs/phase-6/run.md): progress, reviews and retro, with
   their `state/`.
