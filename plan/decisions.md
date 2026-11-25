@@ -453,6 +453,16 @@
   one more step on the 2 % of requests that create a post (blind review, settled by the project manager, phase 6,
   2026-11-24, `reviews/BLIND-2026-11-24-2025.md` item 1).
 
+- **D88:** the parity pairs at 24,000 req/s can't decide: three pairs, signs differ (−4.25, +1.15, +2.04 µs/req), but
+  each outside the 0.864 floor that D86 reads two-sided, with every run under the 97 % rule (two processes at 24,000
+  req/s sit near the Mac's saturation, and the floor came from one process). So, in place of D86's profile, which can't
+  see 1 to 2 µs either: 3 pairs at 12,000 req/s, the rate of 5b's S1-b pairs, where two processes stay under
+  saturation, with the floor of 5a's A/A at 12,000 (0.516 µs/req, one process, said so), read both ways: D86's
+  `|median| < floor` and the step lab's same-sign rule. Both say parity: the copy is the lab's twin, delivered as "no
+  difference the step lab detects". The copy dearer beyond the floor in all three: D86's profile, then a fix or the cost
+  said in the README. Anything else: delivered with both readings written, and the question to Jacob (pr-reviewer
+  pass 2, settled by the project manager, phase 6, 2026-11-24, `reviews/PR-2026-11-24-2105-delta.md` item 1).
+
 ## History
 
 Nothing yet.
