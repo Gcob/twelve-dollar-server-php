@@ -1,6 +1,6 @@
 # $12 server challenge in PHP
 
-**Status:** 🏁 Phase 7 delivered (the score on x86, [details/phase-7.md](details/phase-7.md)): **135,000 users held 5 minutes** on AWS, our run; branch `phase-7-claude`, both final reviews OK, waiting for your merge · approved on 2026-11-21 · snapshot 2026-11-21-0920 ·
+**Status:** 🏁 Phase 7 delivered (the score on x86, [details/phase-7.md](details/phase-7.md)): **135,000 users held 5 minutes** on AWS, our run; branch `phase-7-claude`, both final reviews OK, merged (`5fa7385`) · approved on 2026-11-21 · snapshot 2026-11-21-0920 ·
 **Round:** 7
 **Since your last read:** phase 7 is delivered. The challenge's own `bench/load.js`, unchanged, against
 `submissions/php-Gcob/` installed the bench's way on an AWS `c5.large` with one core and 2 GB, k6 on a separate
@@ -8,17 +8,14 @@
 of its core, 881 MiB). 142,000 failed: once on EC2's connection table, twice with k6's load box over its line and the
 service at 90 % (D104 to D106): the ceiling is likely the CPU, not separated from k6. Our number, not the bench's; the
 bench estimate, apart, is about 86,000 (D106). Three bugs found by the real boxes, two by the blind review, all fixed
-with a test. Lab suite 133/133. Delivery, the commands and the retro in [run.md](run.md) ("Delivery").
+with a test. Lab suite 133/133. Merged on your go (`5fa7385`). Delivery and retro in [runs/phase-7/run.md](runs/phase-7/run.md)
+("Delivery").
 **Project:** this repo, `plan/` · **Submission:** `submissions/php-Gcob/` (D80) · **Jira:** none
 
 ## 👉 Your turn
 
 > **Answer freely:** a letter or `ok`, your own choice (`other: …`), `?` if it's unclear, or
 > `badly framed: …` if an option is missing or the question doesn't hold.
-
-**🔴 Merge phase 7:** review `git diff main...phase-7-claude` (or tell me to merge), then from this checkout:
-`git merge --no-ff phase-7-claude && git push`. The commands and the 3 places to look are in [run.md](run.md)
-("Delivery").
 
 **🔴 Delete the AWS policy `twelve-dollar-phase-7-score`:** in IAM, detach it from `jacob-cli`, then delete it under
 IAM → Policies. The session is over: both boxes terminated at about 10:00, `teardown.sh --verify` shows `TEARDOWN
@@ -91,7 +88,7 @@ step's choice backed by a measurement.
 **Decisions:** 106 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
 is a prediction we re-measure, not an answer.
 
-### Phase 7 scopes (delivered)
+### Phase 7 scopes (merged)
 
 Detail, seams, cases and the predictions in [details/phase-7.md](details/phase-7.md). One commit each, on branch
 `phase-7-claude` (D14). Scope 3 is the AWS session: it needs your go.
@@ -218,5 +215,5 @@ You don't need to read this part: it's the index of the execution details, in `d
 - [Phase 5b](details/phase-5b.md): the step lab's second run: scopes, seams, cases and the predictions.
 - [Phase 6](details/phase-6.md): the submission: scopes, seams, cases and the predictions.
 - [Phase 7](details/phase-7.md): the score on x86: scopes, seams, cases and the predictions.
-- [Phase 2's run](runs/phase-2/run.md), [phase 3's](runs/phase-3/run.md), [phase 4's](runs/phase-4/run.md), [phase 5a's](runs/phase-5a/run.md), [phase 5b's](runs/phase-5b/run.md) and [phase 6's](runs/phase-6/run.md): progress, reviews and retro, with
+- [Phase 2's run](runs/phase-2/run.md), [phase 3's](runs/phase-3/run.md), [phase 4's](runs/phase-4/run.md), [phase 5a's](runs/phase-5a/run.md), [phase 5b's](runs/phase-5b/run.md), [phase 6's](runs/phase-6/run.md) and [phase 7's](runs/phase-7/run.md): progress, reviews and retro, with
   their `state/`.
