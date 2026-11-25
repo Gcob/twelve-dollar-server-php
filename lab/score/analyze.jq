@@ -53,11 +53,17 @@ def cpu_total: .cpu_user + .cpu_nice + .cpu_system + .cpu_idle + .cpu_iowait + .
 def busy_share: ((.cur | cpu_total) - (.prev | cpu_total)) as $t
   | if $t <= 0 then null else 1 - (((.cur.cpu_idle - .prev.cpu_idle) + (.cur.cpu_iowait - .prev.cpu_iowait)) / $t) end;
 
+# A difference that is null when either side is unknown (a server.csv with no row, a cgroup that was gone).
+def diff($a; $b): if $a == null or $b == null then null else $a - $b end;
+# A one-second entry whose two rows both have the cgroup's CPU time (the columns are empty once the service's cgroup is gone).
+def has_cg: .prev.cg_usage_usec != null and .cur.cg_usage_usec != null;
+
 def window($rows; $s; $e): [$rows[] | select(.ts >= $s and .ts <= $e)];
 
 # --- inputs ------------------------------------------------------------------------------------------------------------------------
 (rest_rows($rest)) as $rest_rows
 | csv($server) as $srv
+| ([$srv[] | select(.cg_usage_usec != null)]) as $srv_cg
 | csv($loadbox) as $lb
 | $meta.users as $users
 | ([$rest_rows[] | select(.vus == $users)]) as $plat_rows
@@ -73,17 +79,17 @@ def window($rows; $s; $e): [$rows[] | select(.ts >= $s and .ts <= $e)];
 # --- the server, over the plateau and the whole run -----------------------------------------------------------------------------------
 | (seconds($srv)) as $srv_s
 | (if $pw then [$srv_s[] | select(.ts >= $pw.start and .ts <= $pw.end)] else [] end) as $srv_plat
-| (if $pw and ($srv | length) > 1 then at($srv; $pw.start; "cg_usage_usec") else null end) as $use_s
-| (if $pw and ($srv | length) > 1 then at($srv; $pw.end; "cg_usage_usec") else null end) as $use_e
+| (if $pw and ($srv_cg | length) > 1 then at($srv_cg; $pw.start; "cg_usage_usec") else null end) as $use_s
+| (if $pw and ($srv_cg | length) > 1 then at($srv_cg; $pw.end; "cg_usage_usec") else null end) as $use_e
 | (if $use_s != null and $use_e != null and $plateau_s > 0 then ($use_e - $use_s) / ($plateau_s * 1000000) else null end) as $service_share
-| ([$srv_plat[] | (.cur.cg_usage_usec - .prev.cg_usage_usec) / (.dt * 1000000)]) as $svc_seconds
+| ([$srv_plat[] | select(has_cg) | (.cur.cg_usage_usec - .prev.cg_usage_usec) / (.dt * 1000000)]) as $svc_seconds
 | (lines($server_end; "sampler_cpu_ms")[0] // null | if . == null then null else tonumber end) as $samp_ms
 | (lines($server_end; "sampler_wall_ms")[0] // null | if . == null then null else tonumber end) as $samp_wall
 | (if $samp_ms != null and ($samp_wall // 0) > 0 then $samp_ms / $samp_wall else null end) as $sampler_cores
 | ([$srv_plat[] | busy_share | select(. != null)]) as $busy_plat
 | ([$srv_plat[] as $s | ($s | busy_share) as $b
-    | (($s.cur.cg_usage_usec - $s.prev.cg_usage_usec) / ($s.dt * 1000000)) as $cores
-    | select($b != null and $nproc != null and $nproc > 0)
+    | (if $s | has_cg then (($s.cur.cg_usage_usec - $s.prev.cg_usage_usec) / ($s.dt * 1000000)) else null end) as $cores
+    | select($b != null and $cores != null and $nproc != null and $nproc > 0)
     | $b - ($cores + ($sampler_cores // 0)) / $nproc]) as $others
 | ([$srv_plat[] | (.cur.passive_opens - .prev.passive_opens) / .dt]) as $acc_plat
 | ([$srv_s[] | (.cur.passive_opens - .prev.passive_opens) / .dt]) as $acc_all
@@ -96,8 +102,9 @@ def window($rows; $s; $e): [$rows[] | select(.ts >= $s and .ts <= $e)];
 | (if (lines($server_start; "ena-unread") | length) > 0 or (lines($server_end; "ena-unread") | length) > 0 or ($ena_e | length) == 0 then null
    else ($ena_e | with_entries(.value -= ($ena_s[.key] // 0))) end) as $ena_diff
 | (if (lines($server_start; "oom-unread") | length) > 0 then null else (lines($server_start; "oom") | length) end) as $oom_s
-| (if (lines($server_end; "oom-unread") | length) > 0 then null else (lines($server_end; "oom") | length) end) as $oom_e
-| ($srv_last.listen_drops - $srv_first.listen_drops) as $drops
+# An end file that is missing or empty (the sampler died) says nothing: the OOM lines at the end are unknown, never 0.
+| (if ($server_end | test("\\S") | not) or (lines($server_end; "oom-unread") | length) > 0 then null else (lines($server_end; "oom") | length) end) as $oom_e
+| diff($srv_last.listen_drops; $srv_first.listen_drops) as $drops
 | ([$srv[].mem_available_kb | select(. != null)] | minn) as $avail_min
 
 # --- the load box --------------------------------------------------------------------------------------------------------------------
@@ -150,9 +157,9 @@ def window($rows; $s; $e): [$rows[] | select(.ts >= $s and .ts <= $e)];
       tcp_inuse_peak: ([$srv[].tcp_inuse | select(. != null)] | maxn),
       tcp_mem_peak: ([$srv[].tcp_mem | select(. != null)] | maxn),
       tcp_tw_peak: ([$srv[].tcp_tw | select(. != null)] | maxn),
-      listen_overflows: ($srv_last.listen_overflows - $srv_first.listen_overflows),
+      listen_overflows: diff($srv_last.listen_overflows; $srv_first.listen_overflows),
       listen_drops: $drops,
-      retrans_segs: ($srv_last.retrans_segs - $srv_first.retrans_segs),
+      retrans_segs: diff($srv_last.retrans_segs; $srv_first.retrans_segs),
       ena_allowance_diff: $ena_diff,
       oom_lines_start: $oom_s, oom_lines_end: $oom_e,
       fds_max: $fds_max,

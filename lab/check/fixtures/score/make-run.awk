@@ -7,7 +7,7 @@
 #   plateau: from second 5 to second 15, 10 s; plateau requests 10 * rate; service burns 10 * svc * 1,000,000 us on it;
 #   passive opens: 40 a second on the plateau (55 at second 9), 10 outside it, 90 at second 2.
 # Options (defaults): plateau=10 (its length in seconds) lbspikes=9 (the seconds, comma separated, where the load box is `lbspike` busy) users=100 rate=1000 svc=0.5 busy=0.6 lbbusy=0.3 lbspike=0.3 k6mib=200 avail=2000000 drops=0 fds=130 p95=120 p99=300
-# err=0 instant=0 (1: the users are there from the first second, and the first `early404` rows have no http_reqs metric, as in a 1-user run) early404=0 oom=0 (OOM lines at the end) ena=0 (growth of the ENA counter pps_allowance_exceeded) cavail=0 (change of the gauge conntrack_allowance_available, which is not a count of anything bad) sampler_ms=50 (the sampler's CPU time) svcspike=svc (cores burnt at the server rows `svcspikes`, comma separated, none by default: the plateau's mean and median second of the service's share can then differ).
+# err=0 instant=0 (1: the users are there from the first second, and the first `early404` rows have no http_reqs metric, as in a 1-user run) early404=0 oom=0 (OOM lines at the end) ena=0 (growth of the ENA counter pps_allowance_exceeded) cavail=0 (change of the gauge conntrack_allowance_available, which is not a count of anything bad) sampler_ms=50 (the sampler's CPU time) svcspike=svc (cores burnt at the server rows `svcspikes`, comma separated, none by default: the plateau's mean and median second of the service's share can then differ) nocg=-1 (from that second on, the server rows have no cgroup columns, as when the service's cgroup is gone and the sampler goes on) srvrows=1 (0: server.csv has its header and no row).
 function opt(name, def) { return (name in V) ? V[name] : def }
 BEGIN {
   n = split(opts, o, " ")
@@ -18,7 +18,7 @@ BEGIN {
   instant = opt("instant", 0) + 0; early404 = opt("early404", 0) + 0; oom = opt("oom", 0) + 0; ena = opt("ena", 0) + 0; cavail = opt("cavail", 0) + 0; sampler_ms = opt("sampler_ms", 50) + 0
   plateau = opt("plateau", 10) + 0
   ns = split(opt("lbspikes", "9"), sp, ","); for (i = 1; i <= ns; i++) SPIKE[sp[i] + 0] = 1
-  svcspike = opt("svcspike", svc) + 0
+  svcspike = opt("svcspike", svc) + 0; nocg = opt("nocg", -1) + 0; srvrows = opt("srvrows", 1) + 0
   ns = split(opt("svcspikes", ""), sp, ","); for (i = 1; i <= ns; i++) if (sp[i] != "") SVCSPIKE[sp[i] + 0] = 1
   t0 = 1700000000; ramp = 5; down = 3; rows = ramp + plateau + down
   rest = dir "/rest.tsv"; lb = dir "/loadbox.csv"; srv = dir "/server.csv"
@@ -48,7 +48,9 @@ BEGIN {
     if (i == 0) f = "11:100;12:90"
     if (i == 10) f = "11:120;12:" fds
     mc = 100000000 + i * 1000000
-    printf "%.3f,%d,0,0,%d,0,0,0,0,%d,%d,%d,%d,%d,%d,%d,%d,%d,0,0,%d,0,%d,%s\n", t0 + i + 0.4, su, si, use, mc, mc, mc / 2, avail, 10 * i, i, 2 * i, po, retr, dr, f >> srv
+    if (!srvrows) continue
+    if (nocg >= 0 && i >= nocg) printf "%.3f,%d,0,0,%d,0,0,0,0,,,,0,%d,%d,%d,%d,%d,0,0,%d,0,%d,\n", t0 + i + 0.4, su, si, avail, 10 * i, i, 2 * i, po, retr, dr >> srv
+    else printf "%.3f,%d,0,0,%d,0,0,0,0,%d,%d,%d,%d,%d,%d,%d,%d,%d,0,0,%d,0,%d,%s\n", t0 + i + 0.4, su, si, use, mc, mc, mc / 2, avail, 10 * i, i, 2 * i, po, retr, dr, f >> srv
   }
   print "nproc 2\nena bw_in_allowance_exceeded 5\nena pps_allowance_exceeded 7\nena conntrack_allowance_available 100000\noom Out of memory: Killed process 1 (old)" > (dir "/server-start.txt")
   print "nproc 2\nena bw_in_allowance_exceeded 5\nena pps_allowance_exceeded " (7 + ena) "\nena conntrack_allowance_available " (100000 + cavail) "\noom Out of memory: Killed process 1 (old)" > (dir "/server-end.txt")

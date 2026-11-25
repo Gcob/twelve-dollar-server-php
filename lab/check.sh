@@ -2641,6 +2641,12 @@ score_check_walls() {
   j="$(score_run svc=0.9 busy=0.9 ena=2 -- 99)" && score_expect "an ENA counter grown with the CPU at 90 %" "$j" '.wall' "network" || return 1
   j="$(score_run svc=0.9 busy=0.9 cavail=500 -- 99)" && score_expect "conntrack_allowance_available going up is a gauge, not a counter that grew: the wall is the CPU" "$j" '.wall' "cpu" || return 1
   j="$(score_run -- 0)" && score_expect "a passing run has no wall" "$j" '.wall' "null" || return 1
+  # The service's cgroup can disappear while the sampler goes on (a failed unit with Restart=no): the cgroup columns are empty from then on, the
+  # end file is there with the OOM lines. An OOM line new in the run names the wall; an end file that is missing is unknown, never zero.
+  j="$(score_run nocg=12 oom=1 -- 99 server-died.txt=died)" && score_expect "the cgroup gone at second 12 with an OOM line in the end file: memory" "$j" '[.wall, .service_died] | join(" ")' "memory true" || return 1
+  j="$(score_run nocg=12 -- 99 server-died.txt=died)" && score_expect "the cgroup gone at second 12, no OOM line: died" "$j" '.wall' "died" || return 1
+  j="$(score_run -- 99 server-died.txt=died server-end.txt=)" && score_expect "no end file (the sampler died with the service): the OOM lines and the ENA counters at the end are unknown, not zero" "$j" '.server | [.oom_lines_end, .ena_allowance_diff] | map(tostring) | join(" ")' "null null" || return 1
+  j="$(score_run srvrows=0 -- 99)" && score_expect "a server.csv with its header and no row: empty server numbers, no crash" "$j" '.server | [.listen_drops, .listen_overflows, .retrans_segs, .service_share, .us_per_req, .rows] | map(tostring) | join(" ")' "null null null null null 0" || return 1
 }
 
 # score_search <exits> [search.sh options]...: runs lab/score/search.sh against the fake controller and the fake k6 (lab/check/fixtures/score/),
@@ -2711,6 +2717,24 @@ score_check_search() {
     || { echo "a passing probe with k6 over the line is a valid pass: the search goes on and the hold at 71000 is the score (exit $SCORE_RC): $(score_runs) $(jq -c .end "$SCORE_OUT/search.json")"; return 1; }
 }
 
+# A run that is stopped after its server sampler started (Ctrl-C, a harness error) must stop that sampler: it was started with setsid on the
+# server box and would keep using the one CPU there for the next run. A run that ends normally stops it once.
+score_check_run_k6_cleanup() {
+  local fx="$LAB/check/fixtures/score" tmp pid i
+  tmp="$(mktemp -d)"
+  echo "0" >"$tmp/exits"
+  : >"$tmp/log"
+  FAKE_K6_SLEEP=4 FAKE_EXITS="$tmp/exits" FAKE_LOG="$tmp/log" SCORE_K6_COMMAND="bash $fx/fake-k6.sh" bash "$LAB/score/run-k6.sh" \
+    --base-url http://server.example:80 --ctl "bash $fx/fake-ctl.sh" --out "$tmp/run" --kind probe --users 100 --duration 20s >/dev/null 2>&1 &
+  pid=$!
+  for i in $(seq 1 50); do grep -q '^k6 ' "$tmp/log" && break; sleep 0.1; done
+  kill -TERM "$pid"
+  wait "$pid" 2>/dev/null || true
+  [ "$(grep -c '^ctl sample-start$' "$tmp/log")" = 1 ] && [ "$(grep -c '^ctl sample-stop$' "$tmp/log")" = 1 ] \
+    || { echo "a run stopped by a signal after sample-start must call sample-stop once: $(tr '\n' ' ' <"$tmp/log")"; rm -rf "$tmp"; return 1; }
+  rm -rf "$tmp"
+}
+
 # The refusals: a load.js with one byte changed, an --out that exists, a controller whose facts fail. Nothing runs, not even a restart.
 score_check_refusals() {
   local fx="$LAB/check/fixtures/score" tmp
@@ -2758,13 +2782,35 @@ score_check_sampler() {
   grep '^[0-9]*\.[0-9][0-9][0-9],' <<<"$out" | head -n 1 | grep -qE ',[0-9]+:[0-9]+$' || { echo "the first row has no open files of the process: $(grep '^[0-9]*\.' <<<"$out" | head -n 1)"; return 1; }
 }
 
+# The sampler goes on when the service's cgroup disappears (a failed unit with Restart=no: systemd removes the folder): the cgroup columns are
+# empty from then on, the process is still there at the stop, and server-end.txt is written, because the OOM lines it holds are what names the memory wall.
+score_check_sampler_cgroup_gone() {
+  local out
+  docker image inspect "$LAB_IMAGE:8.5" >/dev/null 2>&1 || { echo "image $LAB_IMAGE:8.5 is missing (run lab/build.sh 8.5)"; return 1; }
+  out="$(docker run --rm -v "$LAB:/lab:ro" "$LAB_IMAGE:8.5" bash -c '
+    mkdir -p /tmp/cg /tmp/s
+    printf "usage_usec 1000\n" >/tmp/cg/cpu.stat; echo 1000 >/tmp/cg/memory.current
+    bash /lab/score/server-sample.sh --cgroup /tmp/cg --pids-of "sleep 30" --out /tmp/s/server.csv >/tmp/s/stdout.txt 2>&1 &
+    pid=$!
+    sleep 4; rm -rf /tmp/cg; sleep 4
+    kill -0 $pid 2>/dev/null && echo "alive-after-removal"
+    kill -TERM $pid; wait $pid; echo "rc=$?"
+    [ -s /tmp/s/server-end.txt ] && echo "end-file"
+    awk -F, "NR > 1 && \$10 == \"\" { n++ } END { print \"empty-cgroup-rows \" n + 0 }" /tmp/s/server.csv' 2>&1)" || { echo "the cgroup-gone run failed: ${out//$'\n'/ | }"; return 1; }
+  grep -qx 'alive-after-removal' <<<"$out" && grep -qx 'rc=0' <<<"$out" && grep -qx 'end-file' <<<"$out" \
+    || { echo "the sampler must outlive the cgroup, stop with exit 0 and write server-end.txt: ${out//$'\n'/ | }"; return 1; }
+  [ "$(sed -n 's/^empty-cgroup-rows //p' <<<"$out")" -ge 2 ] || { echo "the rows after the removal must have an empty cgroup column, 2 or more: ${out//$'\n'/ | }"; return 1; }
+}
+
 check_score() {
   score_check_steps || return 1
   score_check_numbers || return 1
   score_check_walls || return 1
   score_check_search || return 1
   score_check_refusals || return 1
+  score_check_run_k6_cleanup || return 1
   score_check_sampler || return 1
+  score_check_sampler_cgroup_gone || return 1
 }
 
 # The boxes' scripts (lab/score/server-setup.sh, server-ctl.sh, ctl-ssh.sh, k6-setup.sh, php-gcob.service). Their first run was on AWS:

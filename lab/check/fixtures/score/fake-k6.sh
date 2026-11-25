@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Stands in for k6 and the samplers in lab/check.sh check_score (SCORE_K6_COMMAND of lab/score/run-k6.sh): called as
 # `fake-k6.sh <run dir> <users> <duration>`, it writes the sampler files of a made-up run (make-run.awk) and exits with the next code of
-# $FAKE_EXITS, a file of words, each `<exit>` or `<exit>/<option>+<option>` (options of make-run.awk, for that run). Logs the call to $FAKE_LOG.
+# $FAKE_EXITS, a file of words, each `<exit>` or `<exit>/<option>+<option>` (options of make-run.awk, for that run). Logs the call to $FAKE_LOG, and sleeps $FAKE_K6_SLEEP seconds first when that is set.
 set -euo pipefail
 dir="$1" users="$2"
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -11,5 +11,6 @@ code="${word%%/*}"
 opts=""
 [ "$word" = "$code" ] || opts="${word#*/}"
 echo "k6 $users $3" >>"$FAKE_LOG"
+[ -z "${FAKE_K6_SLEEP:-}" ] || sleep "$FAKE_K6_SLEEP"   # a run that takes a while, for a check that stops it midway
 awk -v "dir=$dir" -v "opts=users=$users ${opts//+/ }" -f "$here/make-run.awk"
 exit "$code"

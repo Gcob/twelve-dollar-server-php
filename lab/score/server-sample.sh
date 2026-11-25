@@ -14,7 +14,8 @@
 #   ts            epoch seconds with milliseconds, taken just after a whole second. The load box stamps its REST polls the same way, and both
 #                 boxes sync to Amazon Time Sync, so the plateau is matched to these rows by time, never by "the same second";
 #   cpu_*         /proc/stat's first line (user, nice, system, idle, iowait, irq, softirq, steal), as counters: the reader computes shares;
-#   cg_usage_usec the cgroup's cpu.stat usage_usec; mem_current, mem_peak (empty when the kernel has no memory.peak);
+#   cg_usage_usec the cgroup's cpu.stat usage_usec; mem_current, mem_peak (empty when the kernel has no memory.peak; all three empty once the
+#                 service's cgroup is gone: the sampler goes on, and still writes server-end.txt);
 #   rss_bytes     the processes' resident memory summed (/proc/<pid>/statm, the same number as VmRSS, read without parsing a status file);
 #   mem_available_kb, tcp_inuse, tcp_tw, tcp_mem (/proc/net/sockstat), passive_opens, active_opens, curr_estab, retrans_segs
 #   (/proc/net/snmp), listen_overflows, listen_drops (/proc/net/netstat);
@@ -166,14 +167,18 @@ open_fds() {
 # --- one row -----------------------------------------------------------------------------------------------------------------------
 row_no=0
 sample_row() {
-  local us ts cu cn cs ci cw cirq csirq cst usage mem_cur mem_peak="" rss=0 p pages avail="" k
+  local us ts cu cn cs ci cw cirq csirq cst usage="" mem_cur="" mem_peak="" rss=0 p pages avail="" k v
   local inuse="" tw="" tmem="" passive active estab retrans overflow drops
   us="${EPOCHREALTIME/./}"
   printf -v ts '%d.%03d' $((us / 1000000)) $(((us / 1000) % 1000))
   read -r _ cu cn cs ci cw cirq csirq cst _ </proc/stat
-  while read -r k usage _; do [ "$k" = usage_usec ] && break; done <"$cgroup/cpu.stat"
-  read -r mem_cur <"$cgroup/memory.current"
-  [ ! -r "$cgroup/memory.peak" ] || read -r mem_peak <"$cgroup/memory.peak" || true
+  # Why the guards: when the unit fails (Restart=no) systemd removes its cgroup, and the sampler must go on: it still has to write server-end.txt
+  # (the OOM lines that name the memory wall). The cgroup columns are empty from then on.
+  if [ -r "$cgroup/cpu.stat" ]; then
+    while read -r k v _; do [ "$k" = usage_usec ] && { usage="$v"; break; }; done <"$cgroup/cpu.stat" || true
+  fi
+  [ ! -r "$cgroup/memory.current" ] || read -r mem_cur <"$cgroup/memory.current" || mem_cur=""
+  [ ! -r "$cgroup/memory.peak" ] || read -r mem_peak <"$cgroup/memory.peak" || mem_peak=""
   for p in "${PIDS[@]-}"; do
     [ -n "$p" ] || continue
     read -r _ pages _ <"/proc/$p/statm" 2>/dev/null || continue

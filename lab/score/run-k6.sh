@@ -73,8 +73,10 @@ harness_error() {
   exit 1
 }
 
-sampler_pid=""
+sampler_pid="" server_sampling=0
 cleanup() {
+  # Why: the server box's sampler was started detached (setsid): a harness error or a signal after sample-start would leave it running there.
+  if [ "$server_sampling" = 1 ]; then server_sampling=0; "${CTL[@]}" sample-stop "$out" >/dev/null 2>&1 || true; fi
   touch "$out/.stop"
   docker rm -f "$K6C" "$SAMPLER" >/dev/null 2>&1 || true
   [ -z "$sampler_pid" ] || kill "$sampler_pid" 2>/dev/null || true
@@ -108,6 +110,7 @@ k6_started_epoch() {
 
 healthy="$("${CTL[@]}" restart | tail -n 1)" || harness_error "restart failed"
 [[ "$healthy" =~ ^[0-9]+$ ]] || harness_error "restart printed '$healthy' as its last line, expected the healthy seconds"
+server_sampling=1
 "${CTL[@]}" sample-start "$out" || harness_error "sample-start failed"
 
 k6_exit=0
@@ -144,6 +147,7 @@ else
   docker rm -f "$K6C" "$SAMPLER" >/dev/null 2>&1 || true
 fi
 
+server_sampling=0
 "${CTL[@]}" sample-stop "$out" || harness_error "sample-stop failed"
 score_run_json "$out" "$kind" "$users" "$duration_s" "$k6_exit" "$healthy" "$started" "$layout" >"$out/run.json.tmp" || harness_error "the analysis of the run's samples failed"
 mv "$out/run.json.tmp" "$out/run.json"
