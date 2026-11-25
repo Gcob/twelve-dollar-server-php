@@ -485,15 +485,18 @@
   (a key made on the load box); the Mac launches, sets up, starts it and copies results back. Each probe: the service
   stopped, a fresh seed copy, started, `/health` within 60 s, the server's sampler, k6, the sampler stopped. k6 is the
   lab's pinned image (`grafana/k6:1.8.3`) on the host network, on `load.js` checked by its git blob hash against the
-  challenge's `162699a`, with only `-e BASE_URL -e VUS -e DURATION` for the script and `--local-ips`,
-  `--summary-export`, `--address` for k6. k6's REST API, polled once a second, gives the plateau's window and request
+  challenge's `162699a`, with only `-e BASE_URL -e VUS -e DURATION -e TOKENS` for the script (`TOKENS`, an input the script documents,
+  points at the seed's `tokens.json`: `lab/seed.sh` writes it to `lab/data/`, not to the clone's `seed/` where the
+  script's default looks, plan review item 1) and `--local-ips`, `--summary-export`, `--address` for k6. k6's REST API, polled once a second, gives the plateau's window and request
   count; µs/req = the service's CPU over the plateau / its requests. Exit 0 passes, 99 fails, anything else stops the
   search (project manager, phase 7, 2026-11-24).
-- **D93:** the load box is an `m5.4xlarge`, not a `c5.4xlarge`: at the lab's 0.343 MiB a VU, the `c5.4xlarge`'s 32
+- **D93:** the load box is sized from k6's measured memory a VU, not the `c5.4xlarge` as named: at the lab's 0.343 MiB a VU, the `c5.4xlarge`'s 32
   GiB holds about 85,000 VUs, and on AWS the server's core is about 1.57 times faster per request than the bench's, so
   its CPU wall sits near 125,000 to 140,000 users; k6 would be the wall first. The `m5.4xlarge` has the same 16 vCPUs and
-  64 GiB (about 170,000 VUs). Scope 1 measures k6's memory a VU with the real `load.js`; under 0.18 MiB, back to the
-  `c5.4xlarge` ([Q20](plan.md), coded; project manager, phase 7, 2026-11-24).
+  64 GiB (about 170,000 VUs). Scope 1 measures k6's memory a VU with the real `load.js`, and the type follows from it before the policy is
+  attached: the box must hold 160,000 VUs under 90 % of its memory. At most 0.16 MiB a VU: the `c5.4xlarge`; up to 0.33:
+  the `m5.4xlarge`; above: an `r5.4xlarge` (16 vCPUs, 128 GiB). The policy names only the type chosen (plan review
+  item 6; [Q20](plan.md), coded; project manager, phase 7, 2026-11-24).
 - **D94:** the load box gets 3 secondary private addresses (4 in all) and its ephemeral range at 1,024 to 65,535, about
   258,000 connections to the server's one `address:80`; one address at Ubuntu's default range caps k6 at 28,232.
   Rule 11 binds the server box, which keeps Ubuntu's defaults (project manager, phase 7, 2026-11-24).
@@ -503,17 +506,49 @@
   lines at start and end; the load box's CPU and k6's memory. The first failing probe's wall is the first that holds:
   k6 (load box over 85 % CPU or 90 % memory: the probe is void), memory (OOM, service gone, `MemAvailable` under 100
   MiB), network (an ENA counter grew), fds (`ListenDrops` grew, or dial errors with a process within 100 fds of
-  65,535), CPU (over 88 % busy on the plateau's median second), else latency below saturation, then looked into
-  (project manager, phase 7, 2026-11-24).
-- **D96:** phase 7's score is "AWS, our run", the number "Done when" reads. Next to it, when the wall is the CPU, a
-  bench estimate through 5a's Xeon-to-bench factor (AWS users / 1.57, 1.50 to 1.63), said as an estimate, with the
-  measured differences: CPU model, one core with no sibling, the RTT, the kernel, the disk's `fsync`, the ENA
-  allowances (project manager, phase 7, 2026-11-24).
+  65,535), CPU (the service's own share of the core, from its cgroup, over 88 % on the plateau's median second), else latency
+  below saturation, then looked into. The sampler also records "others" (the box busy minus the service minus the
+  sampler): a plateau where others pass 5 % of the core is run again once (Ubuntu's first-boot jobs, plan review item
+  10). The fd count is the size of `/proc/<pid>/fd` (one `stat`, Linux 6.2 and later), not a listing (project
+  manager, phase 7, 2026-11-24).
+- **D96:** phase 7's score is "AWS, our run", the number "Done when" reads, and the bench estimate is written apart
+  from it, never as the pass mark: when the wall is the CPU, AWS users / 1.57 (1.50 to 1.63, estimated from the two
+  Swoole entries), said as an estimate, "beats 71,000 or not". The factor applies as measured only when the box's CPU is
+  the calibration's Xeon Platinum 8275CL; another model is said. The bench machine named is the leaderboard's:
+  a Synteq 1 vCPU / 2 GB VPS (Xeon Platinum 8260 at 2.4 GHz, kernel 6.8, 1,967 MB, `LEADERBOARD.md`), rule 8's
+  droplet only as the shape; a DigitalOcean droplet is about twice as slow, so D89's "most faithful" alternative
+  wasn't. The measured differences sit next to it: CPU model, one core with no sibling, the RTT, the kernel, the disk's
+  `fsync`, EC2's connection tracking (plan review items 7, 8, 19, 25; project manager, phase 7, 2026-11-24).
 - **D97:** the search's arithmetic: 5 % up rounded to the nearest 1,000 (71,000, 75,000, 79,000, 83,000…); the holds
   start at the highest passing probe (67,000 if 71,000 fails), each 5 % under the last, rounded, 6 at most; a void
-  probe ends the search ("at least N, bound by k6"), no third instance type; 60 s between k6 runs; both boxes shut down
-  on their own after 4 hours; no placement-group capacity: one retry after 2 minutes, then the same subnet without the
-  group, the RTT measured and said (project manager, phase 7, 2026-11-24).
+  probe ends the search ("at least N, bound by k6") and a 🔴 offers Jacob one relaunch of the load box on a bigger
+  type (D89 allows it; the policy holds one load type, so it needs his go); 60 s between k6 runs; both boxes shut down
+  on their own after 4 hours; the server box re-arms its cap after the `mem=` reboot; no placement-group capacity: one retry after 2
+  minutes, then the box that failed goes alone in the same subnet, outside the group, the RTT measured and said; a
+  `--round` flag sets the rounding (1,000 here, smaller in the local smoke) (plan review items 5, 12, 13, 16; project
+  manager, phase 7, 2026-11-24).
+
+- **D98:** the AWS session's order and who feeds whom: launch; `k6-setup.sh` on the load box (Docker, k6, the clone,
+  `lab/seed.sh` with its content hash, an SSH key); the Mac installs that key on the server box; `server-setup.sh
+  --shape` (the `mem=` reboot); the load box pushes the seed to the server box over the private network; `server-setup.sh`
+  (cloud-init done and the dpkg lock free first, then the install). The challenge's 42 checks run from the load box
+  against the server's private address (`test.sh` needs `jq` and `curl`, which stay off the server box: D91). Plan
+  review items 2 and 10 (project manager, phase 7, 2026-11-24).
+- **D99:** the load box runs with no connection tracking: Docker starts with `"iptables": false` (k6 on the host
+  network needs no NAT), and `k6-setup.sh --check` prints `nf_conntrack` not loaded. If something loads it anyway,
+  `nf_conntrack_max` goes to 1,048,576 and the driver samples `nf_conntrack_count` with a "table full" line as a void
+  reason. Docker's own table (262,144 entries, 120 s per closed flow) would fill above about 128,000 users (plan review
+  item 3; project manager, phase 7, 2026-11-24).
+- **D100:** EC2's security groups track each connection on the network card, a limit the bench box doesn't have. After
+  launch both boxes' `conntrack_allowance_available` is read (`ethtool -S`), and the load box's ENA counters are
+  sampled too. If the server's allowance is under 220,000 (1.5 times the search's top), port 80 opens to `0.0.0.0/0`
+  on the server's group (an untracked flow) only with Jacob's yes ([Q22](plan.md)); without it, the session runs
+  tracked and names the table if it binds (plan review item 4; project manager, phase 7, 2026-11-24).
+- **D101:** the public guard learns AWS's traces: IPv4 addresses (except `127.*`, `0.0.0.0` and the documentation
+  ranges), `ip-N-N-N-N` host names, AWS ids (`i-`, `sg-`, `vol-`, `eni-`, `ami-`, `subnet-`, `vpc-`, `pg-`, `key-`
+  followed by hex) and 12-digit account ids, each with a fixture; the summaries write "the server" and "4 source
+  addresses" instead of values. Phase 8 reuses the boxes, so the guard, not a per-folder check (plan review item 9;
+  project manager, phase 7, 2026-11-24).
 
 ## History
 

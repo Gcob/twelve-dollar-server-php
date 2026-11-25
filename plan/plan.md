@@ -2,12 +2,15 @@
 
 **Status:** 🔵 Phase 7 running (the score on x86, [details/phase-7.md](details/phase-7.md)): plan written, scopes 1 and 2 (no AWS) next; AWS waits for your go · approved on 2026-11-21 · snapshot 2026-11-21-0920 ·
 **Round:** 7
-**Since your last read:** phase 7 is planned from your two choices (D89 machines, D90 search). Four scopes: the
-search driver with a local smoke, the two boxes' setup scripts, the AWS session itself, one labelled line in the
-submission's README. One change to your shape, as a question: the load box an `m5.4xlarge` (64 GiB), because on AWS the
-server's core is about 1.57 times faster per request than the bench's, so the search should reach 125,000 to 140,000
-VUs, past a `c5.4xlarge`'s memory (Q20, D93). Nothing is created on AWS before your go: the 🔴 comes once the scripts
-are ready. Phase 6's delivery and retro: [runs/phase-6/run.md](runs/phase-6/run.md).
+**Since your last read:** phase 7 is planned from your two choices (D89 machines, D90 search), and its plan review
+is settled (D92 to D101). Four scopes: the search driver with a local smoke, the two boxes' setup scripts, the AWS
+session itself, one labelled paragraph in the submission's README. Two changes to your shape: the vCPU is turned off
+through EC2's CPU options at launch rather than taken offline after boot (same core, D91); and the load box's type comes
+from k6's memory per VU, measured in scope 1 (Q20, D93), because on AWS the search should reach about 140,000 VUs, past a
+`c5.4xlarge`'s memory. One question needs you before the session: Q22, opening port 80 to the internet for the session
+if EC2's connection tracking would be the wall. The review also found the bench box is a Synteq VPS (Xeon 8260), not a
+DigitalOcean droplet (`LEADERBOARD.md`): the score is compared with it (D96). Nothing is created on AWS before your go:
+the 🔴 comes once scopes 1 and 2 are ready.
 **Project:** this repo, `plan/` · **Submission:** `submissions/php-Gcob/` (D80) · **Jira:** none
 
 ## 👉 Your turn
@@ -69,20 +72,21 @@ would have stayed a one-sided bias of about -0.2 µs with a floor near 0.27 (`la
 
 **Answer:**
 
-### Q20/21 [run, machines] : the load box an `m5.4xlarge` (64 GiB) instead of the `c5.4xlarge` (32 GiB)?
+### Q20/22 [run, machines] : the load box's type from k6's measured memory per VU, not the `c5.4xlarge` as named?
 
 The lab measured k6 at 0.343 MiB a VU. On AWS the server's core costs about 1.57 times less per request than the
-bench's VM (5a's calibration), so its CPU wall should sit near 125,000 to 140,000 users, not the bench's 83,000 to
-88,000. A `c5.4xlarge` holds about 85,000 VUs: k6 would be the wall, and the search would end "at least 85,000, bound
-by k6".
+bench box (5a's calibration), so its CPU wall should sit near 125,000 to 140,000 users, not the bench's 83,000 to
+88,000. A `c5.4xlarge` (32 GiB) holds about 85,000 VUs: k6 would be the wall, and the search would end "at least
+85,000, bound by k6".
 
-**Question:** should the load box be an `m5.4xlarge` (same 16 vCPUs, 64 GiB) so the search can reach the server's own
-wall?
+**Question:** should the load box be sized to hold 160,000 VUs at the memory per VU scope 1 measures with the real
+`load.js`?
 
-- **A.** `m5.4xlarge`: about 170,000 VUs.
+- **A.** Sized from the measure: up to 0.16 MiB a VU the `c5.4xlarge`, up to 0.33 an `m5.4xlarge` (64 GiB), above an
+  `r5.4xlarge` (128 GiB); all three have 16 vCPUs. The policy names only the type chosen.
   **Aims at:** the server's real wall, measured.
   **For:** the search ends on the server, not on k6; same core count as the bench's 16-core generators.
-  **Against:** about 10 to 15 % more an hour for the load box (a few tens of cents for the session).
+  **Against:** 10 to 40 % more an hour for the load box than a `c5.4xlarge` (cents to a dollar for the session).
 - **B.** `c5.4xlarge`, as you named it.
   **Aims at:** the cheapest box that holds the bench's forecast.
   **For:** your shape unchanged. **Against:** the search likely stops near 85,000 on k6, and the server's wall stays
@@ -90,16 +94,17 @@ wall?
 
 **Confidence:** A 80 % · B 20 %
 
-**Recommendation:** A.
+**Recommendation:** A, because the session exists to find the server's wall, and k6's memory decides whether a
+`c5.4xlarge` can reach it.
 
-**Flips if:** scope 1 measures k6 under 0.18 MiB a VU with the real `load.js` (then the `c5.4xlarge` holds 170,000).
+**Flips if:** you'd rather keep the cost lowest and accept "at least 85,000, bound by k6".
 
-**Meanwhile:** coded as A (D93): the policy allows `c5.large` and `m5.4xlarge`; B is one line in the policy and in
-`launch.sh`.
+**Meanwhile:** coded as A (D93): the policy holds `c5.large` and the type scope 1's measure picks, before you attach
+it; B is one line in the policy and in `launch.sh`.
 
 **Answer:**
 
-### Q21/21 [run, submission] : one labelled paragraph with our AWS score in the submission's README?
+### Q21/22 [run, submission] : one labelled paragraph with our AWS score in the submission's README?
 
 Phase 6 kept "Results: not scored yet": an estimate in the PR's README reads as a claim. Phase 7 gives a measured
 number, but on AWS, not on the bench's droplet.
@@ -107,7 +112,8 @@ number, but on AWS, not on the bench's droplet.
 **Question:** should the submission's README state our own AWS run, labelled as not the bench's score?
 
 - **A.** One paragraph in "Results": our own run on AWS, the boxes, the users held 5 minutes, the wall, that the AWS
-  core costs about 1.5 times less per request than the bench's VM measured, a link to the results folder. No bench
+  core costs about 1.5 times less per request than the bench box (estimated from two entries), a link to the results
+  folder. No bench
   estimate as a claim.
   **Aims at:** a reviewer sees what we measured and how.
   **For:** honest data, linked; Arjay sees we ran his `load.js` unchanged. **Against:** a number in the PR that isn't
@@ -118,11 +124,40 @@ number, but on AWS, not on the bench's droplet.
 
 **Confidence:** A 60 % · B 40 %
 
-**Recommendation:** A.
+**Recommendation:** A, because the number is measured with Arjay's own script and says what it is.
 
 **Flips if:** you'd rather the PR state nothing Arjay hasn't measured himself.
 
 **Meanwhile:** coded as A in scope 4 (no `FIXME` in the README: it's the PR's text; B is one paragraph removed).
+
+**Answer:**
+
+### Q22/22 [aws, network] : open port 80 to the internet for the session, if EC2's connection tracking would be the wall?
+
+EC2's security groups track each connection in the network card. With the session's rules (SSH from your address,
+all TCP between the two boxes), every k6 connection is tracked, and a `c5.large`'s limit isn't published; the bench
+box has no such table. If it runs out, the search ends on a wall only AWS has. AWS stops tracking a flow when the rule
+allows it from `0.0.0.0/0`.
+
+**Question:** if the server box's `conntrack_allowance_available`, read right after launch, is under 220,000 (1.5 times
+the search's top), may port 80 on the server's security group open to `0.0.0.0/0` for the session?
+
+- **A.** Yes, only in that case: measured first, opened only if the number says so, closed with the group at teardown.
+  **Aims at:** the server's own wall, not AWS's table.
+  **For:** opens nothing unless needed. **Against:** the submission answers the internet for up to 3 hours (scanners
+  add a few requests to the measurement).
+- **B.** No: everything stays tracked, and the table is named as the wall if it binds.
+  **Aims at:** no port open to the internet.
+  **For:** nothing exposed. **Against:** the search may end on AWS's table, and the server's wall stays unmeasured.
+
+**Confidence:** A 65 % · B 35 %
+
+**Recommendation:** A, because it opens the port only when the measured allowance would otherwise decide the score.
+
+**Flips if:** you'd rather never expose a port of your account to the internet.
+
+**Meanwhile:** coded as B until you answer (D100): opening a port to the internet needs your yes. The allowance is
+read and sampled either way.
 
 **Answer:**
 
@@ -160,7 +195,7 @@ step's choice backed by a measurement.
 | 8 | Ring (D76, D84) | First a screen of off-the-shelf io_uring (Swoole's `uring_socket`, an audit of ext-mrloop); then, unless one wins, an io_uring loop in pure PHP through FFI to `liburing-ffi`; a SQLite built with PGO, the single-post plan checked | Each lever's µs/req against phase 7's; a new score if they win |
 | 9 | Submit          | The PR to the challenge repo                                | CI green                                                |
 
-**Decisions:** 97 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
+**Decisions:** 101 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
 is a prediction we re-measure, not an answer.
 
 ### Phase 7 scopes (running)
