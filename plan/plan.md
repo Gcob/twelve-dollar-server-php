@@ -1,18 +1,23 @@
 # $12 server challenge in PHP
 
-**Status:** 🔵 Phase 6 running (the submission, `submissions/php-Gcob/`): scopes 1 to 3 done, both reviews' fixes in, scope 4 measuring on the quiet VM · approved on 2026-11-21 · snapshot 2026-11-21-0920 ·
+**Status:** 🏁 Phase 6 delivered (the submission, `submissions/php-Gcob/`), branch `phase-6-claude` at `e5a9fde`, to review and merge · approved on 2026-11-21 · snapshot 2026-11-21-0920 ·
 **Round:** 6
-**Since your last read:** phase 6 is planned in [details/phase-6.md](details/phase-6.md): 4 scopes (the clean copy, the
-install in a clean Ubuntu container, the README and its rules audit, one parity pair), your three choices recorded as
-D78 to D80, and D81 to D83 (the install's prefix and flags, how the container emulates the bench's `deploy`, the
-parity pair). Scope 4 needs a quiet Docker VM: a 🔴 item will ask for it. Earlier: phase 5b merged (`c19fb66`), S1-b
-chosen (D77); its delivery in [runs/phase-5b/run.md](runs/phase-5b/run.md) ("Delivery").
+**Since your last read:** phase 6 is delivered. `submissions/php-Gcob/` passes the challenge's `test/run.sh` 42/42 in
+a clean `ubuntu:24.04` as `deploy` on port 80 (1 CPU, 2 GiB, `nofile` 65535, only `CAP_NET_BIND_SERVICE`) and in a copy
+of the challenge's CI runner (D85); `install.sh` builds PHP 8.5.13 in about 4 minutes on one arm64 core. The copy shows
+no difference the step lab detects against the lab's server at 12,000 req/s (D88; at 24,000 the pairs couldn't
+decide). The blind review found one real bug, fixed: a new post whose commit failed still answered 201 (D87). Both
+final reviews OK. Delivery, merge command and retro in [run.md](run.md) ("Delivery").
 **Project:** this repo, `plan/` · **Submission:** `submissions/php-Gcob/` (D80) · **Jira:** none
 
 ## 👉 Your turn
 
 > **Answer freely:** a letter or `ok`, your own choice (`other: …`), `?` if it's unclear, or
 > `badly framed: …` if an option is missing or the question doesn't hold.
+
+**🔴 Review and merge phase 6** (`phase-6-claude`, 9 commits): the merge command is in [run.md](run.md), "Delivery";
+or say "merge it" and the project manager runs it. The README's links go to `main` on GitHub: they 404 until the
+merge. Phase 7 (the score on x86) needs your go for AWS.
 
 **🟠 Delete the AWS policy `twelve-dollar-x86-calibration`** (detach it from your CLI user, then delete it): scope 9
 is done and `teardown.sh --verify` shows nothing tagged left (only the terminated instance).
@@ -105,7 +110,7 @@ step's choice backed by a measurement.
 **Decisions:** 88 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
 is a prediction we re-measure, not an answer.
 
-### Phase 6 scopes (running)
+### Phase 6 scopes (delivered, to merge)
 
 Detail, seams, cases and the predictions in [details/phase-6.md](details/phase-6.md). One commit each, on branch
 `phase-6-claude` (D14). Scope 4 measures, so it needs a quiet Docker VM (D15).
@@ -115,7 +120,7 @@ Detail, seams, cases and the predictions in [details/phase-6.md](details/phase-6
 | 1 | `feat(submission): php-Gcob, the chosen variants in a clean copy`         | 42/42 in the lab's image with no switch; 2 workers, soft limit 64,000, `mmap` off; `check_submission` green (D79) |
 | 2 | `feat(submission): install.sh builds PHP 8.5 and its extensions from pinned sources` | `lab/submission-test.sh`: clean `ubuntu:24.04`, `install.sh` as root, `test/run.sh` 42/42 as `deploy` on port 80, `nofile` 65535, healthy under 60 s; `--ci` the same on a runner-like box (D78, D81, D82, D85) |
 | 3 | `docs(submission): the README and the rules audit`                       | the table, direct, the optimizations with their numbers and links, rules 5, 6, 7, 10, 11 audited; links resolve; the guard passes |
-| 4 | `docs(lab): the submission against the lab, one pair`                    | one pair at 24,000 req/s within the floor (0.864 µs/req), read two-sided, or the reason found (D83, D86); 3 pairs at 12,000 if 24,000 can't decide (D88) |
+| 4 | `docs(lab): the submission against the lab, one pair`                    | done at 12,000 req/s (D88): +0.17, +1.49, −0.87 µs/req, parity both ways; 24,000 couldn't decide |
 
 ### Phase 5b scopes (merged, 8 skipped)
 
