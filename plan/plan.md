@@ -22,7 +22,35 @@ the 🔴 comes once scopes 1 and 2 are ready.
 IAM → Policies. The session is over: both boxes terminated at about 10:00, `teardown.sh --verify` shows `TEARDOWN
 CLEAN` (only `terminated` instances; no placement group, security group with its port 80 rule, key pair or volume left).
 
-No open question.
+### Q23/23 [run, score] : a second AWS session to find the ceiling above 135,000, or leave it for phase 8?
+
+The session held 135,000 users for 5 minutes. 142,000 failed three times: once on EC2's connection table (port 80
+still closed then), twice with the load box's k6 spiking on its garbage collector (void by D105), the service at 85 to
+86 % of its core, just under the 88 % CPU line. So the server's own ceiling is somewhere between 135,000 and about
+145,000, not named.
+
+**Question:** should a second AWS session find that ceiling now, or does phase 8 find it with its own score run?
+
+- **A.** Leave it for phase 8: its score session runs the ring against today's 135,000, with a load box that doesn't
+  bind (two load boxes, or one with more cores), and names the ceiling of both servers then.
+  **Aims at:** one AWS session for two answers.
+  **For:** no AWS now; 135,000 already beats 71,000 by far. **Against:** phase 8 starts from "at least 135,000".
+- **B.** A short session now: the same server box, two load boxes (or a 36-vCPU one), probes 135,000, 139,000,
+  142,000, 146,000, then a hold.
+  **Aims at:** the ceiling of today's submission, named.
+  **For:** phase 8 compares against a named wall. **Against:** about 1 to 2 hours, a few USD, your go and the policy
+  again (a third instance type).
+
+**Confidence:** A 70 % · B 30 %
+
+**Recommendation:** A, because phase 8 needs an AWS session anyway and a load box that doesn't bind, and nothing in
+phase 7's Done when waits on the ceiling.
+
+**Flips if:** you want the submission's own ceiling named before the PR (phase 9), whatever phase 8 does.
+
+**Meanwhile:** nothing waits on it; phase 7 delivers with "at least 135,000".
+
+**Answer:**
 
 ---
 
@@ -58,7 +86,7 @@ step's choice backed by a measurement.
 | 8 | Ring (D76, D84) | First a screen of off-the-shelf io_uring (Swoole's `uring_socket`, an audit of ext-mrloop); then, unless one wins, an io_uring loop in pure PHP through FFI to `liburing-ffi`; a SQLite built with PGO, the single-post plan checked | Each lever's µs/req against phase 7's; a new score if they win |
 | 9 | Submit          | The PR to the challenge repo                                | CI green                                                |
 
-**Decisions:** 105 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
+**Decisions:** 106 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
 is a prediction we re-measure, not an answer.
 
 ### Phase 7 scopes (running)

@@ -576,6 +576,13 @@
   service at 75 % of the core); the session goes on by hand from 135,000, with the driver fixed after the teardown
   (project manager, phase 7, 2026-11-25 09:30).
 
+- **D106:** the bench estimate stays in the results, CPU-scaled and labelled so: 135,000 / 1.57 ≈ 86,000 (83,000 to
+  90,000). D96 asked for it when the wall is the CPU; here the wall above 135,000 is not cleanly named (the service at
+  83 % in the hold, 85 to 86 % in the void 142,000 runs, the CPU line at 88 %), so the README says the estimate scales
+  the CPU cost only and that whether the bench reads above or below it is not known, never "conservative". The
+  submission's README still gives no bench number (D103). Phase 7's Done when is met on the AWS number (pr-reviewer pass
+  1, plan item 2; project manager, phase 7, 2026-11-25).
+
 ## History
 
 Nothing yet.
