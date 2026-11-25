@@ -43,7 +43,7 @@ Every call: `--image 8.5 --think-scale 0.02 --idle 60000 --seconds 60`, the warm
 2. **Rounds 2 and 3 at 24,000 req/s, `series-more.txt`:** the same flags with `--pairs 2 --first-round 2`, into the same folder, recorded in `stages-more.json`
    (the driver wrote it as `stages.json` and it was renamed, so that round 1's record stays).
 3. **Three pairs at 12,000 req/s, `series-12000.txt`:** series `parity-12000`, `--rate 12000 --pairs 3 --floor-from lab/results/2026-11-23-s1-fd-wall/aa-12000`, the rate of 5b's S1-b pairs, recorded
-   in `stages-12000.json`. Its floor, 0.516 µs/req, is the A/A of the S1 series at 12,000 req/s: one process, like the 24,000 req/s floor.
+   in `stages-12000.json`. Its floor, 0.516 µs/req, is the A/A of the S1 series at 12,000 req/s: one process, like the 24,000 req/s floor, and with `APP_TELEMETRY=1` (the pairs here run with telemetry off). That series' own README gives 1.432 µs/req for the same A/A, by the older rule it used; 0.516 is today's rule read from the same JSONs. The conclusion holds under both.
 
 Each series is read two ways. The two-sided reading: the absolute value of the median paired difference (`sub - lab`) against the floor; under it, no difference the floor can see. The step lab's
 own rule: outside the floor when every paired difference has the same sign and the median is at least the floor in absolute value; otherwise within it. The step lab's one-pair screen is one-sided.
@@ -218,7 +218,7 @@ Rule: a variant is beyond the noise when it has at least 2 pairs, every paired d
 
 **The decision is read at 12,000 req/s: no difference the step lab detects between the submission's copy and the lab's server with the same configuration.** Three pairs, all six runs valid
 (0 other containers, 60,000 idle connections held to the end) and all six over the 97 % rule (98.9 to 99.2 % of the offered rate). The paired differences `sub - lab` are +0.167, +1.491 and -0.865 µs/req.
-The median is +0.167, under the floor of 0.516 (the S1 series' A/A at 12,000 req/s, one process); the signs differ. Both readings say the same: the two-sided one (the median under the floor) and the
+The median is +0.167, under the floor of 0.516 (the S1 series' A/A at 12,000 req/s: one process, telemetry on; 1.432 by that series' older rule, and 0.167 is under both); the signs differ. Both readings say the same: the two-sided one (the median under the floor) and the
 step lab's own rule ("within the noise"). The medians of each side are 31.78 µs/req (`lab`) and 31.94 (`sub`). The copy is the lab's twin as far as this instrument can see; it does not say the difference is zero:
 two of the three pairs are over the floor on their own (+1.491 and -0.865, opposite ways), a spread of 2.36 µs against 1.9 for the A/A's five.
 
@@ -238,7 +238,7 @@ would not read -4.254. The gap hypothesis (a run that starts on the previous run
 and load 2.69 to 3.55, and none read an outlier (31.30 to 32.79); the first, `sub-1`, started at 36 and 1.07 and read 31.94.
 
 **What comes from the harness in `sub`'s JSON.** `soft_limit` 64000 and the VU cap 12,685 (bound by k6 memory) are read from the `APP_SOFT_CONN_LIMIT=64000` hint, identical in
-the twelve JSONs; the copy itself reads no environment variable. The cost per request is higher at 12,000 req/s than at 24,000 (31.8 against 29.7 for `lab`), the way 5b read it (a request costs more at a lower rate).
+the twelve JSONs; the copy itself reads no environment variable. At 24,000 req/s the cost per request read lower (29.7 for `lab` against 31.8 at 12,000), the way 5b saw a request cost more at a lower rate; the 24,000 runs all missed the 97 % rule, so this comparison is soft.
 
 **The measured code.** The 24,000 req/s pairs ran at `51ce9f8`, which includes the fix that steps a new post's insert to its end before the 201, so the copy measured commits before it answers;
 the 12,000 req/s pairs ran at `13bfc92`, the same server code.
