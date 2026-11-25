@@ -234,6 +234,26 @@ check_public_guard_catches_leak() {
   fi
 }
 
+# AWS's traces: a private address, an `ip-N-N-N-N` host name, an id of each kind (8 or 17 hex digits) and a 12-digit account id are refused; the
+# addresses that name no box (loopback, 0.0.0.0, the documentation ranges), version numbers and shorter ids pass. Built at run time, or the
+# tree scan would flag these lines.
+check_public_guard_catches_aws_traces() {
+  local guard="$REPO/tools/public-guard.sh" sample kind hex8=deadbeef hex17=0abc123def4567890 dot=. dash=-
+  for sample in "10${dot}0${dot}12${dot}34" "172${dot}31${dot}0${dot}9" "3${dot}98${dot}91${dot}79" "listening on 192${dot}168${dot}1${dot}20:80" "ip${dash}10${dash}0${dash}12${dash}34" "ip${dash}10${dash}0${dash}12${dash}34.ca-central-1.compute.internal" \
+    "account $(printf '%s' 1234 5678 9012)" "arn:aws:iam::$(printf '%s' 1234 5678 9012):user/x"; do
+    if printf '%s\n' "$sample" | bash "$guard" stdin >/dev/null 2>&1; then echo "the guard let '$sample' through"; return 1; fi
+  done
+  for kind in i sg vol eni ami subnet vpc pg key; do
+    for sample in "$kind-$hex8" "$kind-$hex17" "(group $kind-$hex17)" "--id $kind-$hex8."; do
+      if printf '%s\n' "$sample" | bash "$guard" stdin >/dev/null 2>&1; then echo "the guard let '$sample' through"; return 1; fi
+    done
+  done
+  for sample in "listening on 127${dot}0${dot}0${dot}1:80" "bind 0${dot}0${dot}0${dot}0" "metadata at 169${dot}254${dot}169${dot}254" "the documentation range 192${dot}0${dot}2${dot}7" "198${dot}51${dot}100${dot}4" "203${dot}0${dot}113${dot}250" \
+    "PHP 8${dot}5${dot}13" "k6 1${dot}8${dot}3" "Docker 2${dot}1${dot}12 and a 5-part 5${dot}2${dot}4${dot}1${dot}7" "a 13-digit epoch 1700000000000" "an 11-digit number 12345678901" "sg-12345 is too short" "the key-value pairs" "pg-dump" "mi-casa"; do
+    printf '%s\n' "$sample" | bash "$guard" stdin >/dev/null 2>&1 || { echo "the guard refused '$sample', which names no box"; return 1; }
+  done
+}
+
 # The Mac's per-user temp folder is not a home path, but it is as private: the guard refuses it, with or without /private.
 check_public_guard_catches_temp_folder() {
   # Why: the sample is built at run time, or the tree scan would flag this very line.
@@ -2721,6 +2741,423 @@ check_score() {
   score_check_sampler || return 1
 }
 
+# The boxes' scripts (lab/score/server-setup.sh, server-ctl.sh, ctl-ssh.sh, k6-setup.sh, php-gcob.service). Their first run on AWS is
+# phase 7's third scope: these checks cover what a laptop can, with the paths the scripts read swapped for fixtures and the system's own
+# commands (systemctl, shutdown, curl, ssh) stood in for by stubs on the PATH.
+
+# boxes_stubs <dir> <name>...: a stub for each name in <dir>, to be put first on the PATH. A stub logs its name and arguments to
+# <dir>/calls and exits with the code in <dir>/<name>.rc (0 when there is none), after printing <dir>/<name>.out if that exists.
+boxes_stubs() {
+  local dir="$1" name
+  shift
+  : >"$dir/calls"
+  for name in "$@"; do
+    printf '#!/usr/bin/env bash\necho "%s $*" >>"%s/calls"\n[ ! -f "%s/%s.out" ] || cat "%s/%s.out"\nexit "$(cat "%s/%s.rc" 2>/dev/null || echo 0)"\n' \
+      "$name" "$dir" "$dir" "$name" "$dir" "$name" "$dir" "$name" >"$dir/$name"
+    chmod +x "$dir/$name"
+  done
+}
+
+# The systemd unit passes `systemd-analyze verify` in a clean Ubuntu container with systemd installed (the image has none): the unit
+# as it is, and a copy whose ExecStart program does not exist, which must not pass. The user `deploy` and the unit's paths exist, as on the box.
+check_score_unit() {
+  local image out
+  image="$(lab_base_image)"
+  [ -n "$image" ] || { echo "no base image found in lab/images/Dockerfile.src"; return 1; }
+  out="$(docker run --rm -i -v "$LAB/score/php-gcob.service:/unit.service:ro" "$image" bash -c '
+    apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq --no-install-recommends systemd >/dev/null 2>&1 || { echo "setup: apt failed"; exit 1; }
+    useradd -m deploy; mkdir -p /etc/systemd/system /srv/php-Gcob; touch /srv/php-Gcob/start.sh
+    cp /unit.service /etc/systemd/system/good.service
+    sed "s#^ExecStart=/usr/bin/bash #ExecStart=/usr/bin/no-such-shell #" /unit.service >/etc/systemd/system/bad.service
+    systemd-analyze verify /etc/systemd/system/good.service >/tmp/good.log 2>&1; echo "good rc=$?"; cat /tmp/good.log
+    systemd-analyze verify /etc/systemd/system/bad.service >/tmp/bad.log 2>&1; echo "bad rc=$?"' 2>&1)" || { echo "the container failed: ${out//$'\n'/ | }"; return 1; }
+  grep -qx 'good rc=0' <<<"$out" || { echo "systemd-analyze verify refuses the unit: ${out//$'\n'/ | }"; return 1; }
+  grep -qx 'bad rc=0' <<<"$out" && { echo "systemd-analyze verify passed a unit whose ExecStart program does not exist: the check cannot fail"; return 1; }
+  return 0
+}
+
+# boxes_fixture <dir>: the droplet's shape and a healthy service, as files: one CPU, 1.9 GiB, no swap, no nf_conntrack module, and a unit
+# whose one process (4242, run as root so the user name resolves anywhere) has 65,535 open files and the ambient capability of port 80.
+boxes_fixture() {
+  local dir="$1"
+  mkdir -p "$dir/proc/4242" "$dir/cgroup" "$dir/bin"
+  printf 'processor\t: 0\nmodel name\t: Fixture CPU\n\n' >"$dir/cpuinfo"
+  printf 'MemTotal:        2031616 kB\nMemFree:         1000000 kB\nSwapTotal:             0 kB\n' >"$dir/meminfo"
+  printf 'Filename\t\t\t\tType\t\tSize\t\tUsed\t\tPriority\n' >"$dir/swaps"
+  printf 'ext4 1 0\n' >"$dir/modules"
+  printf '4242\n' >"$dir/cgroup/cgroup.procs"
+  printf 'Name:\tphp\nUid:\t0\t0\t0\t0\nCapAmb:\t0000000000000400\n' >"$dir/proc/4242/status"
+  printf 'Limit                     Soft Limit           Hard Limit           Units\nMax open files            65535                65535                files\n' >"$dir/proc/4242/limits"
+  boxes_stubs "$dir/bin" systemctl shutdown update-grub reboot useradd cloud-init
+}
+
+# boxes_setup_run <dir> [env assignment]... -- <server-setup.sh arguments>...: runs the script on the fixture of <dir>; leaves its output in
+# BOXES_OUT and its exit code in BOXES_RC.
+boxes_setup_run() {
+  local dir="$1" envs=()
+  shift
+  while [ "$1" != -- ]; do envs+=("$1"); shift; done
+  shift
+  BOXES_RC=0
+  BOXES_OUT="$(env PATH="$dir/bin:$PATH" SCORE_CPUINFO="$dir/cpuinfo" SCORE_MEMINFO="$dir/meminfo" SCORE_SWAPS="$dir/swaps" SCORE_MODULES="$dir/modules" \
+    SCORE_UNIT_CGROUP="$dir/cgroup" SCORE_PROC="$dir/proc" SCORE_SETUP_USER=root SCORE_GRUB_DIR="$dir/grub.d" ${envs[@]+"${envs[@]}"} \
+    bash "$LAB/score/server-setup.sh" "$@" 2>&1)" || BOXES_RC=$?
+}
+
+# The shape checks and the service checks of server-setup.sh --check, each failing alone on its own fixture: two CPUs, 4 GiB, a swap, the
+# unit not active, another user, a low open files limit, no ambient capability. The droplet's shape passes, and a loaded nf_conntrack is
+# printed without failing.
+check_score_server_setup_checks() {
+  local dir kind line want
+  dir="$(mktemp -d)"
+  boxes_fixture "$dir"
+  boxes_setup_run "$dir" -- --check
+  [ "$BOXES_RC" = 0 ] || { echo "the droplet's shape and a healthy service fail (exit $BOXES_RC): ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  for want in cpus memory swap unit user limits capability; do
+    grep -q "^ok    $want: " <<<"$BOXES_OUT" || { echo "no 'ok    $want:' line on the good fixture: ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  done
+  grep -q '^info  conntrack: nf_conntrack is not loaded' <<<"$BOXES_OUT" || { echo "no conntrack line: ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  for kind in cpus memory swap unit user limits capability; do
+    rm -rf "$dir"
+    dir="$(mktemp -d)"
+    boxes_fixture "$dir"
+    case "$kind" in
+      cpus) printf 'processor\t: 0\n\nprocessor\t: 1\n\n' >"$dir/cpuinfo" ;;
+      memory) printf 'MemTotal:        4046848 kB\n' >"$dir/meminfo" ;;
+      swap) printf '/swapfile\t\t\t\tfile\t\t1048572\t\t0\t\t-2\n' >>"$dir/swaps" ;;
+      unit) echo 3 >"$dir/bin/systemctl.rc" ;;
+      user) printf 'Name:\tphp\nUid:\t0\t0\t0\t0\nCapAmb:\t0000000000000400\n' >"$dir/proc/4242/status" ;;
+      limits) printf 'Max open files            1024                 524288               files\n' >"$dir/proc/4242/limits" ;;
+      capability) printf 'Name:\tphp\nUid:\t0\t0\t0\t0\nCapAmb:\t0000000000000000\n' >"$dir/proc/4242/status" ;;
+    esac
+    # Why: the fixture's process runs as root, so only the 'user' case expects another user.
+    boxes_setup_run "$dir" "SCORE_SETUP_USER=$([ "$kind" = user ] && echo deploy || echo root)" -- --check
+    [ "$BOXES_RC" = 1 ] || { echo "the '$kind' fixture exits $BOXES_RC, not 1: ${BOXES_OUT//$'\n'/ | }"; return 1; }
+    line="$(grep "^FAIL  $kind: " <<<"$BOXES_OUT" || true)"
+    [ -n "$line" ] || { echo "no 'FAIL  $kind:' line on the '$kind' fixture: ${BOXES_OUT//$'\n'/ | }"; return 1; }
+    [ "$(grep -c '^FAIL ' <<<"$BOXES_OUT")" = 1 ] || { echo "the '$kind' fixture fails more than that one check: ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  done
+  rm -rf "$dir"
+  dir="$(mktemp -d)"
+  boxes_fixture "$dir"
+  printf 'nf_conntrack 180224 1 - Live 0x0000000000000000\next4 1 0\n' >"$dir/modules"
+  boxes_setup_run "$dir" -- --check
+  [ "$BOXES_RC" = 0 ] && grep -q '^info  conntrack: nf_conntrack is loaded' <<<"$BOXES_OUT" || { echo "a loaded nf_conntrack is printed and does not fail (exit $BOXES_RC): ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  rm -rf "$dir"
+}
+
+# The install mode stops on a bad shape before it installs anything (no user, no copy, no cap armed), and --shape writes the boot line's drop-in
+# (it appends mem=2G to what the image set before it, so it must sort last), runs update-grub, then reboots, in that order and nothing else.
+check_score_server_setup_modes() {
+  local dir out
+  dir="$(mktemp -d)"
+  boxes_fixture "$dir"
+  printf 'processor\t: 0\n\nprocessor\t: 1\n\n' >"$dir/cpuinfo"
+  boxes_setup_run "$dir" -- --launch-epoch 1700000000
+  [ "$BOXES_RC" = 1 ] && grep -q '^FAIL  cpus: ' <<<"$BOXES_OUT" || { echo "a two-CPU box must exit 1 on the cpus line (exit $BOXES_RC): ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  [ ! -s "$dir/bin/calls" ] || { echo "the install mode ran commands before refusing the shape: $(tr '\n' ';' <"$dir/bin/calls")"; return 1; }
+  rm -rf "$dir"
+  dir="$(mktemp -d)"
+  boxes_fixture "$dir"
+  mkdir "$dir/grub.d"
+  boxes_setup_run "$dir" -- --shape
+  [ "$BOXES_RC" = 0 ] || { echo "--shape exits $BOXES_RC: ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  [ "$(tr '\n' ';' <"$dir/bin/calls")" = "update-grub ;reboot ;" ] || { echo "--shape runs update-grub then reboot and nothing else: $(tr '\n' ';' <"$dir/bin/calls")"; return 1; }
+  [ "$(ls "$dir/grub.d")" = "99-twelve-dollar-mem.cfg" ] || { echo "--shape writes one drop-in that sorts after the image's: $(ls "$dir/grub.d")"; return 1; }
+  out="$(GRUB_CMDLINE_LINUX_DEFAULT='console=tty1 console=ttyS0' bash -c '. "$1"; echo "$GRUB_CMDLINE_LINUX_DEFAULT"' _ "$dir/grub.d/99-twelve-dollar-mem.cfg")"
+  [ "$out" = "console=tty1 console=ttyS0 mem=2G" ] || { echo "the drop-in must append mem=2G to the image's boot line, got '$out'"; return 1; }
+  rm -rf "$dir"
+}
+
+# The 240-minute cap, re-armed after the reboot with the time left (its minutes round up; past the cap it arms one minute and fails).
+check_score_server_setup_cap() {
+  local dir
+  dir="$(mktemp -d)"
+  boxes_fixture "$dir"
+  boxes_setup_run "$dir" SCORE_SETUP_NOW=1700003600 -- --cap-only --launch-epoch 1700000000
+  [ "$BOXES_RC" = 0 ] && [ "$(tr '\n' ';' <"$dir/bin/calls")" = "shutdown -h +180;" ] \
+    || { echo "an hour after the launch the cap has 180 minutes left (exit $BOXES_RC): $(tr '\n' ';' <"$dir/bin/calls") ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  : >"$dir/bin/calls"
+  boxes_setup_run "$dir" SCORE_SETUP_NOW=1700014341 -- --cap-only --launch-epoch 1700000000
+  [ "$(tr '\n' ';' <"$dir/bin/calls")" = "shutdown -h +1;" ] || { echo "59 seconds left arm 1 minute: $(tr '\n' ';' <"$dir/bin/calls")"; return 1; }
+  : >"$dir/bin/calls"
+  boxes_setup_run "$dir" SCORE_SETUP_NOW=1700014500 -- --cap-only --launch-epoch 1700000000
+  [ "$BOXES_RC" = 1 ] && [ "$(tr '\n' ';' <"$dir/bin/calls")" = "shutdown -h +1;" ] && grep -q '^FAIL  cap: ' <<<"$BOXES_OUT" \
+    || { echo "past the cap: arm 1 minute and fail (exit $BOXES_RC): $(tr '\n' ';' <"$dir/bin/calls") ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  boxes_setup_run "$dir" -- --cap-only
+  [ "$BOXES_RC" = 2 ] || { echo "--cap-only without --launch-epoch must be a usage error (exit $BOXES_RC)"; return 1; }
+  rm -rf "$dir"
+}
+
+# boxes_ctl_fixture <dir> <curl failures>: what server-ctl.sh reads and runs, in <dir>: a seed, a live copy with its -wal and -shm, and stubs for
+# systemctl, chown and a curl that fails that many times before it answers.
+boxes_ctl_fixture() {
+  local dir="$1"
+  mkdir -p "$dir/bin" "$dir/seed" "$dir/data"
+  boxes_stubs "$dir/bin" systemctl chown
+  printf 'the seed' >"$dir/seed/feed.db"
+  printf 'a live copy with writes' >"$dir/data/feed.db"
+  printf 'wal' >"$dir/data/feed.db-wal"
+  printf 'shm' >"$dir/data/feed.db-shm"
+  printf '#!/usr/bin/env bash\nn=$(cat "%s/curl.n" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" >"%s/curl.n"\n[ "$n" -gt %s ]\n' "$dir" "$dir" "$2" >"$dir/bin/curl"
+  chmod +x "$dir/bin/curl"
+}
+
+# boxes_ctl_run <dir> [env assignment]... -- <server-ctl.sh arguments>...: leaves the output in BOXES_OUT and the exit code in BOXES_RC.
+boxes_ctl_run() {
+  local dir="$1" envs=()
+  shift
+  while [ "$1" != -- ]; do envs+=("$1"); shift; done
+  shift
+  BOXES_RC=0
+  BOXES_OUT="$(env PATH="$dir/bin:$PATH" SCORE_CTL_SEED="$dir/seed/feed.db" SCORE_CTL_DATA="$dir/data/feed.db" SCORE_CPUINFO="$dir/cpuinfo" SCORE_MEMINFO="$dir/meminfo" \
+    ${envs[@]+"${envs[@]}"} bash "$LAB/score/server-ctl.sh" "$@" 2>&1)" || BOXES_RC=$?
+}
+
+# `restart` on the box's own files: the service stopped, the live copy and its -wal and -shm gone, a fresh copy of the seed owned by deploy, the
+# service started, /health polled until it answers, the healthy seconds as the last line (the driver reads it); no answer in time exits 1, a
+# missing seed exits 1 before the service is touched. `died` and `facts` are the driver's other questions.
+check_score_server_ctl() {
+  local dir calls
+  dir="$(mktemp -d)"
+  boxes_fixture "$dir/shape"
+  boxes_ctl_fixture "$dir" 3
+  cp "$dir/shape/cpuinfo" "$dir/shape/meminfo" "$dir/"
+  boxes_ctl_run "$dir" SCORE_CTL_TIMEOUT=20 -- restart
+  [ "$BOXES_RC" = 0 ] || { echo "restart exits $BOXES_RC: ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  [[ "$(tail -n 1 <<<"$BOXES_OUT")" =~ ^[0-9]+$ ]] || { echo "restart must end with the healthy seconds as a whole number: ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  [ "$(cat "$dir/data/feed.db")" = "the seed" ] || { echo "the live copy is not a fresh copy of the seed"; return 1; }
+  [ ! -e "$dir/data/feed.db-wal" ] && [ ! -e "$dir/data/feed.db-shm" ] || { echo "the live copy's -wal or -shm survived the restart"; return 1; }
+  calls="$(tr '\n' ';' <"$dir/bin/calls")"
+  [ "$calls" = "systemctl stop php-gcob;chown deploy:deploy $dir/data/feed.db;systemctl start php-gcob;" ] \
+    || { echo "restart stops the unit, hands the copy to deploy, then starts the unit: $calls"; return 1; }
+  [ "$(cat "$dir/curl.n")" = 4 ] || { echo "/health is polled until it answers (3 refusals, then ok): $(cat "$dir/curl.n") calls"; return 1; }
+  rm -rf "$dir"
+  dir="$(mktemp -d)"
+  boxes_ctl_fixture "$dir" 1000000
+  SECONDS=0
+  boxes_ctl_run "$dir" SCORE_CTL_TIMEOUT=1 -- restart
+  [ "$BOXES_RC" = 1 ] && grep -q 'did not answer' <<<"$BOXES_OUT" || { echo "a server that never answers /health exits 1 after the timeout (exit $BOXES_RC): ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  [ "$SECONDS" -le 5 ] || { echo "a 1 s timeout took $SECONDS s: the poll does not stop at its timeout"; return 1; }
+  rm -f "$dir/seed/feed.db"
+  : >"$dir/bin/calls"
+  boxes_ctl_run "$dir" -- restart
+  [ "$BOXES_RC" = 1 ] && ! grep -q 'systemctl' "$dir/bin/calls" || { echo "a missing seed must exit 1 before the service is stopped (exit $BOXES_RC): $(tr '\n' ';' <"$dir/bin/calls")"; return 1; }
+  boxes_ctl_run "$dir" -- nonsense
+  [ "$BOXES_RC" = 2 ] || { echo "an unknown command is a usage error (exit $BOXES_RC)"; return 1; }
+  echo 3 >"$dir/bin/systemctl.rc"
+  boxes_ctl_run "$dir" -- died
+  [ "$BOXES_RC" = 0 ] || { echo "died exits 0 when the unit is not active (exit $BOXES_RC)"; return 1; }
+  echo 0 >"$dir/bin/systemctl.rc"
+  boxes_ctl_run "$dir" -- died
+  [ "$BOXES_RC" = 1 ] || { echo "died exits 1 when the unit is active (exit $BOXES_RC)"; return 1; }
+  rm -rf "$dir"
+  dir="$(mktemp -d)"
+  boxes_fixture "$dir"
+  boxes_ctl_fixture "$dir" 0
+  boxes_ctl_run "$dir" -- facts
+  [ "$BOXES_RC" = 0 ] && jq -e 'type == "object" and .nproc == 1 and .mem_total_mib == 1984 and .swap_mib == 0 and (.kernel | type == "string") and .cpu_model == "Fixture CPU"' <<<"$BOXES_OUT" >/dev/null \
+    || { echo "facts prints one JSON object (cpu_model, nproc, mem_total_mib, kernel, swap_mib) of the fixture's box (exit $BOXES_RC): ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  rm -rf "$dir"
+}
+
+# `sample-start` and `sample-stop` in a lab container (the sampler needs bash 5 and a Linux /proc), on the container's own cgroup and a sleeping
+# process: 10 rows of 24 columns in the folder, the start and end facts, and no `server-died.txt` while the unit is active (systemctl is a stub that
+# says so), the file when it is not.
+check_score_server_ctl_sampler() {
+  local dir out rows
+  docker image inspect "$LAB_IMAGE:8.5" >/dev/null 2>&1 || { echo "image $LAB_IMAGE:8.5 is missing (run lab/build.sh 8.5)"; return 1; }
+  dir="$(mktemp -d)"
+  mkdir -p "$dir/bin"
+  printf '#!/usr/bin/env bash\nexit "$(cat /stubs/systemctl.rc 2>/dev/null || echo 0)"\n' >"$dir/bin/systemctl"
+  chmod +x "$dir/bin/systemctl"
+  out="$(docker run --rm -v "$LAB:/lab:ro" -v "$dir/bin:/stubs" -e PATH="/stubs:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+    -e SCORE_CTL_CGROUP=/sys/fs/cgroup -e SCORE_CTL_PIDS_OF="sleep 300" "$LAB_IMAGE:8.5" bash -c '
+      sleep 300 & sleep 1
+      s=/lab/score/server-ctl.sh
+      bash $s sample-start /tmp/run1 || exit 1
+      sleep 11
+      bash $s sample-stop /tmp/run1
+      echo "--- died: $(ls /tmp/run1 | paste -sd" " -)"
+      echo 3 >/stubs/systemctl.rc
+      bash $s sample-start /tmp/run2 && sleep 2 && bash $s sample-stop /tmp/run2 >/dev/null
+      echo "--- dead: $(ls /tmp/run2 | paste -sd" " -)"
+      cat /tmp/run1/server.csv' 2>&1)" || { echo "the controller's sampler run failed: ${out//$'\n'/ | }"; rm -rf "$dir"; return 1; }
+  rm -rf "$dir"
+  grep -q '^--- died: .*server.csv' <<<"$out" && grep -q '^--- died: .*server-start.txt' <<<"$out" && grep -q '^--- died: .*server-end.txt' <<<"$out" \
+    || { echo "sample-stop must leave server.csv, server-start.txt and server-end.txt: ${out//$'\n'/ | }"; return 1; }
+  grep '^--- died: ' <<<"$out" | grep -q 'server-died.txt' && { echo "server-died.txt written while the unit is active"; return 1; }
+  grep '^--- dead: ' <<<"$out" | grep -q 'server-died.txt' || { echo "no server-died.txt while the unit is not active: ${out//$'\n'/ | }"; return 1; }
+  rows="$(grep -c '^[0-9]*\.[0-9][0-9][0-9],' <<<"$out")"
+  [ "$rows" -ge 10 ] || { echo "expected 10 rows or more in 11 s, got $rows"; return 1; }
+  [ "$(grep '^[0-9]*\.[0-9][0-9][0-9],' <<<"$out" | head -n 1 | awk -F, '{ print NF }')" = 24 ] || { echo "a row has not 24 columns"; return 1; }
+}
+
+# ctl-ssh.sh, the controller the driver runs on the load box: each command goes to the server box over ssh (a stub that runs the command
+# here), and `sample-stop <dir>` leaves the sampler's files in <dir> on this side, whatever the folder is called on the server box.
+check_score_ctl_ssh() {
+  local dir remote local_dir out rc
+  dir="$(mktemp -d)"
+  remote="$dir/remote"
+  mkdir -p "$dir/bin" "$remote" "$dir/run"
+  # The ssh stub: drops the options and the host, runs the remote command in a local shell (as ssh does with the joined arguments).
+  printf '%s\n' '#!/usr/bin/env bash' 'echo "ssh $*" >>"$SSH_LOG"' \
+    'while [ "$#" -gt 0 ]; do case "$1" in -n) shift ;; -o|-i|-p) shift 2 ;; *) break ;; esac; done' \
+    'shift' 'exec bash -c "$*"' >"$dir/bin/ssh"
+  chmod +x "$dir/bin/ssh"
+  # The server box's controller, as a stand-in: logs its arguments, leaves files in the folder it is given.
+  printf '%s\n' '#!/usr/bin/env bash' 'echo "ctl $*" >>"$SSH_LOG"' 'case "$1" in' \
+    '  restart) echo "copying"; echo 7 ;;' \
+    '  sample-start) mkdir -p "$2" ;;' \
+    '  sample-stop) printf "ts\n1\n" >"$2/server.csv"; echo "nproc 1" >"$2/server-start.txt"; echo "sampler_cpu_ms 3" >"$2/server-end.txt" ;;' \
+    '  facts) echo "{\"nproc\":1}" ;;' \
+    '  died) exit "${FAKE_DIED:-1}" ;;' 'esac' >"$dir/ctl"
+  run_ssh() { env PATH="$dir/bin:$PATH" SSH_LOG="$dir/log" SCORE_REMOTE_CTL="bash $dir/ctl" SCORE_REMOTE_DIR="$remote/sample" "$@"; }
+  : >"$dir/log"
+  out="$(run_ssh bash "$LAB/score/ctl-ssh.sh" ubuntu@192.0.2.9 restart 2>&1)" || { echo "restart through ssh failed: $out"; return 1; }
+  [ "$(tail -n 1 <<<"$out")" = 7 ] || { echo "restart's last line is the healthy seconds: ${out//$'\n'/ | }"; return 1; }
+  run_ssh bash "$LAB/score/ctl-ssh.sh" ubuntu@192.0.2.9 sample-start "$dir/run" >/dev/null 2>&1 || { echo "sample-start failed"; return 1; }
+  run_ssh bash "$LAB/score/ctl-ssh.sh" ubuntu@192.0.2.9 sample-stop "$dir/run" >/dev/null 2>&1 || { echo "sample-stop failed"; return 1; }
+  for local_dir in server.csv server-start.txt server-end.txt; do
+    [ -s "$dir/run/$local_dir" ] || { echo "sample-stop did not bring $local_dir into the driver's folder: $(ls "$dir/run")"; return 1; }
+  done
+  [ "$(cat "$dir/run/server-end.txt")" = "sampler_cpu_ms 3" ] || { echo "a file was changed on the way"; return 1; }
+  grep -q "^ctl sample-start $remote/sample\$" "$dir/log" && grep -q "^ctl sample-stop $remote/sample\$" "$dir/log" \
+    || { echo "the server box gets its own folder, not the driver's: $(grep '^ctl' "$dir/log" | tr '\n' ';')"; return 1; }
+  out="$(run_ssh bash "$LAB/score/ctl-ssh.sh" ubuntu@192.0.2.9 facts 2>&1)"
+  [ "$out" = '{"nproc":1}' ] || { echo "facts passes the JSON through: $out"; return 1; }
+  FAKE_DIED=0 run_ssh bash "$LAB/score/ctl-ssh.sh" ubuntu@192.0.2.9 died >/dev/null 2>&1 || { echo "died passes the exit code 0 through"; return 1; }
+  rc=0
+  run_ssh bash "$LAB/score/ctl-ssh.sh" ubuntu@192.0.2.9 died >/dev/null 2>&1 || rc=$?
+  [ "$rc" = 1 ] || { echo "died passes the exit code 1 through (got $rc)"; return 1; }
+  rm -rf "$remote/sample"
+  rc=0
+  run_ssh bash "$LAB/score/ctl-ssh.sh" ubuntu@192.0.2.9 sample-stop "$dir/run2" >/dev/null 2>&1 || rc=$?
+  [ "$rc" != 0 ] || { echo "sample-stop with nothing to bring back must fail"; return 1; }
+  printf '#!/usr/bin/env bash\nexit 1\n' >"$dir/ctl"
+  rc=0
+  run_ssh bash "$LAB/score/ctl-ssh.sh" ubuntu@192.0.2.9 restart >/dev/null 2>&1 || rc=$?
+  [ "$rc" != 0 ] || { echo "a failing restart on the server box must fail the controller"; return 1; }
+  rc=0
+  run_ssh bash "$LAB/score/ctl-ssh.sh" ubuntu@192.0.2.9 nonsense >/dev/null 2>&1 || rc=$?
+  [ "$rc" = 2 ] || { echo "an unknown command is a usage error (got $rc)"; return 1; }
+  rm -rf "$dir"
+}
+
+# boxes_k6_fixture <dir>: what k6-setup.sh reads, in <dir>: the challenge's real bench/load.js and a tokens file, the ephemeral range of a box that
+# was set up, no nf_conntrack module, and stubs for the instance metadata (a curl that answers the IMDSv2 paths with a primary and 3 secondary
+# addresses), `ip` (the default route and the interface's 4 addresses), ssh, sudo, sysctl, ping and ethtool.
+boxes_k6_fixture() {
+  local dir="$1"
+  mkdir -p "$dir/bin" "$dir/challenge/bench" "$dir/challenge/seed" "$dir/challenge/test"
+  cp "$REPO/reference/twelve-dollar-server-challenge/bench/load.js" "$dir/challenge/bench/load.js"
+  printf '[]' >"$dir/challenge/seed/tokens.json"
+  printf '1024\t65535\n' >"$dir/range"
+  printf 'ext4 1 0\n' >"$dir/modules"
+  boxes_stubs "$dir/bin" sysctl
+  printf '%s\n' '#!/usr/bin/env bash' 'for last; do :; done' 'case "$last" in' \
+    '  */latest/api/token) echo TOKEN ;;' '  */macs/) echo "02:aa:bb:cc:dd:ee/" ;;' \
+    '  */local-ipv4s) printf "192.0.2.5\n192.0.2.6\n192.0.2.7\n192.0.2.8\n" ;;' '  */subnet-ipv4-cidr-block) echo 192.0.2.0/24 ;;' '  *) exit 22 ;;' 'esac' >"$dir/bin/curl"
+  printf '%s\n' '#!/usr/bin/env bash' 'echo "ip $*" >>"'"$dir"'/bin/calls"' 'case "$*" in' \
+    '  "route show default") echo "default via 192.0.2.1 dev ens5 proto dhcp src 192.0.2.5 metric 100" ;;' \
+    '  "-4 -o addr show dev ens5") cat "'"$dir"'/addrs" ;;' '  addr\ add*) ;;' '  *) exit 1 ;;' 'esac' >"$dir/bin/ip"
+  printf '2: ens5    inet 192.0.2.5/24 brd 192.0.2.255 scope global dynamic ens5\n2: ens5    inet 192.0.2.6/24 scope global secondary ens5\n2: ens5    inet 192.0.2.7/24 scope global secondary ens5\n2: ens5    inet 192.0.2.8/24 scope global secondary ens5\n' >"$dir/addrs"
+  printf '%s\n' '#!/usr/bin/env bash' 'exec "$@"' >"$dir/bin/sudo"
+  printf '%s\n' '#!/usr/bin/env bash' 'echo "ssh $*" >>"'"$dir"'/bin/calls"' '[ ! -f "'"$dir"'/ssh.rc" ] || exit "$(cat "'"$dir"'/ssh.rc")"' \
+    'while [ "$#" -gt 0 ]; do case "$1" in -n|-q) shift ;; -o|-i|-p) shift 2 ;; *) break ;; esac; done' 'shift' 'exec bash -c "$*"' >"$dir/bin/ssh"
+  printf '%s\n' '#!/usr/bin/env bash' 'exec shasum -a 256 "$@"' >"$dir/bin/sha256sum"
+  chmod +x "$dir/bin/curl" "$dir/bin/ip" "$dir/bin/sudo" "$dir/bin/ssh" "$dir/bin/sha256sum"
+}
+
+# boxes_k6_run <dir> [env assignment]... -- <k6-setup.sh arguments>...: leaves the output in BOXES_OUT and the exit code in BOXES_RC.
+boxes_k6_run() {
+  local dir="$1" envs=()
+  shift
+  while [ "$1" != -- ]; do envs+=("$1"); shift; done
+  shift
+  BOXES_RC=0
+  BOXES_OUT="$(env PATH="$dir/bin:$PATH" K6_SETUP_CHALLENGE="$dir/challenge" K6_SETUP_PORT_RANGE_FILE="$dir/range" SCORE_MODULES="$dir/modules" K6_SETUP_USER="$(id -un)" \
+    ${envs[@]+"${envs[@]}"} bash "$LAB/score/k6-setup.sh" "$@" 2>&1)" || BOXES_RC=$?
+}
+
+# k6-setup.sh --check prints one line per check, names them, and exits non-zero when one fails: on a box that is set up, each passes; a load.js
+# with one byte changed, a default ephemeral range, a missing address and a server that does not answer ssh each fail alone.
+check_score_k6_setup_check() {
+  local dir kind want
+  docker image inspect "$LAB_K6_IMAGE" >/dev/null 2>&1 || { echo "image $LAB_K6_IMAGE is missing (pull it: the scores' k6)"; return 1; }
+  dir="$(mktemp -d)"
+  boxes_k6_fixture "$dir"
+  boxes_k6_run "$dir" -- --check 192.0.2.9
+  [ "$BOXES_RC" = 0 ] || { echo "a box that is set up fails its check (exit $BOXES_RC): ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  for want in k6 nofile addresses ports load.js tokens ssh; do
+    [ "$(grep -c "^ok    $want: " <<<"$BOXES_OUT")" = 1 ] || { echo "no single 'ok    $want:' line: ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  done
+  grep -q '^info  conntrack: nf_conntrack is not loaded' <<<"$BOXES_OUT" || { echo "no conntrack line: ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  [ "$(grep -c '^\(ok   \|FAIL \|info \)' <<<"$BOXES_OUT")" = 8 ] || { echo "one line per check, 8 of them: ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  for kind in load.js ports addresses ssh; do
+    rm -rf "$dir"
+    dir="$(mktemp -d)"
+    boxes_k6_fixture "$dir"
+    case "$kind" in
+      load.js) sed -i.bak 's/const LIKE_PROB = 0.15/const LIKE_PROB = 0.16/' "$dir/challenge/bench/load.js" && rm -f "$dir/challenge/bench/load.js.bak" ;;
+      ports) printf '32768\t60999\n' >"$dir/range" ;;
+      addresses) sed -i.bak '$d' "$dir/addrs" && rm -f "$dir/addrs.bak" ;;
+      ssh) echo 255 >"$dir/ssh.rc" ;;
+    esac
+    boxes_k6_run "$dir" -- --check 192.0.2.9
+    [ "$BOXES_RC" = 1 ] && [ "$(grep -c '^FAIL  ' <<<"$BOXES_OUT")" = 1 ] && grep -q "^FAIL  $kind: " <<<"$BOXES_OUT" \
+      || { echo "the '$kind' fixture must fail that one check and exit 1 (exit $BOXES_RC): ${BOXES_OUT//$'\n'/ | }"; return 1; }
+    [ "$kind" != load.js ] || grep -q "not the challenge's" <<<"$BOXES_OUT" || { echo "a changed load.js is refused with the reason: ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  done
+  rm -rf "$dir"
+  dir="$(mktemp -d)"
+  boxes_k6_fixture "$dir"
+  printf 'nf_conntrack 180224 1 - Live 0x0000000000000000\n' >"$dir/modules"
+  boxes_k6_run "$dir" -- --check
+  grep -q '^info  conntrack: nf_conntrack is loaded: nf_conntrack_max set to 1048576' <<<"$BOXES_OUT" && grep -q '^sysctl -w net.netfilter.nf_conntrack_max=1048576' "$dir/bin/calls" \
+    || { echo "a loaded nf_conntrack gets nf_conntrack_max 1048576 and says so: ${BOXES_OUT//$'\n'/ | } $(cat "$dir/bin/calls")"; return 1; }
+  rm -rf "$dir"
+}
+
+# The other modes of k6-setup.sh, on stubs: --rtt prints only the numbers (no address), --push-seed sends the seed and compares its sha256 on both sides (a
+# copy that differs fails), --check-42 must end `passed=42 failed=0`, --allowance prints the ENA's allowance counters, --print-ips the interface's
+# addresses for k6's --local-ips.
+check_score_k6_setup_modes() {
+  local dir seed
+  dir="$(mktemp -d)"
+  boxes_k6_fixture "$dir"
+  printf '%s\n' '#!/usr/bin/env bash' 'echo "PING 192.0.2.9 (192.0.2.9) 56(84) bytes of data."' 'echo' 'echo "--- 192.0.2.9 ping statistics ---"' \
+    'echo "100 packets transmitted, 100 received, 0% packet loss, time 19905ms"' 'echo "rtt min/avg/max/mdev = 0.112/0.156/0.321/0.032 ms"' >"$dir/bin/ping"
+  printf '%s\n' '#!/usr/bin/env bash' 'echo "NIC statistics:"' 'echo "     tx_timeout: 0"' 'echo "     bw_in_allowance_exceeded: 0"' \
+    'echo "     pps_allowance_exceeded: 2"' 'echo "     conntrack_allowance_available: 4294967295"' >"$dir/bin/ethtool"
+  printf '%s\n' '#!/usr/bin/env bash' 'last=""; for a; do prev="$last"; last="$a"; done' 'cp "$prev" "${last#*:}"' >"$dir/bin/scp"
+  chmod +x "$dir/bin/ping" "$dir/bin/ethtool" "$dir/bin/scp"
+  boxes_k6_run "$dir" -- --rtt 192.0.2.9
+  [ "$BOXES_RC" = 0 ] && [ "$BOXES_OUT" = "rtt: min 0.112 ms, avg 0.156 ms, max 0.321 ms (100 packets, 0 % lost)" ] \
+    || { echo "--rtt prints the three numbers and nothing that names the box (exit $BOXES_RC): ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  boxes_k6_run "$dir" -- --allowance
+  [ "$BOXES_RC" = 0 ] && [ "$BOXES_OUT" = "$(printf 'ena bw_in_allowance_exceeded 0\nena pps_allowance_exceeded 2\nena conntrack_allowance_available 4294967295')" ] \
+    || { echo "--allowance prints one line per allowance counter, and only those (exit $BOXES_RC): ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  boxes_k6_run "$dir" -- --print-ips
+  [ "$BOXES_RC" = 0 ] && [ "$BOXES_OUT" = "192.0.2.5,192.0.2.6,192.0.2.7,192.0.2.8" ] || { echo "--print-ips prints the interface's addresses, comma separated (exit $BOXES_RC): ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  seed="$dir/seed.db"
+  head -c 100000 /dev/urandom >"$seed"
+  mkdir -p "$dir/remote"
+  boxes_k6_run "$dir" K6_SETUP_SEED="$seed" K6_SETUP_REMOTE_SEED_DIR="$dir/remote" K6_SETUP_REMOTE_SUDO=env -- --push-seed 192.0.2.9
+  [ "$BOXES_RC" = 0 ] && cmp -s "$seed" "$dir/remote/feed.db" && grep -q "^ok    seed: sha256 $(shasum -a 256 "$seed" | cut -d' ' -f1) on both boxes" <<<"$BOXES_OUT" \
+    || { echo "--push-seed copies the seed and reports one sha256 for both sides (exit $BOXES_RC): ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  printf '%s\n' '#!/usr/bin/env bash' 'last=""; for a; do prev="$last"; last="$a"; done' 'cp "$prev" "${last#*:}"; echo x >>"${last#*:}"' >"$dir/bin/scp"
+  boxes_k6_run "$dir" K6_SETUP_SEED="$seed" K6_SETUP_REMOTE_SEED_DIR="$dir/remote" K6_SETUP_REMOTE_SUDO=env -- --push-seed 192.0.2.9
+  [ "$BOXES_RC" = 1 ] && grep -q '^FAIL  seed: ' <<<"$BOXES_OUT" || { echo "a copy that differs fails --push-seed (exit $BOXES_RC): ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  printf '%s\n' '#!/usr/bin/env bash' 'echo "  ok   something"' 'echo "passed=42 failed=0"' >"$dir/challenge/test/test.sh"
+  boxes_k6_run "$dir" -- --check-42 192.0.2.9
+  [ "$BOXES_RC" = 0 ] && grep -q '^ok    challenge-test: passed=42 failed=0' <<<"$BOXES_OUT" || { echo "--check-42 passes on passed=42 failed=0 (exit $BOXES_RC): ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  printf '%s\n' '#!/usr/bin/env bash' 'echo "passed=41 failed=1"' 'exit 1' >"$dir/challenge/test/test.sh"
+  boxes_k6_run "$dir" -- --check-42 192.0.2.9
+  [ "$BOXES_RC" = 1 ] && grep -q '^FAIL  challenge-test: passed=41 failed=1' <<<"$BOXES_OUT" || { echo "--check-42 fails on passed=41 failed=1 (exit $BOXES_RC): ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  rm -rf "$dir"
+}
+
 CHECKS=(
   check_seed_files_exist
   check_seed_has_posts
@@ -2838,12 +3275,22 @@ CHECKS=(
   check_syscalls_live
   check_syscalls_cleans_up_after_failure
   check_score
+  check_score_unit
+  check_score_server_setup_checks
+  check_score_server_setup_modes
+  check_score_server_setup_cap
+  check_score_server_ctl
+  check_score_server_ctl_sampler
+  check_score_ctl_ssh
+  check_score_k6_setup_check
+  check_score_k6_setup_modes
   check_shellcheck
   check_shellcheck_catches_warning
   check_results_check_catches_drift
   check_results_regenerate
   check_public_guard
   check_public_guard_catches_leak
+  check_public_guard_catches_aws_traces
   check_public_guard_catches_temp_folder
 )
 

@@ -1404,6 +1404,20 @@ rounding), numbers worked out by hand on a made-up run (`lab/check/fixtures/scor
 search against a fake controller and a fake k6 (exit 0, 99 and 1, a void run, a failing warm-up) and the refusals (a `load.js` with one byte
 changed, an existing `--out`, facts that fail).
 
+### The two boxes (`lab/score/`, phase 7)
+
+On AWS the search runs from a load box against a server box shaped like the droplet. The scripts that set them up are checked here as far as a laptop
+allows (`check_score_unit`, `check_score_server_setup_*`, `check_score_server_ctl*`, `check_score_ctl_ssh`, `check_score_k6_setup_*`); their first run
+on the real boxes is the first real test.
+
+| File | What it does |
+| --- | --- |
+| `server-setup.sh` | On the server box, as root. `--shape` adds `mem=2G` to the kernel's boot line (a `grub.d` drop-in that appends) and reboots. Then, with `--launch-epoch`: the shape checks (one CPU, at most 2,048 MiB, no swap; a `FAIL` stops before anything is installed), the 240-minute shutdown re-armed, a wait for cloud-init and the package manager's lock, the user `deploy`, the submission in `/srv/php-Gcob`, `install.sh` as root and `build.sh` as `deploy`, the seed, the unit, one restart, and the checks of the running processes (user, `Max open files`, ambient capability). `--check` runs only the checks. The challenge's 42 checks run from the load box: `jq` and `curl` stay off this box. |
+| `php-gcob.service` | The unit: `User=deploy`, `LimitNOFILE=65535`, `AmbientCapabilities=CAP_NET_BIND_SERVICE`, port 80, `Restart=no`; the bench names only the limit and the capability, so nothing else is set. |
+| `server-ctl.sh` | The server box's controller, run through `sudo`: `restart` (stop, remove the live database and its `-wal`/`-shm`, copy the seed, start, poll `/health` every 0.1 s, 60 s at most), `sample-start`/`sample-stop` (the sampler on the unit's cgroup), `facts`, `died`. |
+| `ctl-ssh.sh` | The controller the driver gets on the load box: the same commands over ssh, and `sample-stop <dir>` brings the sampler's files back into the driver's folder. |
+| `k6-setup.sh` | On the load box. The setup (Docker with `{"iptables": false}` before its first start, so `nf_conntrack` never loads; the pinned k6 image; the secondary addresses; ephemeral ports 1,024 to 65,535; the challenge at `162699a` with `load.js`'s hash checked; the seed and its tokens; an ssh key), then `--check`, `--rtt`, `--push-seed`, `--check-42`, `--allowance`, `--print-ips` and `--smoke` (one minute of the real run at 100 users). |
+
 ## Checks
 
 ```bash
