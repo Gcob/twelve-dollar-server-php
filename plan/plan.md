@@ -1,22 +1,24 @@
 # $12 server challenge in PHP
 
-**Status:** 🔵 Phase 7 running (the score on x86, [details/phase-7.md](details/phase-7.md)): scopes 1 and 2 done (no AWS); the AWS session done: **135,000 users held 5 minutes** (AWS, our run); results and scope 4 next · approved on 2026-11-21 · snapshot 2026-11-21-0920 ·
+**Status:** 🏁 Phase 7 delivered (the score on x86, [details/phase-7.md](details/phase-7.md)): **135,000 users held 5 minutes** on AWS, our run; branch `phase-7-claude`, both final reviews OK, waiting for your merge · approved on 2026-11-21 · snapshot 2026-11-21-0920 ·
 **Round:** 7
-**Since your last read:** phase 7 is planned from your two choices (D89 machines, D90 search), and its plan review
-is settled (D92 to D101). Four scopes: the search driver with a local smoke, the two boxes' setup scripts, the AWS
-session itself, one labelled paragraph in the submission's README. Two changes to your shape: the vCPU is turned off
-through EC2's CPU options at launch rather than taken offline after boot (same core, D91); and the load box's type comes
-from k6's memory per VU, measured in scope 1 (Q20, D93), because on AWS the search should reach about 140,000 VUs, past a
-`c5.4xlarge`'s memory. One question needs you before the session: Q22, opening port 80 to the internet for the session
-if EC2's connection tracking would be the wall. The review also found the bench box is a Synteq VPS (Xeon 8260), not a
-DigitalOcean droplet (`LEADERBOARD.md`): the score is compared with it (D96). Nothing is created on AWS before your go:
-the 🔴 comes once scopes 1 and 2 are ready.
+**Since your last read:** phase 7 is delivered. The challenge's own `bench/load.js`, unchanged, against
+`submissions/php-Gcob/` installed the bench's way on an AWS `c5.large` with one core and 2 GB, k6 on a separate
+16-vCPU box: **135,000 users held for 5 minutes** (p95 171 ms, p99 328 ms, 0 errors, 14,122 req/s, the service at 84 %
+of its core, 881 MiB). 142,000 failed: once on EC2's connection table, twice with k6's load box over its line and the
+service at 90 % (D104 to D106): the ceiling is likely the CPU, not separated from k6. Our number, not the bench's; the
+bench estimate, apart, is about 86,000 (D106). Three bugs found by the real boxes, two by the blind review, all fixed
+with a test. Lab suite 133/133. Delivery, the commands and the retro in [run.md](run.md) ("Delivery").
 **Project:** this repo, `plan/` · **Submission:** `submissions/php-Gcob/` (D80) · **Jira:** none
 
 ## 👉 Your turn
 
 > **Answer freely:** a letter or `ok`, your own choice (`other: …`), `?` if it's unclear, or
 > `badly framed: …` if an option is missing or the question doesn't hold.
+
+**🔴 Merge phase 7:** review `git diff main...phase-7-claude` (or tell me to merge), then from this checkout:
+`git merge --no-ff phase-7-claude && git push`. The commands and the 3 places to look are in [run.md](run.md)
+("Delivery").
 
 **🔴 Delete the AWS policy `twelve-dollar-phase-7-score`:** in IAM, detach it from `jacob-cli`, then delete it under
 IAM → Policies. The session is over: both boxes terminated at about 10:00, `teardown.sh --verify` shows `TEARDOWN
@@ -89,7 +91,7 @@ step's choice backed by a measurement.
 **Decisions:** 106 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
 is a prediction we re-measure, not an answer.
 
-### Phase 7 scopes (running)
+### Phase 7 scopes (delivered)
 
 Detail, seams, cases and the predictions in [details/phase-7.md](details/phase-7.md). One commit each, on branch
 `phase-7-claude` (D14). Scope 3 is the AWS session: it needs your go.
