@@ -858,6 +858,7 @@ check_lab_hook_accepts_submissions() {
 }
 
 # Where a submission's rules are read from; what each part of check_submission looks at is named by the prefix of the problem it prints.
+SUBMISSION_REPO_URL='https://github.com/Gcob/twelve-dollar-server-php'
 SUBMISSION_SWITCHES='APP_WORKERS|APP_PRAGMAS|APP_SOFT_CONN_LIMIT|APP_TELEMETRY|APP_PROFILE|APP_JSON|APP_FEED_SQL|APP_FETCH|APP_DRIVER|APP_LOCKING|APP_GROUP_COMMIT|APP_CHECKPOINTER|APP_LOOP'
 
 # submission_static_problems <folder>: one line per rule the folder breaks, none when it keeps them all (no Docker: the lint is apart).
@@ -869,6 +870,8 @@ SUBMISSION_SWITCHES='APP_WORKERS|APP_PRAGMAS|APP_SOFT_CONN_LIMIT|APP_TELEMETRY|A
 #  install    install.sh exists; every curl or wget in it is followed by a `sha256sum -c` of the file it fetched; every phpize, php-config and
 #             php it runs is a full path (the machine may have another PHP first on its PATH)
 #  pin        install.sh pins the same PHP and ext-event as the lab's images (lab/lib.sh, lab/images/install-extras.sh)
+#  readme     README.md exists; each link to this repo is a /tree/main/ or /blob/main/ link to a path of the tree; no relative link; no
+#             home path and no e-mail address (tools/public-guard.sh says the same of the whole tree)
 submission_static_problems() {
   local dir="$1" f name call want got entry getenv_ok="^getenv\\(['\"](SQLITE_PATH|JWT_SECRET|HOST|PORT)['\"]\\)\$"
   for f in "$dir"/*.php; do
@@ -882,6 +885,7 @@ submission_static_problems() {
     { grep -nE 'FFI|Excimer|DiyTelemetry|DiyProfile' "$f"; grep -niE 'checkpointer|group_commit' "$f"; } | sed "s|^|instrument: $name:|"
   done
   submission_install_problems "$dir"
+  submission_readme_problems "$dir"
   if [ -f "$dir/start.sh" ]; then
     got="$(grep -v '^[[:space:]]*#' "$dir/start.sh" | grep -o -- '-d [^ ]*' | cut -c4- | paste -sd' ' -)"
     want="extension=pcntl extension=sockets extension=event"
@@ -934,6 +938,30 @@ submission_install_problems() {
   grep -q "^EVENT_SHA256=$extras_sha\([[:space:]]\|\$\)" "$file" || echo "pin: install.sh's EVENT_SHA256 is not the lab's $extras_sha"
 }
 
+# submission_readme_problems <folder>: the `readme` lines of submission_static_problems. The README is read in the challenge's repo, where lab/ does
+# not exist, so every link goes to this repo on GitHub, branch main, and the paths it names must be in this tree.
+submission_readme_problems() {
+  local file="$1/README.md" link path
+  if [ ! -f "$file" ]; then echo "readme: there is no README.md"; return 0; fi
+  while IFS= read -r link; do
+    case "$link" in
+      "$SUBMISSION_REPO_URL"/tree/main/* | "$SUBMISSION_REPO_URL"/blob/main/*)
+        path="${link#"$SUBMISSION_REPO_URL"/*/main/}"
+        path="${path%%[#?]*}"
+        [ -e "$REPO/$path" ] || echo "readme: $link names a path that is not in the tree" ;;
+      *) echo "readme: $link is not a /tree/main/ or /blob/main/ link" ;;
+    esac
+  done < <(grep -oE "${SUBMISSION_REPO_URL}[^][:space:])>\`\"]*" "$file")
+  while IFS= read -r link; do
+    case "$link" in
+      http://* | https://* | '#'*) ;;
+      *) echo "readme: the link $link is relative, and the README is read outside this repo" ;;
+    esac
+  done < <(grep -oE '\]\([^)]*\)' "$file" | sed 's/^](//; s/)$//')
+  grep -qE '/Users/|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' "$file" && echo "readme: README.md has a home path or an e-mail address"
+  return 0
+}
+
 # submission_shellcheck_problems <folder>: the pinned shellcheck (warning level) on install.sh, build.sh and start.sh of the folder; a line
 # `shellcheck: ...` per finding.
 submission_shellcheck_problems() {
@@ -971,10 +999,13 @@ check_submission_catches_violations() {
   [ -z "$problems" ] || { rm -rf "$tmp"; echo "the submission itself breaks a rule: ${problems//$'\n'/ | }"; return 1; }
   cp -R "$SUBMISSION" "$tmp/ok"
   printf '<?php\nconst APP_JSON_FLAGS = 1;\nconst APP_BODY_MAX_CHARS = 2;\n$x = getenv("PORT");\n' >"$tmp/ok/constants.php"
+  # Links that are right (a folder with a trailing slash, a file with an anchor, a link to another site) are not refused.
+  printf '\n[a](%s/tree/main/lab/results/)\n[b](%s/blob/main/lab/README.md#the-lab)\n[c](https://example.org/x)\n' "$SUBMISSION_REPO_URL" "$SUBMISSION_REPO_URL" >>"$tmp/ok/README.md"
   problems="$(submission_static_problems "$tmp/ok")"
-  [ -z "$problems" ] || { rm -rf "$tmp"; echo "constants named like a switch, and getenv of PORT, were refused: ${problems//$'\n'/ | }"; return 1; }
+  [ -z "$problems" ] || { rm -rf "$tmp"; echo "constants named like a switch, getenv of PORT, and right links were refused: ${problems//$'\n'/ | }"; return 1; }
   for kind in getenv getenv-all env-array switch instrument-ffi instrument-checkpointer flags flags-order folder subfolder lint \
-    no-install unpinned-download bare-phpize bare-php-config bare-php wrong-pin shellcheck; do
+    no-install unpinned-download bare-phpize bare-php-config bare-php wrong-pin shellcheck \
+    no-readme readme-missing-path readme-missing-file readme-other-branch readme-relative-link readme-home-path readme-email; do
     rm -rf "$tmp/f"
     cp -R "$SUBMISSION" "$tmp/f"
     case "$kind" in
@@ -997,6 +1028,13 @@ check_submission_catches_violations() {
       bare-php) prefix=install; printf 'php -v\n' >>"$tmp/f/install.sh" ;;
       wrong-pin) prefix=pin; sed 's/^PHP_SHA256=607602/PHP_SHA256=607603/' "$SUBMISSION/install.sh" >"$tmp/f/install.sh" ;;
       shellcheck) prefix=shellcheck; printf 'echo $(date)\n' >>"$tmp/f/build.sh" ;;
+      no-readme) prefix=readme; rm "$tmp/f/README.md" ;;
+      readme-missing-path) prefix=readme; printf '\n[gone](%s/tree/main/lab/results/2099-01-01-nothing)\n' "$SUBMISSION_REPO_URL" >>"$tmp/f/README.md" ;;
+      readme-missing-file) prefix=readme; printf '\n[gone](%s/blob/main/lab/nothing.sh)\n' "$SUBMISSION_REPO_URL" >>"$tmp/f/README.md" ;;
+      readme-other-branch) prefix=readme; printf '\n[x](%s/tree/phase-6-claude/lab)\n' "$SUBMISSION_REPO_URL" >>"$tmp/f/README.md" ;;
+      readme-relative-link) prefix=readme; printf '\n[x](../../lab/README.md)\n' >>"$tmp/f/README.md" ;;
+      readme-home-path) prefix=readme; printf '\nrun it from %s/someone/code\n' /Users >>"$tmp/f/README.md" ;;
+      readme-email) prefix=readme; printf '\nwrite to someone%s\n' @work.org >>"$tmp/f/README.md" ;;
     esac
     case "$kind" in
       lint) problems="$(submission_lint_problems "$tmp/f")" ;;

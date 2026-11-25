@@ -1391,6 +1391,8 @@ worker), `check_submission_default_host_and_port` (0.0.0.0:80 in a container wit
 `check_submission` also reads `install.sh` (every `curl` followed by a `sha256sum -c` of its file, every `phpize`, `php-config` and `php` by its full
 `/opt/php-gcob/bin/` path, the PHP and ext-event pins equal to the lab's images) and runs the pinned shellcheck on `install.sh`, `build.sh` and
 `start.sh`; `check_submission_install_stops_on_wrong_sha256` runs `install.sh` with one digit of PHP's sha256 changed and sees it stop before `configure`.
+It reads `README.md` too: each link to this repo must be a `/tree/main/` or `/blob/main/` link to a path that exists in the tree (the README is read in the
+challenge's repo, where `lab/` does not exist), no link may be relative, and it holds no home path and no e-mail address.
 
 `lab/submission-test.sh [--ci] [--keep]` installs and tests the submission in a clean Ubuntu 24.04 container the way the bench does (`install.sh`
 as root, `build.sh` and `test/run.sh` as `deploy` on port 80, a second start on `0.0.0.0:80`, the processes' user and open-files limit, port 80
