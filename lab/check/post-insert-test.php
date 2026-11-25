@@ -1,6 +1,6 @@
 <?php
-// post_insert() of the submission (submissions/php-Gcob/app.php): a new post is committed when the function returns, and a commit that fails
-// is an exception (the route answers 500), never a row that was rolled back.
+// post_insert() and like_insert() of the submission (submissions/php-Gcob/app.php): a new post is committed when post_insert() returns, and a
+// commit that fails (a post's or a like's) is an exception (the route answers 500), never a row that was rolled back.
 //
 // A deferred foreign key is how a commit is made to fail on purpose: SQLite checks it at the commit, after the row was inserted.
 //
@@ -17,7 +17,8 @@ $setup->exec("
   CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT NOT NULL UNIQUE);
   CREATE TABLE posts (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) DEFERRABLE INITIALLY DEFERRED,
                       body TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')));
-  CREATE TABLE likes (user_id INTEGER NOT NULL, post_id INTEGER NOT NULL, PRIMARY KEY (user_id, post_id));
+  CREATE TABLE likes (user_id INTEGER NOT NULL, post_id INTEGER NOT NULL REFERENCES posts(id) DEFERRABLE INITIALLY DEFERRED,
+                      PRIMARY KEY (user_id, post_id));
   INSERT INTO users (id, username) VALUES (1, 'ada');
 ");
 $setup->exec('PRAGMA journal_mode = wal');
@@ -60,6 +61,19 @@ check_case('a commit that fails is an exception, and nothing is left behind', fu
     $after = (int) $reader->query('SELECT COUNT(*) FROM posts')->fetchColumn();
     $next = post_insert(1, 'the connection still works');
     return $after === $before && isset($next['id']) ? null : "posts went from $before to $after, or the next insert did not work";
+});
+
+check_case('a like whose commit fails is an exception, and nothing is left behind', function () use ($reader) {
+    $post = post_insert(1, 'a post to like');
+    try {
+        $liked = like_insert(1, 999);
+        return 'it returned ' . json_encode($liked) . ' for a like whose commit failed';
+    } catch (PDOException) {
+        // The expected path.
+    }
+    $left = (int) $reader->query('SELECT COUNT(*) FROM likes')->fetchColumn();
+    $next = like_insert(1, (int) $post['id']);
+    return $left === 0 && $next === true ? null : "likes holds $left rows after the failed commit, or the next like did not work";
 });
 
 exit($failed ? 1 : 0);
