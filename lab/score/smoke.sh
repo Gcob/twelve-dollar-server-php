@@ -53,6 +53,10 @@ smoke_search() {
   [ "$got" = "$want" ] || fail "the runs are '$got', expected '$want'"
   [ "$(jq -r '.end | [.result, .score] | join(" ")' "$out/search.json")" = "score 150" ] || fail "the search does not end on the score 150: $(jq -c .end "$out/search.json")"
   local f missing
+  # Why: runs 4 and 5 are the ones the controller stops on purpose, with no OOM line: their wall is the death itself, not memory.
+  for f in "$out"/04-*/run.json "$out"/05-*/run.json; do
+    [ "$(jq -r '[.wall, .service_died] | join(" ")' "$f")" = "died true" ] || fail "$f: a forced stop must read 'died true': $(jq -c '[.wall, .service_died]' "$f")"
+  done
   for f in "$out"/[0-9]*/run.json; do
     missing="$(jq -r '[ "kind", "users", "k6_exit", "pass", "void", "p95_ms", "p99_ms", "error_rate", "http_reqs", "plateau", "vu_init_s", "server", "loadbox", "healthy_s", "wall"
       | select(. as $k | $ARGS.named.run | has($k) | not) ] | join(" ")' --argjson run "$(cat "$f")")"

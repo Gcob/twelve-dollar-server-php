@@ -2607,7 +2607,10 @@ score_check_walls() {
   j="$(score_run k6mib=7100 -- 0)" && score_expect "k6 over 90 % of the load box's memory, even though it passed" "$j" '[.pass, .void, (.wall // "none")] | join(" ")' "true true none" || return 1
   j="$(score_run oom=1 -- 99)" && score_expect "a new OOM line" "$j" '.wall' "memory" || return 1
   j="$(score_run avail=51200 -- 99)" && score_expect "MemAvailable under 100 MiB" "$j" '.wall' "memory" || return 1
-  j="$(score_run -- 99 server-died.txt=died)" && score_expect "the controller says the service died" "$j" '.wall' "memory" || return 1
+  j="$(score_run -- 99 server-died.txt=died)" && score_expect "the service died with no OOM line and MemAvailable high: its own wall, not memory" "$j" '[.wall, .service_died] | join(" ")' "died true" || return 1
+  j="$(score_run oom=1 -- 99 server-died.txt=died)" && score_expect "the service died and an OOM line appeared: memory, and the death is still recorded" "$j" '[.wall, .service_died] | join(" ")' "memory true" || return 1
+  j="$(score_run avail=51200 -- 99 server-died.txt=died)" && score_expect "the service died and MemAvailable fell under 100 MiB: memory" "$j" '.wall' "memory" || return 1
+  j="$(score_run ena=3 -- 99 server-died.txt=died)" && score_expect "the service died and an ENA counter grew: died comes before network" "$j" '.wall' "died" || return 1
   j="$(score_run ena=3 -- 99)" && score_expect "an ENA counter grew" "$j" '.wall' "network" || return 1
   j="$(score_run drops=4 -- 99)" && score_expect "ListenDrops grew" "$j" '.wall' "fds" || return 1
   j="$(score_run fds=65500 -- 99 'k6.log=time="x" level=warning msg="Request Failed" error="Get: dial tcp: i/o timeout"')" && score_expect "dial errors with a process within 100 fds of 65,535" "$j" '.wall' "fds" || return 1

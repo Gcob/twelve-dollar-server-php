@@ -112,7 +112,8 @@ def window($rows; $s; $e): [$rows[] | select(.ts >= $s and .ts <= $e)];
 | ($meta.k6_exit == 0) as $pass
 | (if $pass then null
    elif $void_reason != null then "k6"
-   elif ($oom_e != null and $oom_s != null and $oom_e > $oom_s) or $meta.server_died or ($avail_min != null and $avail_min < 102400) then "memory"
+   elif ($oom_e != null and $oom_s != null and $oom_e > $oom_s) or ($avail_min != null and $avail_min < 102400) then "memory"
+   elif $meta.server_died then "died"
    elif $ena_diff != null and ($ena_diff | to_entries | any(.value > 0)) then "network"
    elif ($drops != null and $drops > 0) or ($meta.dial_errors > 0 and ($fds_max | to_entries | any(.value >= 65435))) then "fds"
    elif $service_share != null and $service_share > 0.88 then "cpu"
