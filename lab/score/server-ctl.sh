@@ -38,6 +38,8 @@ cmd_restart() {
   systemctl stop "$UNIT"
   rm -f "$DATA" "$DATA-wal" "$DATA-shm"
   cp "$SEED" "$DATA"
+  # Why chmod: the seed is read-only (0444) and cp keeps its mode, so the service could only read the copy: every write failed.
+  chmod 0644 "$DATA"
   chown "$OWNER:$OWNER" "$DATA"
   sync
   began="$(date +%s)"

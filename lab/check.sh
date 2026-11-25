@@ -2899,6 +2899,7 @@ boxes_ctl_fixture() {
   mkdir -p "$dir/bin" "$dir/seed" "$dir/data"
   boxes_stubs "$dir/bin" systemctl chown
   printf 'the seed' >"$dir/seed/feed.db"
+  chmod 0444 "$dir/seed/feed.db"   # the real seed is read-only: the live copy must still be writable
   printf 'a live copy with writes' >"$dir/data/feed.db"
   printf 'wal' >"$dir/data/feed.db-wal"
   printf 'shm' >"$dir/data/feed.db-shm"
@@ -2930,6 +2931,7 @@ check_score_server_ctl() {
   [ "$BOXES_RC" = 0 ] || { echo "restart exits $BOXES_RC: ${BOXES_OUT//$'\n'/ | }"; return 1; }
   [[ "$(tail -n 1 <<<"$BOXES_OUT")" =~ ^[0-9]+$ ]] || { echo "restart must end with the healthy seconds as a whole number: ${BOXES_OUT//$'\n'/ | }"; return 1; }
   [ "$(cat "$dir/data/feed.db")" = "the seed" ] || { echo "the live copy is not a fresh copy of the seed"; return 1; }
+  [ "$(ls -l "$dir/data/feed.db" | cut -c2-3)" = rw ] || { echo "the live copy is not writable by its owner (a copy of a read-only seed keeps its mode): $(ls -l "$dir/data/feed.db")"; return 1; }
   [ ! -e "$dir/data/feed.db-wal" ] && [ ! -e "$dir/data/feed.db-shm" ] || { echo "the live copy's -wal or -shm survived the restart"; return 1; }
   calls="$(tr '\n' ';' <"$dir/bin/calls")"
   [ "$calls" = "systemctl stop php-gcob;chown deploy:deploy $dir/data/feed.db;systemctl start php-gcob;" ] \
