@@ -1,6 +1,6 @@
 # $12 server challenge in PHP
 
-**Status:** 🔵 Phase 7 running (the score on x86, [details/phase-7.md](details/phase-7.md)): plan written, scopes 1 and 2 (no AWS) next; AWS waits for your go · approved on 2026-11-21 · snapshot 2026-11-21-0920 ·
+**Status:** 🔵 Phase 7 running (the score on x86, [details/phase-7.md](details/phase-7.md)): scopes 1 and 2 done (no AWS); ⏸️ the AWS session waits for your go (🔴) · approved on 2026-11-21 · snapshot 2026-11-21-0920 ·
 **Round:** 7
 **Since your last read:** phase 7 is planned from your two choices (D89 machines, D90 search), and its plan review
 is settled (D92 to D101). Four scopes: the search driver with a local smoke, the two boxes' setup scripts, the AWS
@@ -17,6 +17,15 @@ the 🔴 comes once scopes 1 and 2 are ready.
 
 > **Answer freely:** a letter or `ok`, your own choice (`other: …`), `?` if it's unclear, or
 > `badly framed: …` if an option is missing or the question doesn't hold.
+
+**🔴 The AWS go for phase 7's session:** in the AWS console (your personal account), create a policy from the
+factory's `aws/phase-7-score-policy.json` (name it `twelve-dollar-phase-7-score`), attach it to your CLI user (profile
+`jacob-perso`), then say **go**. It allows only a `c5.large` and an `m5.4xlarge` in `ca-central-1`, a placement group,
+a security group and a key pair, everything tagged `project=twelve-dollar-server`, and starting, stopping and deleting
+only what carries that tag. The session: a dry run first, then 2 h 30 to 3 h 30, under 5 USD; both boxes stop
+themselves after 4 hours; at the end `teardown.sh --verify` must show nothing left, and a 🔴 asks you to delete the
+policy. **Q22** (port 80 opened to the internet only if EC2's connection tracking would be the wall) is best answered
+before the go; without an answer the session stays closed and names the table if it binds.
 
 **🟠 Delete the AWS policy `twelve-dollar-x86-calibration`** (detach it from your CLI user, then delete it): scope 9
 is done and `teardown.sh --verify` shows nothing tagged left (only the terminated instance).
