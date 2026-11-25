@@ -1,14 +1,13 @@
 # $12 server challenge in PHP
 
-**Status:** 🏁 Phase 6 merged (the submission, `submissions/php-Gcob/`; merge `b1823cb`); phase 7 next, to plan with Jacob · approved on 2026-11-21 · snapshot 2026-11-21-0920 ·
-**Round:** 6
-**Since your last read:** phase 6 is delivered. `submissions/php-Gcob/` passes the challenge's `test/run.sh` 42/42 in
-a clean `ubuntu:24.04` as `deploy` on port 80 (1 CPU, 2 GiB, `nofile` 65535, only `CAP_NET_BIND_SERVICE`) and in a copy
-of the challenge's CI runner (D85); `install.sh` builds PHP 8.5.13 in about 4 minutes on one arm64 core. The copy shows
-no difference the step lab detects against the lab's server at 12,000 req/s (D88; at 24,000 the pairs couldn't
-decide). The blind review found one real bug, fixed: a new post whose commit failed still answered 201 (D87). Both
-final reviews OK. Merged on Jacob's go (`b1823cb`). Delivery and retro in [runs/phase-6/run.md](runs/phase-6/run.md)
-("Delivery").
+**Status:** 🔵 Phase 7 running (the score on x86, [details/phase-7.md](details/phase-7.md)): plan written, scopes 1 and 2 (no AWS) next; AWS waits for your go · approved on 2026-11-21 · snapshot 2026-11-21-0920 ·
+**Round:** 7
+**Since your last read:** phase 7 is planned from your two choices (D89 machines, D90 search). Four scopes: the
+search driver with a local smoke, the two boxes' setup scripts, the AWS session itself, one labelled line in the
+submission's README. One change to your shape, as a question: the load box an `m5.4xlarge` (64 GiB), because on AWS the
+server's core is about 1.57 times faster per request than the bench's, so the search should reach 125,000 to 140,000
+VUs, past a `c5.4xlarge`'s memory (Q20, D93). Nothing is created on AWS before your go: the 🔴 comes once the scripts
+are ready. Phase 6's delivery and retro: [runs/phase-6/run.md](runs/phase-6/run.md).
 **Project:** this repo, `plan/` · **Submission:** `submissions/php-Gcob/` (D80) · **Jira:** none
 
 ## 👉 Your turn
@@ -70,6 +69,63 @@ would have stayed a one-sided bias of about -0.2 µs with a floor near 0.27 (`la
 
 **Answer:**
 
+### Q20/21 [run, machines] : the load box an `m5.4xlarge` (64 GiB) instead of the `c5.4xlarge` (32 GiB)?
+
+The lab measured k6 at 0.343 MiB a VU. On AWS the server's core costs about 1.57 times less per request than the
+bench's VM (5a's calibration), so its CPU wall should sit near 125,000 to 140,000 users, not the bench's 83,000 to
+88,000. A `c5.4xlarge` holds about 85,000 VUs: k6 would be the wall, and the search would end "at least 85,000, bound
+by k6".
+
+**Question:** should the load box be an `m5.4xlarge` (same 16 vCPUs, 64 GiB) so the search can reach the server's own
+wall?
+
+- **A.** `m5.4xlarge`: about 170,000 VUs.
+  **Aims at:** the server's real wall, measured.
+  **For:** the search ends on the server, not on k6; same core count as the bench's 16-core generators.
+  **Against:** about 10 to 15 % more an hour for the load box (a few tens of cents for the session).
+- **B.** `c5.4xlarge`, as you named it.
+  **Aims at:** the cheapest box that holds the bench's forecast.
+  **For:** your shape unchanged. **Against:** the search likely stops near 85,000 on k6, and the server's wall stays
+  unmeasured.
+
+**Confidence:** A 80 % · B 20 %
+
+**Recommendation:** A.
+
+**Flips if:** scope 1 measures k6 under 0.18 MiB a VU with the real `load.js` (then the `c5.4xlarge` holds 170,000).
+
+**Meanwhile:** coded as A (D93): the policy allows `c5.large` and `m5.4xlarge`; B is one line in the policy and in
+`launch.sh`.
+
+**Answer:**
+
+### Q21/21 [run, submission] : one labelled paragraph with our AWS score in the submission's README?
+
+Phase 6 kept "Results: not scored yet": an estimate in the PR's README reads as a claim. Phase 7 gives a measured
+number, but on AWS, not on the bench's droplet.
+
+**Question:** should the submission's README state our own AWS run, labelled as not the bench's score?
+
+- **A.** One paragraph in "Results": our own run on AWS, the boxes, the users held 5 minutes, the wall, that the AWS
+  core costs about 1.5 times less per request than the bench's VM measured, a link to the results folder. No bench
+  estimate as a claim.
+  **Aims at:** a reviewer sees what we measured and how.
+  **For:** honest data, linked; Arjay sees we ran his `load.js` unchanged. **Against:** a number in the PR that isn't
+  his; a reader may skip the label.
+- **B.** Keep "not scored yet"; the AWS number stays in `lab/results/` only.
+  **Aims at:** a PR that claims nothing the bench hasn't measured.
+  **For:** no risk of reading as a claim. **Against:** the README hides our best evidence.
+
+**Confidence:** A 60 % · B 40 %
+
+**Recommendation:** A.
+
+**Flips if:** you'd rather the PR state nothing Arjay hasn't measured himself.
+
+**Meanwhile:** coded as A in scope 4 (no `FIXME` in the README: it's the PR's text; B is one paragraph removed).
+
+**Answer:**
+
 ---
 
 Answered questions: [questions/](questions/), the latest in
@@ -104,8 +160,20 @@ step's choice backed by a measurement.
 | 8 | Ring (D76, D84) | First a screen of off-the-shelf io_uring (Swoole's `uring_socket`, an audit of ext-mrloop); then, unless one wins, an io_uring loop in pure PHP through FFI to `liburing-ffi`; a SQLite built with PGO, the single-post plan checked | Each lever's µs/req against phase 7's; a new score if they win |
 | 9 | Submit          | The PR to the challenge repo                                | CI green                                                |
 
-**Decisions:** 88 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
+**Decisions:** 97 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
 is a prediction we re-measure, not an answer.
+
+### Phase 7 scopes (running)
+
+Detail, seams, cases and the predictions in [details/phase-7.md](details/phase-7.md). One commit each, on branch
+`phase-7-claude` (D14). Scope 3 is the AWS session: it needs your go.
+
+| # | Commit                                                    | Done when (short)                                                        |
+|---|-----------------------------------------------------------|--------------------------------------------------------------------------|
+| 1 | `feat(lab): the score search, driven from the load box`   | the local smoke runs the warm-up and the search small, one forced fail, ends on a passing hold; `check_score` and its fixtures; a changed `load.js` refused; k6's MiB a VU measured (D93) |
+| 2 | `feat(lab): the two boxes, set up the bench's way`        | the server and load boxes' setup, controller and samplers; the unit verified; `launch.sh --print` and `teardown.sh --verify` with placement groups (factory) |
+| 3 | `docs(lab): the score on x86, Arjay's search`             | the predictions committed before the launch; the setup proofs; every k6 run and decision; the score or the measured wall; the differences from the bench (D96); `TEARDOWN CLEAN` |
+| 4 | `docs(submission): our own run on AWS, labelled`          | one paragraph in "Results", labelled not the bench's score, linked (Q21, coded A) |
 
 ### Phase 6 scopes (merged)
 
@@ -221,5 +289,6 @@ You don't need to read this part: it's the index of the execution details, in `d
 - [Phase 5](details/phase-5.md): the step lab's first run (5a): scopes, seams, cases and the predictions.
 - [Phase 5b](details/phase-5b.md): the step lab's second run: scopes, seams, cases and the predictions.
 - [Phase 6](details/phase-6.md): the submission: scopes, seams, cases and the predictions.
+- [Phase 7](details/phase-7.md): the score on x86: scopes, seams, cases and the predictions.
 - [Phase 2's run](runs/phase-2/run.md), [phase 3's](runs/phase-3/run.md), [phase 4's](runs/phase-4/run.md), [phase 5a's](runs/phase-5a/run.md), [phase 5b's](runs/phase-5b/run.md) and [phase 6's](runs/phase-6/run.md): progress, reviews and retro, with
   their `state/`.

@@ -463,6 +463,58 @@
   said in the README. Anything else: delivered with both readings written, and the question to Jacob (pr-reviewer
   pass 2, settled by the project manager, phase 6, 2026-11-24, `reviews/PR-2026-11-24-2105-delta.md` item 1).
 
+- **D89:** phase 7's machines: two AWS boxes in one cluster placement group, `ca-central-1`. A server box shaped like
+  the droplet: a `c5.large`, Ubuntu 24.04 x86-64, one vCPU, 2 GB for the whole box (the OS shares it, rule 8), no swap;
+  `submissions/php-Gcob/install.sh` as root, `build.sh` and the service as `deploy`, started by systemd with
+  `LimitNOFILE=65535` and `CAP_NET_BIND_SERVICE`, direct on port 80, a fresh seed copy per probe, no kernel tuning
+  beyond what the droplet has (rule 11). A load box running k6 with the challenge's unmodified `bench/load.js`, its
+  memory sized for the search; a bigger box only if k6 itself saturates, said so. The other options were one box with
+  k6 on its other cores over loopback (D55's setup, cheaper but optimistic) and DigitalOcean's real droplet (most
+  faithful, a new account and new tooling) (Jacob, 2026-11-24 22:40, [notes.md](notes.md)).
+- **D90:** phase 7's search, short and fail fast: Arjay's warm-up (1,000 users, 2 minutes), a 2-minute probe at
+  71,000, steps of 5 % up until a probe fails, then 5-minute holds stepping down 5 % until one passes. Pass = p95 <
+  500 ms, p99 < 1 s, errors < 1 %, as the bench says. The app restarts on a fresh database before every probe. Arjay's
+  full search from 2,500 was the other option (Jacob, 2026-11-24 22:40, [notes.md](notes.md)).
+- **D91:** the server box's shape. One vCPU through EC2's CPU options at launch (`CoreCount=1, ThreadsPerCore=1`): the
+  OS sees one CPU from boot and the core's other hyperthread is disabled for the instance, so the server has one core
+  with no sibling, the layout of 5a's x86 calibration, whose Xeon-to-bench factor (1.57) then applies as measured. 2
+  GB: `mem=2G` on the kernel's boot line (a `grub.d` drop-in, one reboot), so the whole box sees 2 GB, OS included; a
+  cgroup cap would leave the OS outside. No swap, no `sysctl`, nothing disabled. If MemTotal is over 2,048 MiB after the
+  reboot, the run stops (project manager, phase 7, 2026-11-24, [details/phase-7.md](details/phase-7.md)).
+- **D92:** the search driver runs on the load box, detached, and drives the server box over SSH on the private network
+  (a key made on the load box); the Mac launches, sets up, starts it and copies results back. Each probe: the service
+  stopped, a fresh seed copy, started, `/health` within 60 s, the server's sampler, k6, the sampler stopped. k6 is the
+  lab's pinned image (`grafana/k6:1.8.3`) on the host network, on `load.js` checked by its git blob hash against the
+  challenge's `162699a`, with only `-e BASE_URL -e VUS -e DURATION` for the script and `--local-ips`,
+  `--summary-export`, `--address` for k6. k6's REST API, polled once a second, gives the plateau's window and request
+  count; µs/req = the service's CPU over the plateau / its requests. Exit 0 passes, 99 fails, anything else stops the
+  search (project manager, phase 7, 2026-11-24).
+- **D93:** the load box is an `m5.4xlarge`, not a `c5.4xlarge`: at the lab's 0.343 MiB a VU, the `c5.4xlarge`'s 32
+  GiB holds about 85,000 VUs, and on AWS the server's core is about 1.57 times faster per request than the bench's, so
+  its CPU wall sits near 125,000 to 140,000 users; k6 would be the wall first. The `m5.4xlarge` has the same 16 vCPUs and
+  64 GiB (about 170,000 VUs). Scope 1 measures k6's memory a VU with the real `load.js`; under 0.18 MiB, back to the
+  `c5.4xlarge` ([Q20](plan.md), coded; project manager, phase 7, 2026-11-24).
+- **D94:** the load box gets 3 secondary private addresses (4 in all) and its ephemeral range at 1,024 to 65,535, about
+  258,000 connections to the server's one `address:80`; one address at Ubuntu's default range caps k6 at 28,232.
+  Rule 11 binds the server box, which keeps Ubuntu's defaults (project manager, phase 7, 2026-11-24).
+- **D95:** a probe records, once a second on the server box, cheap counters only: the box's CPU, the service's cgroup
+  CPU and memory, the processes' RSS, `MemAvailable`, `sockstat`, `PassiveOpens` (its difference a second: connections
+  per second), `RetransSegs`, `ListenOverflows`, `ListenDrops`; fds every 10 s; the ENA allowance counters and the OOM
+  lines at start and end; the load box's CPU and k6's memory. The first failing probe's wall is the first that holds:
+  k6 (load box over 85 % CPU or 90 % memory: the probe is void), memory (OOM, service gone, `MemAvailable` under 100
+  MiB), network (an ENA counter grew), fds (`ListenDrops` grew, or dial errors with a process within 100 fds of
+  65,535), CPU (over 88 % busy on the plateau's median second), else latency below saturation, then looked into
+  (project manager, phase 7, 2026-11-24).
+- **D96:** phase 7's score is "AWS, our run", the number "Done when" reads. Next to it, when the wall is the CPU, a
+  bench estimate through 5a's Xeon-to-bench factor (AWS users / 1.57, 1.50 to 1.63), said as an estimate, with the
+  measured differences: CPU model, one core with no sibling, the RTT, the kernel, the disk's `fsync`, the ENA
+  allowances (project manager, phase 7, 2026-11-24).
+- **D97:** the search's arithmetic: 5 % up rounded to the nearest 1,000 (71,000, 75,000, 79,000, 83,000…); the holds
+  start at the highest passing probe (67,000 if 71,000 fails), each 5 % under the last, rounded, 6 at most; a void
+  probe ends the search ("at least N, bound by k6"), no third instance type; 60 s between k6 runs; both boxes shut down
+  on their own after 4 hours; no placement-group capacity: one retry after 2 minutes, then the same subnet without the
+  group, the RTT measured and said (project manager, phase 7, 2026-11-24).
+
 ## History
 
 Nothing yet.
