@@ -1,6 +1,6 @@
 # $12 server challenge in PHP
 
-**Status:** 🔵 Phase 7 running (the score on x86, [details/phase-7.md](details/phase-7.md)): scopes 1 and 2 done (no AWS); the AWS session (scope 3) running since 07:30 on your go · approved on 2026-11-21 · snapshot 2026-11-21-0920 ·
+**Status:** 🔵 Phase 7 running (the score on x86, [details/phase-7.md](details/phase-7.md)): scopes 1 and 2 done (no AWS); the AWS session done: **135,000 users held 5 minutes** (AWS, our run); results and scope 4 next · approved on 2026-11-21 · snapshot 2026-11-21-0920 ·
 **Round:** 7
 **Since your last read:** phase 7 is planned from your two choices (D89 machines, D90 search), and its plan review
 is settled (D92 to D101). Four scopes: the search driver with a local smoke, the two boxes' setup scripts, the AWS
@@ -17,6 +17,10 @@ the 🔴 comes once scopes 1 and 2 are ready.
 
 > **Answer freely:** a letter or `ok`, your own choice (`other: …`), `?` if it's unclear, or
 > `badly framed: …` if an option is missing or the question doesn't hold.
+
+**🔴 Delete the AWS policy `twelve-dollar-phase-7-score`:** in IAM, detach it from `jacob-cli`, then delete it under
+IAM → Policies. The session is over: both boxes terminated at about 10:00, `teardown.sh --verify` shows `TEARDOWN
+CLEAN` (only `terminated` instances; no placement group, security group with its port 80 rule, key pair or volume left).
 
 No open question.
 
