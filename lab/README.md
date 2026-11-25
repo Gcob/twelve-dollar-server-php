@@ -1387,7 +1387,7 @@ script and list it in `CHECKS`.
 only the allowed files) with `check_submission_catches_violations` (a fixture for each rule), `check_submission_passes_challenge_test`
 (42/42, no `--env`), `check_submission_both_workers_answer` (the boot lines, and 200 held connections that grow the socket table of each
 worker), `check_submission_default_host_and_port` (0.0.0.0:80 in a container with a network of its own) and `check_submission_cases`
-(`lab/check/submission-test.php`: the configuration refusals, SIGTERM, a killed worker, and the soft limit on socket pairs and through the loop).
+(`lab/check/submission-test.php`: the configuration refusals, SIGTERM, a killed worker, and the soft limit on socket pairs and through the loop). It also runs `lab/check/post-insert-test.php` (a new post is committed when `post_insert()` returns, and a commit made to fail with a deferred foreign key is an exception).
 `check_submission` also reads `install.sh` (every `curl` followed by a `sha256sum -c` of its file, every `phpize`, `php-config` and `php` by its full
 `/opt/php-gcob/bin/` path, the PHP and ext-event pins equal to the lab's images) and runs the pinned shellcheck on `install.sh`, `build.sh` and
 `start.sh`; `check_submission_install_stops_on_wrong_sha256` runs `install.sh` with one digit of PHP's sha256 changed and sees it stop before `configure`.

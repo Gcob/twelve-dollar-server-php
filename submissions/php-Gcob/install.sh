@@ -24,8 +24,8 @@ EVENT_SHA256=fb3d4e3c9fdc79125274f2b46461492923edec6b489ed7077973f7e65f41dc1c   
 # build-essential, autoconf, pkg-config: the compiler and what `configure` and `phpize` need.
 # libxml2-dev, libsqlite3-dev, libonig-dev, libsodium-dev, libffi-dev: what PHP's own configure flags below link against.
 # libevent-dev: what PECL event builds against.
-apt-get update
-apt-get install -y --no-install-recommends \
+apt-get -o DPkg::Lock::Timeout=120 update
+apt-get -o DPkg::Lock::Timeout=120 install -y --no-install-recommends \
   ca-certificates curl xz-utils build-essential autoconf pkg-config \
   libxml2-dev libsqlite3-dev libonig-dev libsodium-dev libffi-dev libevent-dev
 
@@ -43,7 +43,8 @@ fetch() { # fetch <url> <sha256> <file>
 #   --prefix, --with-config-file-path, --with-config-file-scan-dir
 #                                everything under /opt/php-gcob, and no php.ini there: start.sh passes its settings with -d
 #   --disable-cgi, --disable-fpm CLI only: the server is started with `php server.php`
-#   --enable-opcache             OPcache with its JIT (built in from PHP 8.5)
+#   --enable-opcache             OPcache with its JIT (built in from PHP 8.5; configure ignores this flag there: it is kept because the
+#                                flags match the lab's measured build)
 #   --with-pdo-sqlite            pdo_sqlite against the system libsqlite3 (Ubuntu's 3.45, which has RETURNING)
 #   --enable-mbstring            mbstring (needs libonig)
 #   --with-sodium, --with-ffi    sodium and ffi (libsodium, libffi)

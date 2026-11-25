@@ -100,8 +100,8 @@ The code is in this folder: `app.php` (the five endpoints and SQLite), `connecti
   one. SQLite's page cache is the only cache.
 - **Rule 6, durable before the response:** `app_connection_pragmas()` sets `journal_mode = WAL` and
   `synchronous = NORMAL`, and there is no explicit transaction: each write is its own autocommit transaction.
-  `post_insert()` fetches the `INSERT ... RETURNING` row and closes the cursor, which finishes the statement and
-  commits it, before `post_create()` builds the 201. `like_insert()` runs a statement that ends when `execute()`
+  `post_insert()` fetches every row of the `INSERT ... RETURNING` (steps the statement to its end, where autocommit
+  commits it, and a failed commit is an exception, so the route answers 500), before `post_create()` builds the 201. `like_insert()` runs a statement that ends when `execute()`
   returns, before `like_create()` answers.
 - **Rule 7, no hard-coded response, no load-test detection:** every body comes from SQLite or from the request through
   `json_encode`. The soft limit in `DiyConnection::respond()` (`connection.php`) compares the process's own count of

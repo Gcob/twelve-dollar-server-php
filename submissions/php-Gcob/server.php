@@ -3,7 +3,7 @@
 // connection.php), two worker processes sharing the port (workers.php).
 //
 // Configuration, as the challenge's SPEC.md says: SQLITE_PATH (the database it opens, never a copy) and JWT_SECRET are required, HOST
-// defaults to 0.0.0.0 and PORT to 80. It listens only once every worker has opened the database.
+// defaults to 0.0.0.0 and PORT to 80. Each worker opens the database, then listens; the parent prints the boot lines once every worker listens.
 //
 // Built in, with no switch: two processes on SO_REUSEPORT, each with its own database connection and its own loop; a soft limit of 64,000
 // client connections per process (a response built while more are open says `Connection: close` and its connection ends once written; an

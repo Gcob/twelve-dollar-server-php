@@ -1112,7 +1112,8 @@ check_submission_install_stops_on_wrong_sha256() {
 }
 
 # The submission's own cases (lab/check/submission-test.php, run with the submissions folder mounted): the configuration refusals leave
-# nothing listening, SIGTERM and a killed worker end the process as they should, and the soft limit's path on socket pairs.
+# nothing listening, SIGTERM and a killed worker end the process as they should, and the soft limit's path on socket pairs; then
+# lab/check/post-insert-test.php, the committed-before-return case of post_insert().
 check_submission_cases() {
   local out ok rc=0
   out="$(LAB_RUN_SUBMISSIONS=1 bash "$LAB/run.sh" 8.5 php -d extension=sockets -d extension=event -d extension=pcntl /lab/check/submission-test.php 2>&1)" || rc=$?
@@ -1120,6 +1121,13 @@ check_submission_cases() {
   ok="$(grep -c '^ok  ' <<<"$out")"
   [ "$ok" = 16 ] || { echo "expected 16 ok cases, got $ok: ${out//$'\n'/ | }"; return 1; }
   ! grep -q 'FAIL' <<<"$out" || { echo "a case failed: ${out//$'\n'/ | }"; return 1; }
+  # post_insert(): a second connection reads the new row when it returns, and a commit made to fail (a deferred foreign key) is an exception.
+  rc=0
+  out="$(LAB_RUN_SUBMISSIONS=1 bash "$LAB/run.sh" 8.5 php /lab/check/post-insert-test.php 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "post-insert-test.php exited $rc: ${out//$'\n'/ | }"; return 1; }
+  ok="$(grep -c '^ok  ' <<<"$out")"
+  [ "$ok" = 2 ] || { echo "expected 2 ok post_insert cases, got $ok: ${out//$'\n'/ | }"; return 1; }
+  ! grep -q 'FAIL' <<<"$out" || { echo "a post_insert case failed: ${out//$'\n'/ | }"; return 1; }
 }
 
 # The feed bench times every case of the S6 variants (APP_JSON's and APP_DRIVER's too, and the raw FFI floor) and none is skipped (each case checked its answer against the reference's), and the

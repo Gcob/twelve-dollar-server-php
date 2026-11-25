@@ -10,7 +10,7 @@
 # read from /proc, and a negative check: without the capability `deploy` cannot bind port 80.
 #
 # --ci (.github/workflows/test.yml of the challenge): the runner image has Ubuntu's PHP 8.3 first on the PATH and its tools; the entry
-# installs with `sudo bash install.sh` (sudo resets the PATH), then test/run.sh runs as a normal user on its defaults (127.0.0.1:3000).
+# installs with `sudo bash php-Gcob/install.sh` from the repo's root (sudo resets the PATH), then test/run.sh runs as a normal user on its defaults (127.0.0.1:3000).
 # A bare `phpize` in install.sh would build the extensions for 8.3 and fail here.
 #
 # What the container copies from the droplet: Ubuntu 24.04 (the lab's pinned digest), ONE CPU (so nproc is 1 and PHP compiles as slowly
@@ -55,7 +55,7 @@ challenge="$(cd -P "$REPO/reference/twelve-dollar-server-challenge" 2>/dev/null 
 image="$(lab_base_image)"
 [ -n "$image" ] || fail "no base image found in lab/images/Dockerfile.src"
 if [ -n "$(docker ps -a --format '{{.Names}}' | grep -x "$NAME" || true)" ]; then
-  fail "a lab/submission-test.sh container exists (a run in progress, or one kept): docker rm -f $NAME $NET first"
+  fail "a lab/submission-test.sh container exists (a run in progress, or one kept): docker rm -f $NAME; docker network rm $NET first"
 fi
 
 work="$(mktemp -d)"
@@ -91,11 +91,12 @@ show_tail() { echo "--- last 30 lines of $1"; tail -30 "$1"; }
 
 echo "submission-test: $mode mode, image $image"
 docker network create "$NET" >/dev/null
+# From here the network is ours, so cleanup removes it even if `docker run` fails (docker rm -f of a container that does not exist is silent).
+created=1
 # CI mode leaves the open-files limit at Docker's default: the runner has no systemd unit.
 limits=(--cpuset-cpus "$LAB_CPUSET_SERVER" --memory 2g --memory-swap 2g --sysctl net.ipv4.ip_unprivileged_port_start=1024)
 [ "$mode" = ci ] || limits+=(--ulimit nofile=65535:65535)
 docker run -d --name "$NAME" --network "$NET" "${limits[@]}" "$image" sleep infinity >/dev/null
-created=1
 ok "container: $(ex "$NAME" nproc) CPU, $(docker inspect -f '{{.HostConfig.Memory}}' "$NAME") bytes of memory, port floor $(ex "$NAME" cat /proc/sys/net/ipv4/ip_unprivileged_port_start)"
 
 copy_in "$submission" php-Gcob
@@ -104,13 +105,13 @@ ex "$NAME" mkdir -p "$ROOT/seed"
 docker cp "$LAB/data/feed.db" "$NAME:$ROOT/seed/feed.db"
 ex "$NAME" chmod -R a+rX "$ROOT"
 
-# run_install <user, or empty for root> <command words...>: the install, timed; its output goes to a log the caller can follow.
+# run_install <user, or empty for root> <folder to run from> <command words...>: the install, timed; its output goes to a log the caller can follow.
 run_install() {
-  local user="$1" started secs line
-  shift
+  local user="$1" dir="$2" started secs line
+  shift 2
   echo "install: running, follow it with: tail -f $work/install.log"
   started="$(date +%s)"
-  if ! docker exec ${user:+-u "$user"} -w "$ROOT/php-Gcob" "$NAME" "$@" >"$work/install.log" 2>&1; then
+  if ! docker exec ${user:+-u "$user"} -w "$dir" "$NAME" "$@" >"$work/install.log" 2>&1; then
     show_tail "$work/install.log"
     bad "install: failed"
     exit 1
@@ -135,7 +136,8 @@ if [ "$mode" = ci ]; then
     */php\ 8.3.*) ok "ci: php on the PATH is $trap_php (the trap is armed)" ;;
     *) bad "ci: expected Ubuntu's PHP 8.3 on the PATH, got: $trap_php" ;;
   esac
-  run_install runner sudo bash install.sh
+  # From the repo's root with the folder in the path, as the workflow runs it (`sudo bash <dir>/install.sh`).
+  run_install runner "$ROOT" sudo bash php-Gcob/install.sh
   out="$(ex -u runner "$NAME" bash test/run.sh "$ROOT/php-Gcob" 2>&1)" || true
   if grep -qx 'passed=42 failed=0' <<<"$out"; then
     ok "run.sh: passed=42 failed=0 (127.0.0.1:3000, as runner)"
@@ -143,7 +145,7 @@ if [ "$mode" = ci ]; then
     echo "$out" | tail -30; bad "run.sh: $(grep '^passed=' <<<"$out" || echo 'no summary line')"
   fi
 else
-  run_install "" bash install.sh
+  run_install "" "$ROOT/php-Gcob" bash install.sh
 
   # The test suite's tools come after the install, so that install.sh proves it brings its own curl. procps: pkill, which test/run.sh uses.
   ex "$NAME" bash -c 'apt-get install -y -qq --no-install-recommends curl jq openssl procps' >"$work/tools.log" 2>&1 \

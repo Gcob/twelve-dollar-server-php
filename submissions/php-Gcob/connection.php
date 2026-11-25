@@ -47,7 +47,8 @@ final class DiyConnection
     public const HEADER_LIMIT = 8192;
     /** Largest accepted Content-Length. The challenge's POST bodies are tiny; this only bounds the memory of one connection. */
     public const BODY_LIMIT = 1048576;
-    // Why: PHP reads at most 8192 bytes from a socket per fread() whatever the length asked for.
+    // Why: the lab's value, kept for parity with the measured runs. loop.php turns the read buffer off, so one fread() asks recv() for this
+    // many bytes and a larger value would read larger chunks: it is a choice, not a limit of PHP.
     private const READ_SIZE = 8192;
 
     private const HEAD = [

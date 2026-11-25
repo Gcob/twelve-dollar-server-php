@@ -78,6 +78,7 @@ function app_sqlite_line(): string
     return 'sqlite: journal_mode=' . $read('journal_mode') . ' synchronous=' . $read('synchronous') . ' mmap_size=' . $read('mmap_size') . ' cache_size=' . $read('cache_size');
 }
 
+// S3 to S8 below are the steps of a request, as this project's lab names them (its table: https://github.com/Gcob/twelve-dollar-server-php/blob/main/lab/README.md).
 // S3, route. A plain match on the method and the path (a `?query` is cut off first).
 
 /**
@@ -293,9 +294,10 @@ function post_insert(int $userId, string $body): array
     $statement = $app_db['post_insert'];
     try {
         $statement->execute([$userId, $body]);
-        return $statement->fetch();
+        // Why: autocommit commits when the statement halts. fetchAll() steps it to its end, so a failed commit is an exception (a 500);
+        // closeCursor() alone would do it in sqlite3_reset(), whose error pdo_sqlite ignores: the 201 would answer a rolled-back row.
+        return $statement->fetchAll()[0];
     } finally {
-        // Why: a statement that is not finished keeps its write transaction open.
         $statement->closeCursor();
     }
 }
