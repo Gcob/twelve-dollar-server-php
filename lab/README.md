@@ -1394,7 +1394,7 @@ bash lab/score/search.sh --base-url http://<server>:80 --ctl "ssh <server> sudo 
 
 The plateau is read from k6's REST API (`vus` equals the target) and the server's rows, stamped with milliseconds, are matched to it by time
 (the counters are interpolated at its first and last second). A failed run gets a **wall**, the first rule that holds: `k6` (void: the load box
-over 85 % CPU on a plateau second, or k6 over 90 % of its memory), `memory` (a new OOM line, or MemAvailable under 100 MiB), `died` (the service died with neither: a PHP fatal, a segfault, a stop), `network`
+over 85 % CPU on more than 10 % of the plateau's seconds or on 5 in a row, or k6 over 90 % of its memory; a second or two of garbage collection is not that), `memory` (a new OOM line, or MemAvailable under 100 MiB), `died` (the service died with neither: a PHP fatal, a segfault, a stop), `network`
 (an ENA allowance counter grew), `fds` (ListenDrops grew, or dial errors with a process within 100 of 65,535 files), `cpu` (the service
 over 88 % of a core on the plateau), else `latency-below-saturation`. The plateau includes the seconds of k6's graceful ramp down in which the VUs
 still run their last iteration: `vus` leaves the target only when they finish.

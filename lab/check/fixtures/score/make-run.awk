@@ -3,10 +3,10 @@
 # A run of `users` users: a 5 s ramp, a 10 s plateau, a 3 s ramp down, one row a second. The REST rows are at .0 of each second, the load
 # box's at .1 and the server's at .4, so the plateau has to be matched by time. The plateau serves `rate` requests a second (20 outside
 # it), the service burns `svc` cores, the server box (2 CPUs) is `busy` busy, the load box (4 CPUs) is `lbbusy` busy, and `lbspike` busy
-# at its second 9 (on the plateau). Written by hand so that the expected numbers of the check come from arithmetic, not from the code:
+# at its seconds `lbspikes` (the plateau is seconds 5 to 5 + plateau - 1 for the load box's rows). Written by hand so that the expected numbers of the check come from arithmetic, not from the code:
 #   plateau: from second 5 to second 15, 10 s; plateau requests 10 * rate; service burns 10 * svc * 1,000,000 us on it;
 #   passive opens: 40 a second on the plateau (55 at second 9), 10 outside it, 90 at second 2.
-# Options (defaults): users=100 rate=1000 svc=0.5 busy=0.6 lbbusy=0.3 lbspike=0.3 k6mib=200 avail=2000000 drops=0 fds=130 p95=120 p99=300
+# Options (defaults): plateau=10 (its length in seconds) lbspikes=9 (the seconds, comma separated, where the load box is `lbspike` busy) users=100 rate=1000 svc=0.5 busy=0.6 lbbusy=0.3 lbspike=0.3 k6mib=200 avail=2000000 drops=0 fds=130 p95=120 p99=300
 # err=0 instant=0 (1: the users are there from the first second, and the first `early404` rows have no http_reqs metric, as in a 1-user run) early404=0 oom=0 (OOM lines at the end) ena=0 (growth of the ENA counter pps_allowance_exceeded) cavail=0 (change of the gauge conntrack_allowance_available, which is not a count of anything bad) sampler_ms=50 (the sampler's CPU time).
 function opt(name, def) { return (name in V) ? V[name] : def }
 BEGIN {
@@ -16,7 +16,9 @@ BEGIN {
   lbbusy = opt("lbbusy", 0.3) + 0; lbspike = opt("lbspike", 0.3) + 0; k6mib = opt("k6mib", 200) + 0; avail = opt("avail", 2000000) + 0
   drops = opt("drops", 0) + 0; fds = opt("fds", 130) + 0; p95 = opt("p95", 120) + 0; p99 = opt("p99", 300) + 0; err = opt("err", 0) + 0
   instant = opt("instant", 0) + 0; early404 = opt("early404", 0) + 0; oom = opt("oom", 0) + 0; ena = opt("ena", 0) + 0; cavail = opt("cavail", 0) + 0; sampler_ms = opt("sampler_ms", 50) + 0
-  t0 = 1700000000; ramp = 5; plateau = 10; down = 3; rows = ramp + plateau + down
+  plateau = opt("plateau", 10) + 0
+  ns = split(opt("lbspikes", "9"), sp, ","); for (i = 1; i <= ns; i++) SPIKE[sp[i] + 0] = 1
+  t0 = 1700000000; ramp = 5; down = 3; rows = ramp + plateau + down
   rest = dir "/rest.tsv"; lb = dir "/loadbox.csv"; srv = dir "/server.csv"
   printf "" > rest
   print "ts,cpu_user,cpu_nice,cpu_system,cpu_idle,cpu_iowait,cpu_irq,cpu_softirq,cpu_steal,k6_mem_current,k6_mem_peak,mem_total_kb" > lb
@@ -31,7 +33,7 @@ BEGIN {
     c = (i < early404) ? nometric : sprintf("{\"data\":{\"attributes\":{\"sample\":{\"count\":%d,\"rate\":1}}}}", reqs)
     r = (i < early404) ? nometric : "{\"data\":{\"attributes\":{\"sample\":{\"rate\":0}}}}"
     printf "%.3f\t{\"data\":{\"attributes\":{\"sample\":{\"value\":%d}}}}\t%s\t%s\t\n", t0 + i, vus, c, r >> rest
-    b = (i == 9) ? lbspike : lbbusy
+    b = (i in SPIKE) ? lbspike : lbbusy
     if (i > 0) { lbu += b * 400; lbi += (1 - b) * 400 }
     m = (k6mib + i) * 1048576
     printf "%.3f,%d,0,0,%d,0,0,0,0,%d,%d,8000000\n", t0 + i + 0.1, lbu, lbi, m, m >> lb

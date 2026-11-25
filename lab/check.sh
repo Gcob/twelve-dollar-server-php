@@ -2603,7 +2603,18 @@ score_check_numbers() {
 score_check_walls() {
   local j
   j="$(score_run -- 99)" && score_expect "a failed run with room left" "$j" '[.pass, .wall] | join(" ")' "false latency-below-saturation" || return 1
-  j="$(score_run lbspike=0.9 -- 99)" && score_expect "the load box at 90 % on a plateau second" "$j" '[.void, .wall] | join(" ")' "true k6" || return 1
+  j="$(score_run lbspike=0.9 lbspikes=5,6,7,8,9 -- 99)" && score_expect "the load box at 90 % for 5 seconds in a row on a 10 s plateau" "$j" '[.void, .wall] | join(" ")' "true k6" || return 1
+  # The shape of the real 71,000-user probe on AWS: k6's garbage collector took the load box to 90 % or more for 1 or 2 seconds, 6 seconds in 120.
+  j="$(score_run lbspike=0.9 plateau=120 lbspikes=8,9,41,42,75,76 -- 99)" \
+    && score_expect "6 spike seconds of 120, at most 2 in a row: not void" "$j" '[.void, .wall, .loadbox.plateau_seconds, .loadbox.seconds_over_85, .loadbox.longest_streak_over_85] | join(" ")' "false latency-below-saturation 120 6 2" || return 1
+  j="$(score_run lbspike=0.9 plateau=120 lbspikes=10,19,28,37,46,55,64,73,82,91,100,109 -- 99)" \
+    && score_expect "12 seconds of 120 (10 %), apart: not void" "$j" '[.void, .loadbox.seconds_over_85, .loadbox.longest_streak_over_85] | join(" ")' "false 12 1" || return 1
+  j="$(score_run lbspike=0.9 plateau=120 lbspikes=10,19,28,37,46,55,64,73,82,91,100,109,118 -- 99)" \
+    && score_expect "13 seconds of 120 (over 10 %), apart: void" "$j" '[.void, .wall, .loadbox.seconds_over_85, .loadbox.longest_streak_over_85] | join(" ")' "true k6 13 1" || return 1
+  j="$(score_run lbspike=0.9 plateau=120 lbspikes=20,21,22,23 -- 99)" \
+    && score_expect "4 seconds in a row: not void" "$j" '[.void, .loadbox.longest_streak_over_85] | join(" ")' "false 4" || return 1
+  j="$(score_run lbspike=0.9 plateau=120 lbspikes=20,21,22,23,24 -- 99)" \
+    && score_expect "5 seconds in a row: void" "$j" '[.void, .wall, .loadbox.seconds_over_85, .loadbox.longest_streak_over_85] | join(" ")' "true k6 5 5" || return 1
   j="$(score_run k6mib=7100 -- 0)" && score_expect "k6 over 90 % of the load box's memory, even though it passed" "$j" '[.pass, .void, (.wall // "none")] | join(" ")' "true true none" || return 1
   j="$(score_run oom=1 -- 99)" && score_expect "a new OOM line" "$j" '.wall' "memory" || return 1
   j="$(score_run avail=51200 -- 99)" && score_expect "MemAvailable under 100 MiB" "$j" '.wall' "memory" || return 1
@@ -2683,7 +2694,7 @@ score_check_search() {
   score_search "99"
   [ "$SCORE_RC" = 1 ] && [ "$(score_runs)" = "warmup:1000:false" ] && grep -q 'warm-up failed' "$SCORE_OUT/search.json" \
     || { echo "a failing warm-up is a harness error, the search stops (exit $SCORE_RC): $(score_runs)"; return 1; }
-  score_search "0 0 0/lbspike=0.9 0"
+  score_search "0 0 0/lbspike=0.9+lbspikes=5,6,7,8,9 0"
   [ "$SCORE_RC" = 0 ] && [ "$(score_runs)" = "warmup:1000:true probe:71000:true probe:75000:true" ] \
     && [ "$(jq -r '.end | [.result, .reason] | join("|")' "$SCORE_OUT/search.json" | cut -c1-39)" = "bound-by-k6|at least 71000, bound by k6" ] \
     || { echo "a void run ends the search at 'at least 71000, bound by k6' (exit $SCORE_RC): $(score_runs) $(jq -c .end "$SCORE_OUT/search.json")"; return 1; }

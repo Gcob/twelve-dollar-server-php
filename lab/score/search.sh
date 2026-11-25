@@ -12,7 +12,7 @@
 # each next one --step % under the last, until one passes (the score) or --max-holds have failed ("no hold passed down to N"). --max-probes
 # caps the climb: when that many probes passed, the holds start at the highest of them. --pause seconds between two k6 runs (default 60).
 # k6's exit code decides: 0 passes, 99 fails (a threshold crossed), anything else is a harness error: the search stops. A run is void when
-# the load box was over 85 % CPU on a plateau second or k6 held over 90 % of the load box's memory: the search ends at "at least <highest
+# the load box was over 85 % CPU on more than 10 % of the plateau's seconds or on 5 in a row (k6's garbage collector alone spikes a second or two) or k6 held over 90 % of the load box's memory: the search ends at "at least <highest
 # pass>, bound by k6". --ramp-up exists for the smoke only (it passes -e RAMP_UP); without it the script's own 60 s stands.
 #
 # <ctl> is a command line, split on spaces and tabs (see lab/score/run-k6.sh): `ssh host sudo /srv/score/server-ctl.sh`. It answers `facts`

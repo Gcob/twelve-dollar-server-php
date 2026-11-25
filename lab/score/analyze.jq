@@ -103,9 +103,14 @@ def window($rows; $s; $e): [$rows[] | select(.ts >= $s and .ts <= $e)];
 | (seconds($lb)) as $lb_s
 | (if $pw then [$lb_s[] | select(.ts >= $pw.start and .ts <= $pw.end)] else [] end) as $lb_plat
 | ([$lb_plat[] | busy_share | select(. != null)] | maxn) as $lb_cpu_max
+| ([$lb_plat[] | ((busy_share // 0) > 0.85)]) as $lb_hot
+| ($lb_hot | map(select(.)) | length) as $lb_hot_n
+| ($lb_hot | reduce .[] as $h ({run: 0, max: 0}; if $h then .run += 1 | .max = ([.max, .run] | max) else .run = 0 end) | .max) as $lb_streak
 | ([$lb[].k6_mem_current, $lb[].k6_mem_peak | select(. != null)] | maxn) as $k6_mem_peak
 | ([$lb[].mem_total_kb | select(. != null)] | maxn) as $lb_mem_kb
-| (if $lb_cpu_max != null and $lb_cpu_max > 0.85 then "the load box's CPU reached \($lb_cpu_max * 100 | round) % on a plateau second"
+# Why not "any second over 85 %": k6's garbage collector marks its heap (20 GiB at 71,000 users) on every core for a second or two every 35 s or so, which
+# is not k6 being the wall. A run is void when the load box is over 85 % on more than 10 % of the plateau's seconds, or on 5 seconds in a row.
+| (if ($lb_hot | length) > 0 and ($lb_hot_n * 10 > ($lb_hot | length) or $lb_streak >= 5) then "the load box's CPU was over 85 % on \($lb_hot_n) of \($lb_hot | length) plateau seconds (\($lb_streak) in a row at most, peak \($lb_cpu_max * 100 | round) %)"
    elif $k6_mem_peak != null and $lb_mem_kb != null and $k6_mem_peak > $lb_mem_kb * 1024 * 0.9 then "the k6 container held \($k6_mem_peak / 1048576 | round) MiB, over 90 % of the load box's memory"
    else null end) as $void_reason
 
@@ -150,7 +155,7 @@ def window($rows; $s; $e): [$rows[] | select(.ts >= $s and .ts <= $e)];
       fds_max: $fds_max,
       rows: ($srv | length)
     },
-    loadbox: {cpu_max: $lb_cpu_max, k6_memory_peak_bytes: $k6_mem_peak, mem_total_kb: $lb_mem_kb, k6_cgroup_layout: $meta.cgroup_layout},
+    loadbox: {cpu_max: $lb_cpu_max, plateau_seconds: ($lb_hot | length), seconds_over_85: $lb_hot_n, longest_streak_over_85: $lb_streak, k6_memory_peak_bytes: $k6_mem_peak, mem_total_kb: $lb_mem_kb, k6_cgroup_layout: $meta.cgroup_layout},
     healthy_s: $meta.healthy_s, service_died: $meta.server_died, dial_errors: $meta.dial_errors,
     wall: $wall
   }
