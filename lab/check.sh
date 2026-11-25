@@ -2633,6 +2633,9 @@ score_check_walls() {
   j="$(score_run fds=100 -- 99 'k6.log=time="x" level=warning msg="Request Failed" error="Get: dial tcp: i/o timeout"')" && score_expect "dial errors with fds far from the limit" "$j" '.wall' "latency-below-saturation" || return 1
   j="$(score_run fds=65500 -- 99)" && score_expect "a process near 65,535 fds but no dial error" "$j" '.wall' "latency-below-saturation" || return 1
   j="$(score_run svc=0.9 -- 99)" && score_expect "the service over 88 % of a core on the plateau" "$j" '.wall' "cpu" || return 1
+  # The wall reads the plateau's median second of the service's share: a few seconds at 100 % lift the mean over the line, not the median, and the reverse.
+  j="$(score_run svc=0.85 svcspike=1.0 svcspikes=7,8,9 -- 99)" && score_expect "the service's mean share over 88 % (3 seconds at 100 %, 7 at 85 %) but its median second under: not the CPU" "$j" '[.server.service_share > 0.88, .wall] | join(" ")' "true latency-below-saturation" || return 1
+  j="$(score_run svc=0.9 svcspike=0.5 svcspikes=7,8,9 -- 99)" && score_expect "the service's mean share under 88 % (3 seconds at 50 %, 7 at 90 %) but its median second over: the CPU" "$j" '[.server.service_share < 0.88, .wall] | join(" ")' "true cpu" || return 1
   j="$(score_run svc=0.4 busy=0.95 -- 99)" && score_expect "the box busy but the service under 88 %: the others are the load" "$j" '.wall' "latency-below-saturation" || return 1
   j="$(score_run svc=0.95 busy=0.95 oom=1 -- 99)" && score_expect "an OOM line with the CPU at 95 %" "$j" '.wall' "memory" || return 1
   j="$(score_run svc=0.9 busy=0.9 ena=2 -- 99)" && score_expect "an ENA counter grown with the CPU at 90 %" "$j" '.wall' "network" || return 1

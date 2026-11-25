@@ -1396,7 +1396,7 @@ The plateau is read from k6's REST API (`vus` equals the target) and the server'
 (the counters are interpolated at its first and last second). A failed run gets a **wall**, the first rule that holds: `k6` (the failed run is void: the load box
 over 85 % CPU on more than 10 % of the plateau's seconds or on 5 in a row, or k6 over 90 % of its memory; a second or two of garbage collection is not that; a run that passes is a valid pass whatever k6 did, since k6's saturation can only make the latency worse), `memory` (a new OOM line, or MemAvailable under 100 MiB), `died` (the service died with neither: a PHP fatal, a segfault, a stop), `network`
 (an ENA allowance counter grew), `fds` (ListenDrops grew, or dial errors with a process within 100 of 65,535 files), `cpu` (the service
-over 88 % of a core on the plateau), else `latency-below-saturation`. The plateau includes the seconds of k6's graceful ramp down in which the VUs
+over 88 % of a core on the plateau's median second, not its mean: a few seconds at 100 % do not make a CPU wall), else `latency-below-saturation`. The plateau includes the seconds of k6's graceful ramp down in which the VUs
 still run their last iteration: `vus` leaves the target only when they finish.
 
 `check_score` covers it with no Docker: the next-step rule (71,000, 75,000, 79,000, ...; holds from the highest pass; 6 failing holds stop;

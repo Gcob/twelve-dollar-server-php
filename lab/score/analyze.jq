@@ -76,6 +76,7 @@ def window($rows; $s; $e): [$rows[] | select(.ts >= $s and .ts <= $e)];
 | (if $pw and ($srv | length) > 1 then at($srv; $pw.start; "cg_usage_usec") else null end) as $use_s
 | (if $pw and ($srv | length) > 1 then at($srv; $pw.end; "cg_usage_usec") else null end) as $use_e
 | (if $use_s != null and $use_e != null and $plateau_s > 0 then ($use_e - $use_s) / ($plateau_s * 1000000) else null end) as $service_share
+| ([$srv_plat[] | (.cur.cg_usage_usec - .prev.cg_usage_usec) / (.dt * 1000000)]) as $svc_seconds
 | (lines($server_end; "sampler_cpu_ms")[0] // null | if . == null then null else tonumber end) as $samp_ms
 | (lines($server_end; "sampler_wall_ms")[0] // null | if . == null then null else tonumber end) as $samp_wall
 | (if $samp_ms != null and ($samp_wall // 0) > 0 then $samp_ms / $samp_wall else null end) as $sampler_cores
@@ -124,7 +125,7 @@ def window($rows; $s; $e): [$rows[] | select(.ts >= $s and .ts <= $e)];
    elif $meta.server_died then "died"
    elif $ena_diff != null and ($ena_diff | to_entries | any(.value > 0 and (.key | endswith("_exceeded")))) then "network"
    elif ($drops != null and $drops > 0) or ($meta.dial_errors > 0 and ($fds_max | to_entries | any(.value >= 65435))) then "fds"
-   elif $service_share != null and $service_share > 0.88 then "cpu"
+   elif ($svc_seconds | median) != null and ($svc_seconds | median) > 0.88 then "cpu"
    else "latency-below-saturation" end) as $wall
 
 | {
@@ -139,7 +140,7 @@ def window($rows; $s; $e): [$rows[] | select(.ts >= $s and .ts <= $e)];
                 | if $f != null and $meta.k6_started != null then $f.ts - $meta.k6_started else null end),
     server: {
       cpu_busy_median: ($busy_plat | median), cpu_busy_max: ($busy_plat | maxn),
-      service_share: $service_share, others_median: ($others | median), sampler_cores: $sampler_cores,
+      service_share: $service_share, service_share_median: ($svc_seconds | median), others_median: ($others | median), sampler_cores: $sampler_cores,
       us_per_req: (if $use_s != null and $use_e != null and ($plateau_reqs // 0) > 0 then ($use_e - $use_s) / $plateau_reqs else null end),
       accepts_per_s_median: ($acc_plat | median), accepts_per_s_max_plateau: ($acc_plat | maxn), accepts_per_s_max_run: ($acc_all | maxn),
       memory_current_peak: ([$srv[].mem_current | select(. != null)] | maxn),
