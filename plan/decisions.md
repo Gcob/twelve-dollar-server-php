@@ -561,6 +561,14 @@
   the boxes, the users held, the wall, the factor said but not divided, and a link to the results; no bench estimate
   as a claim (Jacob, Q21 = A, 2026-11-25 07:34, [round 6](questions/2026-11-25-0734.ronde-6.md)).
 
+- **D104:** a run is void (k6 the wall) only when the load box is saturated for a while: its CPU over 85 % on more than
+  10 % of the plateau's seconds or on 5 consecutive seconds, or the k6 container over 90 % of the box's memory. D95's
+  first wording ("any plateau second") voided the first probe at 71,000, which passed (p95 2.2 ms, p99 15.7 ms, 0
+  errors) with the load box at a median 11 %: k6's garbage collector on a 22 GiB heap spikes all 16 vCPUs for 1 to 2
+  seconds about every 35 s (6 of 120 seconds over 85 %). Those seconds can only make k6's measured latency worse, so
+  the search stays conservative; each run records how many seconds spiked and the longest streak. The search reruns
+  from its warm-up (project manager, phase 7, 2026-11-25 08:15).
+
 ## History
 
 Nothing yet.
