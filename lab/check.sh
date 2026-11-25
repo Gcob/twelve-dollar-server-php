@@ -2514,6 +2514,213 @@ check_results_check_catches_drift() {
     || { echo "a block with no END passes or is not named (exit $rc): ${out//$'\n'/ | }"; return 1; }
 }
 
+# The score search (lab/score/): the next-step rule, the plateau window, the per-run numbers and the walls, each on fixtures, no Docker.
+# score_check_steps: the arithmetic of the search (Jacob's 5 % steps, rounded to the nearest n; holds start at the highest pass).
+score_check_steps() {
+  local got
+  # shellcheck source=score/score-lib.sh
+  source "$LAB/score/score-lib.sh" || { echo "lab/score/score-lib.sh does not load"; return 1; }
+  got="$(u=71000; for _ in 1 2 3 4 5 6 7 8; do printf '%s ' "$u"; u="$(score_next_up "$u" 5 1000)"; done)"
+  [ "$got" = "71000 75000 79000 83000 87000 91000 96000 101000 " ] || { echo "probes up from 71,000: $got"; return 1; }
+  got="$(score_next_down 71000 5 1000)"
+  [ "$got" = 67000 ] || { echo "5 % under 71,000 is 67,000 (rounded), got $got"; return 1; }
+  got="$(score_next_down 67000 5 1000) $(score_next_down 64000 5 1000)"
+  [ "$got" = "64000 61000" ] || { echo "holds down from 67,000: $got"; return 1; }
+  got="$(score_round 74550 1000) $(score_round 70775 1000) $(score_round 70500 1000) $(score_round 70499 1000)"
+  [ "$got" = "75000 71000 71000 70000" ] || { echo "rounding to the nearest 1,000 (half up): $got"; return 1; }
+  got="$(score_next_up 200 50 10) $(score_next_down 300 50 10)"
+  [ "$got" = "300 150" ] || { echo "the smoke's size (step 50 %, round 10): $got"; return 1; }
+}
+
+# score_run <options of make-run.awk> -- <k6 exit> [files to add to the folder: name=text]...: makes a run's sampler files in a temporary folder
+# (lab/check/fixtures/score/make-run.awk) and prints lab/score/score-lib.sh's run JSON for it (100 users, k6 started 2 s before the first
+# REST row).
+score_run() {
+  local opts=() dir code kv
+  while [ "$1" != "--" ]; do opts+=("$1"); shift; done
+  shift
+  code="$1"
+  shift
+  dir="$(mktemp -d)"
+  awk -v "dir=$dir" -v "opts=${opts[*]-}" -f "$LAB/check/fixtures/score/make-run.awk" || return 1
+  for kv in "$@"; do printf '%s\n' "${kv#*=}" >"$dir/${kv%%=*}"; done
+  score_run_json "$dir" hold 100 10 "$code" 4 1699999998 systemd
+  rm -rf "$dir"
+}
+
+# score_expect <what> <json> <jq expression> <expected>: fails with a message when the expression does not print the expected text.
+score_expect() {
+  local got
+  got="$(jq -r "$3" <<<"$2")" || { echo "$1: jq failed on $3"; return 1; }
+  [ "$got" = "$4" ] || { echo "$1: $3 is '$got', expected '$4'"; return 1; }
+}
+
+# The numbers of a passing run, from the hand arithmetic written in make-run.awk.
+score_check_numbers() {
+  local j
+  j="$(score_run -- 0)" || { echo "score_run_json failed: $j"; return 1; }
+  score_expect "a passing run" "$j" '[.kind, .users, .k6_exit, .pass, .void, .wall] | join(" ")' "hold 100 0 true false " || return 1
+  score_expect "the summary" "$j" '[.p95_ms, .p99_ms, .error_rate, .http_reqs] | join(" ")' "120 300 0 10160" || return 1
+  score_expect "the plateau window (seconds where vus is 100, matched by time)" "$j" '.plateau | [.start, .end, .seconds, .http_reqs, .req_per_s] | join(" ")' "1700000005 1700000015 10 10000 1000" || return 1
+  j="$(score_run instant=1 early404=2 -- 0)" && score_expect "a run whose users are there from the start and whose first rows have no http_reqs (404): 0 requests then" "$j" '.plateau | [.start, .seconds, .http_reqs] | join(" ")' "1700000000 15 10100" || return 1
+  j="$(score_run -- 0)" || return 1
+  score_expect "the VU init time (first row with vus > 0 minus the container start)" "$j" '.vu_init_s' "3" || return 1
+  score_expect "us per request (500: 0.5 core for 10 s over 10,000 requests, server rows .4 after the REST rows)" "$j" '.server.us_per_req' "500" || return 1
+  score_expect "the service share" "$j" '.server.service_share' "0.5" || return 1
+  score_expect "the box's busy share" "$j" '.server | [.cpu_busy_median, .cpu_busy_max] | join(" ")' "0.6 0.6" || return 1
+  score_expect "others (box busy minus the service minus the sampler, over the 2 CPUs)" "$j" '.server.others_median' "0.3475" || return 1
+  score_expect "accepts a second" "$j" '.server | [.accepts_per_s_median, .accepts_per_s_max_plateau, .accepts_per_s_max_run] | join(" ")' "40 55 90" || return 1
+  score_expect "the peaks" "$j" '.server | [.memory_current_peak, .rss_peak, .mem_available_min_kb, .tcp_inuse_peak, .tcp_tw_peak, .tcp_mem_peak] | join(" ")' "118000000 59000000 2000000 180 18 36" || return 1
+  score_expect "the differences" "$j" '.server | [.listen_overflows, .listen_drops, .retrans_segs] | join(" ")' "0 0 54" || return 1
+  score_expect "the ENA counters" "$j" '.server.ena_allowance_diff | [.bw_in_allowance_exceeded, .pps_allowance_exceeded] | join(" ")' "0 0" || return 1
+  score_expect "the OOM lines" "$j" '.server | [.oom_lines_start, .oom_lines_end] | join(" ")' "1 1" || return 1
+  score_expect "the fds' max a process" "$j" '.server.fds_max | [.["11"], .["12"]] | join(" ")' "120 130" || return 1
+  score_expect "the load box" "$j" '.loadbox | [(.cpu_max * 100 | round), .k6_memory_peak_bytes, .k6_cgroup_layout] | join(" ")' "30 228589568 systemd" || return 1
+  score_expect "the healthy seconds" "$j" '.healthy_s' "4" || return 1
+}
+
+# Each wall of a failed run (k6 exited 99), one fixture each, and the two orders the rule decides.
+score_check_walls() {
+  local j
+  j="$(score_run -- 99)" && score_expect "a failed run with room left" "$j" '[.pass, .wall] | join(" ")' "false latency-below-saturation" || return 1
+  j="$(score_run lbspike=0.9 -- 99)" && score_expect "the load box at 90 % on a plateau second" "$j" '[.void, .wall] | join(" ")' "true k6" || return 1
+  j="$(score_run k6mib=7100 -- 0)" && score_expect "k6 over 90 % of the load box's memory, even though it passed" "$j" '[.pass, .void, (.wall // "none")] | join(" ")' "true true none" || return 1
+  j="$(score_run oom=1 -- 99)" && score_expect "a new OOM line" "$j" '.wall' "memory" || return 1
+  j="$(score_run avail=51200 -- 99)" && score_expect "MemAvailable under 100 MiB" "$j" '.wall' "memory" || return 1
+  j="$(score_run -- 99 server-died.txt=died)" && score_expect "the controller says the service died" "$j" '.wall' "memory" || return 1
+  j="$(score_run ena=3 -- 99)" && score_expect "an ENA counter grew" "$j" '.wall' "network" || return 1
+  j="$(score_run drops=4 -- 99)" && score_expect "ListenDrops grew" "$j" '.wall' "fds" || return 1
+  j="$(score_run fds=65500 -- 99 'k6.log=time="x" level=warning msg="Request Failed" error="Get: dial tcp: i/o timeout"')" && score_expect "dial errors with a process within 100 fds of 65,535" "$j" '.wall' "fds" || return 1
+  j="$(score_run fds=100 -- 99 'k6.log=time="x" level=warning msg="Request Failed" error="Get: dial tcp: i/o timeout"')" && score_expect "dial errors with fds far from the limit" "$j" '.wall' "latency-below-saturation" || return 1
+  j="$(score_run fds=65500 -- 99)" && score_expect "a process near 65,535 fds but no dial error" "$j" '.wall' "latency-below-saturation" || return 1
+  j="$(score_run svc=0.9 -- 99)" && score_expect "the service over 88 % of a core on the plateau" "$j" '.wall' "cpu" || return 1
+  j="$(score_run svc=0.4 busy=0.95 -- 99)" && score_expect "the box busy but the service under 88 %: the others are the load" "$j" '.wall' "latency-below-saturation" || return 1
+  j="$(score_run svc=0.95 busy=0.95 oom=1 -- 99)" && score_expect "an OOM line with the CPU at 95 %" "$j" '.wall' "memory" || return 1
+  j="$(score_run svc=0.9 busy=0.9 ena=2 -- 99)" && score_expect "an ENA counter grown with the CPU at 90 %" "$j" '.wall' "network" || return 1
+  j="$(score_run -- 0)" && score_expect "a passing run has no wall" "$j" '.wall' "null" || return 1
+}
+
+# score_search <exits> [search.sh options]...: runs lab/score/search.sh against the fake controller and the fake k6 (lab/check/fixtures/score/),
+# whose runs exit with the codes of <exits> in order. Leaves the folder in SCORE_OUT, the log in SCORE_LOG, the output in SCORE_TEXT and the
+# search's exit code in SCORE_RC.
+score_search() {
+  local exits="$1" fx="$LAB/check/fixtures/score" tmp
+  shift
+  tmp="$(mktemp -d)"
+  SCORE_OUT="$tmp/search" SCORE_LOG="$tmp/log" SCORE_RC=0
+  echo "$exits" >"$tmp/exits"
+  : >"$SCORE_LOG"
+  SCORE_TEXT="$(FAKE_EXITS="$tmp/exits" FAKE_LOG="$SCORE_LOG" SCORE_K6_COMMAND="bash $fx/fake-k6.sh" bash "$LAB/score/search.sh" \
+    --base-url http://server.example:80 --ctl "bash $fx/fake-ctl.sh" --out "$SCORE_OUT" --pause 0 "$@" 2>&1)" || SCORE_RC=$?
+}
+
+# score_ran <search.json expression over .runs>: the runs as "kind:users:pass" words, in order.
+score_runs() {
+  jq -r '[.runs[] | "\(.kind):\(.users):\(.pass)"] | join(" ")' "$SCORE_OUT/search.json"
+}
+
+score_check_search() {
+  local got
+  score_search "0 0 0 99 99 0"
+  [ "$SCORE_RC" = 0 ] || { echo "a search that finds 71,000 exits $SCORE_RC: ${SCORE_TEXT//$'\n'/ | }"; return 1; }
+  got="$(score_runs)"
+  [ "$got" = "warmup:1000:true probe:71000:true probe:75000:true probe:79000:false hold:75000:false hold:71000:true" ] \
+    || { echo "the runs of a pass, a pass, a fail, then holds from the highest pass: $got"; return 1; }
+  [ "$(jq -r '.end | [.result, .score] | join(" ")' "$SCORE_OUT/search.json")" = "score 71000" ] || { echo "the end is not score 71000: $(jq -c .end "$SCORE_OUT/search.json")"; return 1; }
+  [ "$(grep -c '^ctl restart$' "$SCORE_LOG")" = 6 ] || { echo "the server must restart before each of the 6 k6 runs, the warm-up included: $(grep -c '^ctl restart$' "$SCORE_LOG")"; return 1; }
+  [ "$(grep -c '^ctl sample-' "$SCORE_LOG")" = 12 ] || { echo "each run needs a sample-start and a sample-stop"; return 1; }
+  grep -q '^k6 1000 2m$' "$SCORE_LOG" && grep -q '^k6 71000 2m$' "$SCORE_LOG" && grep -q '^k6 75000 5m$' "$SCORE_LOG" \
+    || { echo "durations: the warm-up and the probes run 2 minutes, the holds 5: $(tr '\n' ' ' <"$SCORE_LOG")"; return 1; }
+  [ "$(jq '.decisions | length' "$SCORE_OUT/search.json")" -ge 6 ] || { echo "every step has a decision with its reason"; return 1; }
+  jq -e '.facts.nproc == 2 and .arguments.base_url == "http://<server>:80" and (.runs | all(.folder != null))' "$SCORE_OUT/search.json" >/dev/null \
+    || { echo "search.json has no facts, or keeps the server's address: $(jq -c '.facts, .arguments' "$SCORE_OUT/search.json")"; return 1; }
+  [ -f "$SCORE_OUT/06-hold-71000/run.json" ] || { echo "no folder with a run.json per run"; return 1; }
+  grep -q '^warmup' <<<"$SCORE_TEXT" && grep -q '^hold     71000' <<<"$SCORE_TEXT" || { echo "the table has no row for the warm-up and the passing hold: ${SCORE_TEXT//$'\n'/ | }"; return 1; }
+
+  score_search "0 99 99 0"
+  got="$(score_runs)"
+  [ "$got" = "warmup:1000:true probe:71000:false hold:67000:false hold:64000:true" ] \
+    || { echo "a first probe that fails starts the holds 5 % under it (67,000), then 64,000 (63,650 rounded): $got"; return 1; }
+  [ "$(jq -r '.end.score' "$SCORE_OUT/search.json")" = 64000 ] || { echo "the score of a search that holds at 64,000"; return 1; }
+
+  score_search "0 99 99 99 99 99 99 99"
+  got="$(score_runs)"
+  [ "$SCORE_RC" = 0 ] && [ "$got" = "warmup:1000:true probe:71000:false hold:67000:false hold:64000:false hold:61000:false hold:58000:false hold:55000:false hold:52000:false" ] \
+    || { echo "6 failing holds stop the search (exit $SCORE_RC): $got"; return 1; }
+  [ "$(jq -r '.end | [.result, .score, .reason] | map(tostring) | join("|")' "$SCORE_OUT/search.json")" = "no-score|null|no hold passed down to 52000 (6 holds failed)" ] \
+    || { echo "the end of 6 failing holds: $(jq -c .end "$SCORE_OUT/search.json")"; return 1; }
+
+  score_search "0 0 0 0" --max-probes 2
+  [ "$(score_runs)" = "warmup:1000:true probe:71000:true probe:75000:true hold:75000:true" ] || { echo "--max-probes 2 starts the holds at the second probe: $(score_runs)"; return 1; }
+
+  score_search "0 1"
+  [ "$SCORE_RC" = 1 ] && [ "$(score_runs)" = "warmup:1000:true probe:71000:false" ] && [ "$(jq -r ".runs[-1].k6_exit" "$SCORE_OUT/search.json")" = 1 ] && [ "$(jq -r '.end.result' "$SCORE_OUT/search.json")" = harness-error ] \
+    || { echo "a k6 exit of 1 is a harness error: the search stops and exits 1 (exit $SCORE_RC): $(score_runs)"; return 1; }
+  score_search "99"
+  [ "$SCORE_RC" = 1 ] && [ "$(score_runs)" = "warmup:1000:false" ] && grep -q 'warm-up failed' "$SCORE_OUT/search.json" \
+    || { echo "a failing warm-up is a harness error, the search stops (exit $SCORE_RC): $(score_runs)"; return 1; }
+  score_search "0 0 0/lbspike=0.9 0"
+  [ "$SCORE_RC" = 0 ] && [ "$(score_runs)" = "warmup:1000:true probe:71000:true probe:75000:true" ] \
+    && [ "$(jq -r '.end | [.result, .reason] | join("|")' "$SCORE_OUT/search.json" | cut -c1-39)" = "bound-by-k6|at least 71000, bound by k6" ] \
+    || { echo "a void run ends the search at 'at least 71000, bound by k6' (exit $SCORE_RC): $(score_runs) $(jq -c .end "$SCORE_OUT/search.json")"; return 1; }
+}
+
+# The refusals: a load.js with one byte changed, an --out that exists, a controller whose facts fail. Nothing runs, not even a restart.
+score_check_refusals() {
+  local fx="$LAB/check/fixtures/score" tmp
+  tmp="$(mktemp -d)"
+  mkdir -p "$tmp/challenge/bench" "$tmp/challenge/seed"
+  cp "$REPO/reference/twelve-dollar-server-challenge/bench/load.js" "$tmp/challenge/bench/load.js"
+  sed -i.bak 's/const LIKE_PROB = 0.15/const LIKE_PROB = 0.16/' "$tmp/challenge/bench/load.js" && rm -f "$tmp/challenge/bench/load.js.bak"
+  score_search "0 0" --challenge "$tmp/challenge"
+  [ "$SCORE_RC" = 2 ] && grep -q "not the challenge's script" <<<"$SCORE_TEXT" && [ ! -s "$SCORE_LOG" ] && [ ! -e "$SCORE_OUT" ] \
+    || { echo "a load.js with one byte changed must be refused (exit 2, nothing run), got exit $SCORE_RC and log '$(tr '\n' ' ' <"$SCORE_LOG")': ${SCORE_TEXT//$'\n'/ | }"; return 1; }
+  cp "$REPO/reference/twelve-dollar-server-challenge/bench/load.js" "$tmp/challenge/bench/load.js"
+  score_search "0 0 0" --challenge "$tmp/challenge" --max-probes 1
+  [ "$SCORE_RC" != 2 ] || { echo "the unchanged load.js is refused: ${SCORE_TEXT//$'\n'/ | }"; return 1; }
+  mkdir -p "$tmp/exists"
+  score_search "0 0" --out "$tmp/exists"
+  [ "$SCORE_RC" = 2 ] && grep -q 'exists' <<<"$SCORE_TEXT" && [ ! -s "$SCORE_LOG" ] || { echo "an existing --out must be refused with nothing run (exit $SCORE_RC)"; return 1; }
+  FAKE_FACTS_FAIL=1 score_search "0 0"
+  [ "$SCORE_RC" = 2 ] && grep -q 'facts' <<<"$SCORE_TEXT" || { echo "a controller whose facts fail must be refused (exit $SCORE_RC): ${SCORE_TEXT//$'\n'/ | }"; return 1; }
+  [ "$(grep -c '^ctl restart$' "$SCORE_LOG")" = 0 ] || { echo "the server restarted before the facts were known"; return 1; }
+}
+
+# The server's sampler, in a lab container (it needs bash 5 and a Linux /proc): the facts of its start files from a kernel log with a host name
+# and a dmesg line (only the message stays), and a real run of 4 seconds beside a sleeping process: the header, 24 columns a row, the open
+# files of that process on the first row, and its own CPU under 1 % of a core.
+score_check_sampler() {
+  local out dir rows
+  docker image inspect "$LAB_IMAGE:8.5" >/dev/null 2>&1 || { echo "image $LAB_IMAGE:8.5 is missing (run lab/build.sh 8.5)"; return 1; }
+  dir="$(mktemp -d)"
+  printf '%s\n' 'Nov 24 10:00:00 some-host kernel: Out of memory: Killed process 4242 (php) total-vm:1kB' \
+    '[  123.456789] oom-kill:constraint=CONSTRAINT_MEMCG,task=php' 'Nov 24 10:00:01 some-host kernel: eth0: link up' >"$dir/kernel.log"
+  out="$(docker run --rm -v "$LAB:/lab:ro" -v "$dir:/k:ro" -e SCORE_KERNEL_LOG=/k/kernel.log "$LAB_IMAGE:8.5" bash /lab/score/server-sample.sh --facts-only 2>&1)" \
+    || { echo "--facts-only failed: ${out//$'\n'/ | }"; return 1; }
+  grep -qxF 'oom Out of memory: Killed process 4242 (php) total-vm:1kB' <<<"$out" && grep -qxF 'oom oom-kill:constraint=CONSTRAINT_MEMCG,task=php' <<<"$out" \
+    && ! grep -q 'some-host' <<<"$out" && [ "$(grep -c '^oom ' <<<"$out")" = 2 ] \
+    || { echo "the OOM lines are not the two messages without a host name or a timestamp: ${out//$'\n'/ | }"; return 1; }
+  grep -q '^nproc [0-9]' <<<"$out" && grep -q '^ena-unread ethtool is not installed' <<<"$out" || { echo "no nproc, or no line saying ethtool is missing: ${out//$'\n'/ | }"; return 1; }
+  out="$(docker run --rm -v "$LAB:/lab:ro" "$LAB_IMAGE:8.5" bash -c '
+    sleep 30 & sleep 1
+    bash /lab/score/server-sample.sh --cgroup /sys/fs/cgroup --pids-of "sleep 30" --out /tmp/s/server.csv >/tmp/stdout.txt 2>&1 &
+    mkdir -p /tmp/s; sleep 5; kill -TERM %2; wait %2; cat /tmp/stdout.txt; cat /tmp/s/server.csv' 2>&1)" || { echo "the sampler run failed: ${out//$'\n'/ | }"; return 1; }
+  grep -q '^sampler: .* (0\.[0-9][0-9] % of one core)$' <<<"$out" || { echo "the sampler is over 1 % of a core, or prints nothing: ${out//$'\n'/ | }"; return 1; }
+  rows="$(grep -c '^[0-9]*\.[0-9][0-9][0-9],' <<<"$out")"
+  [ "$rows" -ge 3 ] || { echo "expected 3 rows or more in 5 s, got $rows: ${out//$'\n'/ | }"; return 1; }
+  [ "$(grep '^[0-9]*\.[0-9][0-9][0-9],' <<<"$out" | head -n 1 | awk -F, '{ print NF }')" = 24 ] || { echo "a row has not 24 columns"; return 1; }
+  grep '^[0-9]*\.[0-9][0-9][0-9],' <<<"$out" | head -n 1 | grep -qE ',[0-9]+:[0-9]+$' || { echo "the first row has no open files of the process: $(grep '^[0-9]*\.' <<<"$out" | head -n 1)"; return 1; }
+}
+
+check_score() {
+  score_check_steps || return 1
+  score_check_numbers || return 1
+  score_check_walls || return 1
+  score_check_search || return 1
+  score_check_refusals || return 1
+  score_check_sampler || return 1
+}
+
 CHECKS=(
   check_seed_files_exist
   check_seed_has_posts
@@ -2630,6 +2837,7 @@ CHECKS=(
   check_stages_live
   check_syscalls_live
   check_syscalls_cleans_up_after_failure
+  check_score
   check_shellcheck
   check_shellcheck_catches_warning
   check_results_check_catches_drift

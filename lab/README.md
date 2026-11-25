@@ -1372,6 +1372,38 @@ that closes every connection idle for 2 s): ended at once, all 50 held; ended 4 
 - **Swoole at its fd limit accepts nothing more but still completes the handshake,** so the client's connect succeeds and the
   request times out: 65,522 connections answered with `nofile` 65535 (the server keeps about 13 fds for itself).
 
+## The score search (`lab/score/`)
+
+Arjay's search with the challenge's own `bench/load.js`, run as it is (its git blob hash is checked against the reference's at commit
+`162699a` before anything starts), from the load box against a server box. Phase 7 runs it on AWS; here it is built and smoked on the Mac.
+
+```bash
+bash lab/score/smoke.sh                 # the whole search at a small size, against the submission in a lab container (about 7 minutes)
+bash lab/score/smoke.sh --k6-memory     # load.js at 1, 2,000 and 5,000 VUs: the k6 container's memory a VU (about 9 minutes)
+bash lab/score/search.sh --base-url http://<server>:80 --ctl "ssh <server> sudo /srv/score/server-ctl.sh" --out <new folder> --tokens <tokens.json>
+```
+
+| File | What it does |
+| --- | --- |
+| `search.sh` | The driver: warm-up, probes 5 % up from 71,000 (rounded to the nearest 1,000), holds 5 % down from the highest passing probe, 60 s between k6 runs, the server restarted before every run. k6's exit code decides (0 pass, 99 fail, other a harness error). Writes `search.json` and a folder a run. |
+| `run-k6.sh` | One k6 run: restart, samplers, k6 in the pinned image (`--user`, host network, 1,048,576 files), `run.json`. |
+| `analyze.jq`, `score-lib.sh` | The numbers of a run from its samples (plateau, us/req, accepts a second, peaks, the wall of a failed run), and the arithmetic of the search. Pure logic, tested without Docker. |
+| `server-sample.sh` | The server box's sampler: cheap counters a second (bash builtins on `/proc` and the cgroup), its own CPU under 1 % of a core. |
+| `loadbox-sample.sh` | The load box's sampler: k6's REST API a second, the host's CPU, the k6 container's memory. |
+| `ctl-local.sh` | The smoke's controller (`restart`, `sample-start`, `sample-stop`, `facts`) for the submission in a lab container. |
+
+The plateau is read from k6's REST API (`vus` equals the target) and the server's rows, stamped with milliseconds, are matched to it by time
+(the counters are interpolated at its first and last second). A failed run gets a **wall**, the first rule that holds: `k6` (void: the load box
+over 85 % CPU on a plateau second, or k6 over 90 % of its memory), `memory` (a new OOM line, the service died, or MemAvailable under 100 MiB),
+`network` (an ENA allowance counter grew), `fds` (ListenDrops grew, or dial errors with a process within 100 of 65,535 files), `cpu` (the service
+over 88 % of a core on the plateau), else `latency-below-saturation`. The plateau includes the seconds of k6's graceful ramp down in which the VUs
+still run their last iteration: `vus` leaves the target only when they finish.
+
+`check_score` covers it with no Docker: the next-step rule (71,000, 75,000, 79,000, ...; holds from the highest pass; 6 failing holds stop;
+rounding), numbers worked out by hand on a made-up run (`lab/check/fixtures/score/make-run.awk`), one fixture a wall and two for their order, the
+search against a fake controller and a fake k6 (exit 0, 99 and 1, a void run, a failing warm-up) and the refusals (a `load.js` with one byte
+changed, an existing `--out`, facts that fail).
+
 ## Checks
 
 ```bash
