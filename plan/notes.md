@@ -649,6 +649,25 @@ server (one pair against phase 7's server, fail fast), and an audit of ext-mrloo
 phase 8 may skip building its own ring on `liburing-ffi`. OpenSwoole's POLL_ADD reactor and php-uring are left out
 unless the audit finds a reason. Phases 6 and 7 still come first (D76).
 
+### 2026-11-24 22:40 · ❓ Question: the shape of phase 7, the score
+
+**Context:** phase 6 is merged (`b1823cb`): `submissions/php-Gcob/` passes 42/42 and costs what the lab costs.
+Phase 7 measures the real score with the challenge's unmodified `bench/load.js` (real think time, about 70,000 to
+90,000 users, so as many k6 VUs). The bench: the droplet (1 vCPU, 2 GB, Ubuntu 24.04 x86), the entry installed with
+its own scripts and started by systemd as `deploy` with `LimitNOFILE=65535`, load from separate 16-core generators at
+0.25 ms RTT; warm-up, 2-minute probes, a 5-minute hold.
+
+**Jacob's two choices (decision menu, 22:40):**
+
+- **Machines:** AWS, two boxes in one placement group: a server box shaped like the droplet (a `c5.large`, one vCPU
+  taken offline, 2 GB enforced, installed with `install.sh` and started by systemd as `deploy`) and a `c5.4xlarge`
+  running k6. The other options were one box with k6 on the other cores over loopback (D55's setup, cheaper but
+  optimistic) and DigitalOcean's real droplet (most faithful, but a new account and new tooling).
+- **Search:** short, fail fast: the warm-up, a 2-minute probe at 71,000, steps of 5 % up until one fails, then
+  5-minute holds stepping down 5 % until one passes. Arjay's full search from 2,500 was the other option.
+
+**Verdict:** ✅ the brief of phase 7's project manager.
+
 ### 2026-11-22 18:08 · 💡 Idea: try io_uring anyway, something nobody tried in PHP
 
 **Jacob:** "do you think we could still even try it? […] to be at the top, we need to do some, let's say, gray hat
