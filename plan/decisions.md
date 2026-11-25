@@ -569,6 +569,13 @@
   the search stays conservative; each run records how many seconds spiked and the longest streak. The search reruns
   from its warm-up (project manager, phase 7, 2026-11-25 08:15).
 
+- **D105:** k6 as the wall voids only a run that fails. A run that passes while the load box spikes passes: k6's
+  garbage-collector spikes (the share grows with its heap, 4 of 120 seconds over 85 % at 71,000, 13 of 117 at 129,000)
+  can only add to the latency k6 measures, so such a pass is a lower bound. A failing run over D104's line is void: k6
+  may have caused it. Search 2 stopped as void at 129,000, which had passed (p95 68 ms, p99 146 ms, 0 errors, the
+  service at 75 % of the core); the session goes on by hand from 135,000, with the driver fixed after the teardown
+  (project manager, phase 7, 2026-11-25 09:30).
+
 ## History
 
 Nothing yet.
