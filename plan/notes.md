@@ -668,6 +668,27 @@ its own scripts and started by systemd as `deploy` with `LimitNOFILE=65535`, loa
 
 **Verdict:** ✅ the brief of phase 7's project manager.
 
+### 2026-11-25 10:05 · 💡 Idea: more than 2 worker processes
+
+**Jacob:** should we test with more than 2 workers? What's the impact, and is it already planned?
+
+**Challenge:**
+
+- **A worker adds fd room, not CPU:** the box has one vCPU. The second process exists only because one process holds
+  65,535 fds; two hold 2 × 64,000 = 128,000 connections before `Connection: close` makes clients reconnect (23.56 µs
+  a reconnect on the Xeon). A third would push that to 192,000.
+- **Its price:** the second process cost +7.44 µs/req (+14.8 %) on the Xeon, from context switches and caches shared
+  on one core; a third likely costs more, plus one more PHP and SQLite in the 1.9 GiB box. Not measured.
+- **Where it would matter:** phase 7 on AWS held 129,000 users in a 2-minute probe at 75 % of the core and about
+  54 µs/req, right at the two processes' 128,000. On AWS, a third could lift the measured number past that. On the
+  bench, the core costs about 1.57 times more per request, so the CPU wall comes near 90,000 to 95,000 users (a rough
+  reading, phase 7 computes the real one), far below 128,000: there a third process only adds cost.
+- **Planned?** No: no phase plans it (D77 chose 2).
+
+**Verdict:** ❌ for the submission (the bench's CPU wall comes first). 🔶 for phase 8: if the ring keeps per-process
+fds and moves the CPU wall past about 128,000 users on the bench, a third process (or the ring's own way past the fd
+wall) gets one pair then.
+
 ### 2026-11-22 18:08 · 💡 Idea: try io_uring anyway, something nobody tried in PHP
 
 **Jacob:** "do you think we could still even try it? […] to be at the top, we need to do some, let's say, gray hat
