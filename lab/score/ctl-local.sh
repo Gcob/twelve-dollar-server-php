@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The smoke's server controller (the interface lab/score/search.sh and run-k6.sh drive; on AWS it is scope 2's server-ctl.sh behind ssh):
+# The smoke's server controller (the interface lab/score/search.sh and run-k6.sh drive; on AWS it is lab/score/server-ctl.sh behind ssh, through lab/score/ctl-ssh.sh):
 # runs submissions/php-Gcob/server.php in a lab container, on a fresh copy of the seed, the way lab/challenge-test.sh starts the app.
 #
 #   bash lab/score/ctl-local.sh restart              fresh seed copy, start, wait for GET /health (60 s at most), print the healthy seconds

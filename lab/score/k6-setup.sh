@@ -125,7 +125,7 @@ check_tokens() {
   if [ -s "$CHALLENGE/seed/tokens.json" ]; then ok tokens "$CHALLENGE/seed/tokens.json is there"; else bad tokens "no tokens.json in $CHALLENGE/seed/ (the seed was not built)"; fi
 }
 
-# Docker's own rules would load nf_conntrack, which is off on purpose (D99). If it is loaded anyway, its table is made big enough and it is said.
+# Docker's own rules would load nf_conntrack, which stays off on purpose: with it unloaded the load box tracks no connection. If it is loaded anyway, its table is made big enough and it is said.
 check_conntrack() {
   if grep -q '^nf_conntrack ' "$MODULES"; then
     as_root sysctl -w "net.netfilter.nf_conntrack_max=$CONNTRACK_MAX" >/dev/null

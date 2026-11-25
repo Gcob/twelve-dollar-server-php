@@ -197,7 +197,7 @@ install_all() {
   # The seed is checked before the long install: a missing seed is a one-minute fix, not a 4-minute wait.
   [ -f "$SEED" ] || { bad seed "$SEED is missing: send it first from the load box (k6-setup.sh --push-seed)"; return 1; }
   wait_for_first_boot
-  # Why: D100 reads the server box's ENA allowance counters (the sampler needs ethtool). Not a tuning: nothing it does touches the measured path.
+  # Why: the sampler reads the server box's ENA allowance counters with ethtool. Not a tuning: nothing it does touches the measured path.
   command -v ethtool >/dev/null 2>&1 || apt-get -o DPkg::Lock::Timeout=120 install -y -q ethtool >/dev/null
   install_submission || return 1
   install_seed_and_unit || return 1

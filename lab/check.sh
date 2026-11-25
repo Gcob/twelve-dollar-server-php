@@ -2767,8 +2767,8 @@ check_score() {
   score_check_sampler || return 1
 }
 
-# The boxes' scripts (lab/score/server-setup.sh, server-ctl.sh, ctl-ssh.sh, k6-setup.sh, php-gcob.service). Their first run on AWS is
-# phase 7's third scope: these checks cover what a laptop can, with the paths the scripts read swapped for fixtures and the system's own
+# The boxes' scripts (lab/score/server-setup.sh, server-ctl.sh, ctl-ssh.sh, k6-setup.sh, php-gcob.service). Their first run was on AWS:
+# these checks cover what a laptop can, with the paths the scripts read swapped for fixtures and the system's own
 # commands (systemctl, shutdown, curl, ssh) stood in for by stubs on the PATH.
 
 # boxes_stubs <dir> <name>...: a stub for each name in <dir>, to be put first on the PATH. A stub logs its name and arguments to
