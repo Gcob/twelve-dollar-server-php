@@ -3060,7 +3060,7 @@ boxes_k6_fixture() {
   boxes_stubs "$dir/bin" sysctl
   printf '%s\n' '#!/usr/bin/env bash' 'for last; do :; done' 'case "$last" in' \
     '  */latest/api/token) echo TOKEN ;;' '  */macs/) echo "02:aa:bb:cc:dd:ee/" ;;' \
-    '  */local-ipv4s) printf "192.0.2.5\n192.0.2.6\n192.0.2.7\n192.0.2.8\n" ;;' '  */subnet-ipv4-cidr-block) echo 192.0.2.0/24 ;;' '  *) exit 22 ;;' 'esac' >"$dir/bin/curl"
+    '  */local-ipv4s) printf "192.0.2.5\n192.0.2.6\n192.0.2.7\n192.0.2.8" ;;' '  */subnet-ipv4-cidr-block) echo 192.0.2.0/24 ;;' '  *) exit 22 ;;' 'esac' >"$dir/bin/curl"
   printf '%s\n' '#!/usr/bin/env bash' 'echo "ip $*" >>"'"$dir"'/bin/calls"' 'case "$*" in' \
     '  "route show default") echo "default via 192.0.2.1 dev ens5 proto dhcp src 192.0.2.5 metric 100" ;;' \
     '  "-4 -o addr show dev ens5") cat "'"$dir"'/addrs" ;;' '  addr\ add*) ;;' '  *) exit 1 ;;' 'esac' >"$dir/bin/ip"

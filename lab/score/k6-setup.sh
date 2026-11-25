@@ -69,7 +69,8 @@ read_metadata_addresses() {
   mac="$(imds network/interfaces/macs/ | head -n 1 | tr -d '/')" || return 1
   [ -n "$mac" ] || return 1
   IMDS_ADDRS=()
-  while IFS= read -r line; do [ -z "$line" ] || IMDS_ADDRS+=("$line"); done < <(imds "network/interfaces/macs/$mac/local-ipv4s")
+  # Why `|| [ -n "$line" ]`: the metadata service ends its answer without a newline, and `read` drops a last line that has none.
+  while IFS= read -r line || [ -n "$line" ]; do [ -z "$line" ] || IMDS_ADDRS+=("$line"); done < <(imds "network/interfaces/macs/$mac/local-ipv4s")
   IMDS_CIDR="$(imds "network/interfaces/macs/$mac/subnet-ipv4-cidr-block")" || return 1
   [ "${#IMDS_ADDRS[@]}" -gt 0 ]
 }
