@@ -445,6 +445,14 @@
   one-sided (plan review, settled by the project manager, phase 6, 2026-11-24,
   [PLAN-2026-11-24-1840](reviews/PLAN-2026-11-24-1840.md) items 2 and 7).
 
+- **D87:** the submission's new-post insert steps its `INSERT ... RETURNING` statement to its end before the 201 (the
+  row fetched, then the statement run until it has no more rows), so a commit that fails raises and answers 500. With
+  `closeCursor()` alone, the autocommit transaction commits in `sqlite3_reset()`, whose error pdo_sqlite ignores (PHP
+  8.5.13, `ext/pdo_sqlite/sqlite_statement.c`): a commit that failed (a full disk, an I/O error) would still answer 201,
+  against rule 6. `lab/app` keeps its code (D79); phase 8 ports the fix. The parity pair measures the copy as it ships:
+  one more step on the 2 % of requests that create a post (blind review, settled by the project manager, phase 6,
+  2026-11-24, `reviews/BLIND-2026-11-24-2025.md` item 1).
+
 ## History
 
 Nothing yet.
