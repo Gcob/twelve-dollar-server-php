@@ -1,0 +1,19 @@
+runs, in the order they ran (one round runs every variant once, the first variant is the reference; the order alternates: odd rounds run it last, even rounds first)
+round  variant        valid      req/s    us/req   p95 ms   p99 ms   tw/addr  load1 fsync ms  result
+    1  sub            yes      22876.5     29.9*    24.74    52.87         0   3.99     0.44  FAIL: achieved below 97 % of offered
+    1  lab            yes      21705.2     34.2*    70.15   204.93     10036   5.44     0.51  FAIL: achieved below 97 % of offered
+    2  lab            yes      23197.2     27.9*     15.6    37.54         0      4     0.45  FAIL: achieved below 97 % of offered
+    2  sub            yes      23103.7       29*    17.57    41.66     10036   4.35     0.46  FAIL: achieved below 97 % of offered
+    3  sub            yes      22649.7     31.8*    31.87     68.1      7043   5.29      0.5  FAIL: achieved below 97 % of offered
+    3  lab            yes      23032.9     29.7*    20.69    49.81      7155   4.73     0.45  FAIL: achieved below 97 % of offered
+tw/addr: the most TIME_WAIT sockets on any one address, k6's or the idle client's, when the run started (- when the runner did not count)
+*: the run counts in the pairs but its step failed (see result): that us/req rests on a run that did not pass
+load1: the VM's 1-minute load average in the middle of the plateau; fsync ms: the median fdatasync of a 4 KiB write before the warm-up (- when a run has no host reading)
+
+variants (us is the server's CPU per request over the plateau)
+variant         valid failed median us        min to max   p99 ms  paired differences us     median  verdict
+lab               3/3      3      29.7      27.9 to 34.2    49.81  reference                      -  reference
+sub               3/3      3      29.9        29 to 31.8    52.87  -4.3 +1.1 +2                +1.1  within the noise
+
+Floor: 0.864 us, from lab/results/2026-11-24-cpu-steps-5b/aa-24000: |median 0.083| + interquartile range 0.78 of 5 paired differences (quartiles by linear interpolation, inclusive)
+Rule: a variant is beyond the noise when it has at least 2 pairs, every paired difference (its µs CPU/req minus the reference's in the same round) has the same sign and the median paired difference is at least 0.864 µs in absolute value; otherwise it is within the noise. A round where either run is invalid has no pair. One pair with a floor: a screen (beats the floor when lower by at least the floor, else not better), never a verdict. No pair: no verdict. No floor: not judged (the floor comes from an A/A calibration).
