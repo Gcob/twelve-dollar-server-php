@@ -25,9 +25,9 @@ CLEAN` (only `terminated` instances; no placement group, security group with its
 ### Q23/23 [run, score] : a second AWS session to find the ceiling above 135,000, or leave it for phase 8?
 
 The session held 135,000 users for 5 minutes. 142,000 failed three times: once on EC2's connection table (port 80
-still closed then), twice with the load box's k6 spiking on its garbage collector (void by D105), the service at 85 to
-86 % of its core, just under the 88 % CPU line. So the server's own ceiling is somewhere between 135,000 and about
-145,000, not named.
+still closed then), twice with the load box's k6 spiking on its garbage collector (void by D105), with the service at 90 % of its core on
+the plateau's median second, over the 88 % CPU line. So the server's own ceiling is likely its CPU, between 135,000 and
+142,000, but not separated from k6.
 
 **Question:** should a second AWS session find that ceiling now, or does phase 8 find it with its own score run?
 
