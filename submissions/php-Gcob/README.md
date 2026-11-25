@@ -72,9 +72,11 @@ hyperthread sibling left idle). Neither is the droplet.
 - **Measured and not kept**, in the same two folders
   ([2026-11-23-cpu-steps](https://github.com/Gcob/twelve-dollar-server-php/tree/main/lab/results/2026-11-23-cpu-steps)
   and [2026-11-24-cpu-steps-5b](https://github.com/Gcob/twelve-dollar-server-php/tree/main/lab/results/2026-11-24-cpu-steps-5b)):
-  - group commit: +1.18 µs per request;
-  - exclusive locking: -0.85 µs, under the floor, and it forbids a second process on the database;
-  - SQLite building the JSON (`json_group_array`): +0.62 µs;
+  - group commit: +1.18 µs per request in one pair, a screen under the noise floor (2.57 µs), not a settled
+    difference;
+  - exclusive locking: -0.85 µs in one pair, also under the noise floor, and it forbids a second process on the
+    database;
+  - SQLite building the JSON (`json_group_array`): +0.62 µs in one pair, under its floor (0.86 µs) too;
   - the JSON by string concatenation: 9.4 % slower per feed in the micro benchmark;
   - an FFI driver to `libsqlite3`: +0.2 % against PDO per feed, and SQLite's own work is 98 % of a feed, so a driver
     has little to remove;

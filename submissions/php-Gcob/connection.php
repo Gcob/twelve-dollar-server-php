@@ -184,7 +184,7 @@ final class DiyConnection
             try {
                 $result = handler_handle($this->method, $this->target, $body, $this->authorization);
             } catch (Throwable $e) {
-                fwrite(STDERR, 'diy-connection: the handler failed: ' . get_class($e) . ': ' . $e->getMessage() . "\n");
+                fwrite(STDERR, 'connection: the handler failed: ' . get_class($e) . ': ' . $e->getMessage() . "\n");
                 $result = [500, self::INTERNAL_ERROR];
             }
             $this->respond($result[0], $result[1]);

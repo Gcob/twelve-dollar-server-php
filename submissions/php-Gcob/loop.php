@@ -18,7 +18,7 @@
 require_once __DIR__ . '/connection.php';
 
 if (!extension_loaded('event') || !extension_loaded('sockets')) {
-    fwrite(STDERR, "diy-server: ext-event and ext-sockets must be loaded\n");
+    fwrite(STDERR, "server: ext-event and ext-sockets must be loaded\n");
     exit(1);
 }
 
@@ -107,7 +107,7 @@ final class DiyServer
             // Why a flag of its own: the line is printed once per process, however many times the accept pauses.
             if (!$this->pauseReported) {
                 $this->pauseReported = true;
-                fwrite(STDERR, "diy-server: out of file descriptors with {$this->count->open} client connections open ($error): " .
+                fwrite(STDERR, "server: out of file descriptors with {$this->count->open} client connections open ($error): " .
                     "accepting again when one closes, clients wait in the backlog meanwhile\n");
             }
         }
@@ -173,7 +173,7 @@ function diy_listen(string $host, int $port, int $backlog)
         stream_context_create(['socket' => ['backlog' => $backlog, 'so_reuseport' => true]])
     );
     if ($listener === false) {
-        fwrite(STDERR, "diy-server: cannot listen on $host:$port: $errstr ($errno)\n");
+        fwrite(STDERR, "server: cannot listen on $host:$port: $errstr ($errno)\n");
         exit(1);
     }
     stream_set_blocking($listener, false);

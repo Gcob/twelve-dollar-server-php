@@ -10,7 +10,8 @@
 # Every PHP tool is called by its full path: the machine may have another PHP first on its PATH (the challenge's CI
 # runner has Ubuntu's 8.3), and `sudo` resets the PATH. A bare `phpize` would build the extensions for the wrong PHP.
 #
-# On one CPU the compile takes 10 to 20 minutes. The last line it prints says what was installed.
+# On one CPU the compile takes about 4 minutes (232 to 237 s measured on one arm64 core; the droplet was not
+# measured). The last line it prints says what was installed.
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 
@@ -33,7 +34,7 @@ trap 'cd /; rm -rf "$tmp"' EXIT
 cd "$tmp"
 
 fetch() { # fetch <url> <sha256> <file>
-  curl -fsSL -o "$3" "$1"
+  curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 20 -o "$3" "$1"
   echo "$2  $3" | sha256sum -c -
 }
 
