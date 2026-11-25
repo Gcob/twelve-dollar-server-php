@@ -1388,6 +1388,15 @@ only the allowed files) with `check_submission_catches_violations` (a fixture fo
 (42/42, no `--env`), `check_submission_both_workers_answer` (the boot lines, and 200 held connections that grow the socket table of each
 worker), `check_submission_default_host_and_port` (0.0.0.0:80 in a container with a network of its own) and `check_submission_cases`
 (`lab/check/submission-test.php`: the configuration refusals, SIGTERM, a killed worker, and the soft limit on socket pairs and through the loop).
+`check_submission` also reads `install.sh` (every `curl` followed by a `sha256sum -c` of its file, every `phpize`, `php-config` and `php` by its full
+`/opt/php-gcob/bin/` path, the PHP and ext-event pins equal to the lab's images) and runs the pinned shellcheck on `install.sh`, `build.sh` and
+`start.sh`; `check_submission_install_stops_on_wrong_sha256` runs `install.sh` with one digit of PHP's sha256 changed and sees it stop before `configure`.
+
+`lab/submission-test.sh [--ci] [--keep]` installs and tests the submission in a clean Ubuntu 24.04 container the way the bench does (`install.sh`
+as root, `build.sh` and `test/run.sh` as `deploy` on port 80, a second start on `0.0.0.0:80`, the processes' user and open-files limit, port 80
+refused without the capability) or, with `--ci`, the way the challenge's own CI does (Ubuntu's PHP 8.3 first on the `PATH`, `sudo bash install.sh`,
+`test/run.sh` on `127.0.0.1:3000`). One CPU, 2 GiB, a network of its own. It takes about 4 minutes on the arm64 VM (the compile is most of it) and is
+not part of `lab/check.sh`.
 
 `check_results_regenerate` keeps the results folders honest: it runs every `lab/results/*/summarize.sh` (from its
 folder, reading only the raw files next to it) and checks the folder's `README.md` against it, byte for byte, so a

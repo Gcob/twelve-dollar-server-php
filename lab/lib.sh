@@ -98,6 +98,12 @@ lab_require_variant() {
 # arm64 here and amd64 on the bench VM). 1.8.3 is the latest 1.x release (2.x exists); to move, change both.
 LAB_K6_IMAGE=grafana/k6:1.8.3@sha256:2cd9cd09e4119340a122aaf06f30cf3009c19db23b87954909fba0d3eda58e08
 
+# lab_base_image: the Ubuntu image (tag and digest) every source image starts from. It is read from lab/images/Dockerfile.src, so the pin lives in
+# one place; needs LAB (the lab/ folder).
+lab_base_image() {
+  sed -n 's/^FROM //p' "$LAB/images/Dockerfile.src"
+}
+
 # The linter of lab/check.sh: pinned by tag and by digest (the multi-arch index digest, like the k6 image above). 0.11.0 is
 # the release the `stable` tag points at; to move, change both.
 LAB_SHELLCHECK_IMAGE=koalaman/shellcheck:v0.11.0@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d

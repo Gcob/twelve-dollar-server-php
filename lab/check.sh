@@ -866,6 +866,9 @@ SUBMISSION_SWITCHES='APP_WORKERS|APP_PRAGMAS|APP_SOFT_CONN_LIMIT|APP_TELEMETRY|A
 #  instrument none of the lab's instruments (FFI, Excimer, the telemetry and the profiler, the checkpointer, group commit)
 #  flags      start.sh runs /opt/php-gcob/bin/php with the three extensions, then LAB_SERVER_PHP_FLAGS, in that order (read from lib.sh)
 #  folder     only install.sh, build.sh, start.sh, README.md, .gitignore and *.php files
+#  install    install.sh exists; every curl or wget in it is followed by a `sha256sum -c` of the file it fetched; every phpize, php-config and
+#             php it runs is a full path (the machine may have another PHP first on its PATH)
+#  pin        install.sh pins the same PHP and ext-event as the lab's images (lab/lib.sh, lab/images/install-extras.sh)
 submission_static_problems() {
   local dir="$1" f name call want got entry getenv_ok="^getenv\\(['\"](SQLITE_PATH|JWT_SECRET|HOST|PORT)['\"]\\)\$"
   for f in "$dir"/*.php; do
@@ -878,6 +881,7 @@ submission_static_problems() {
     grep -nwE "$SUBMISSION_SWITCHES" "$f" | sed "s|^|switch: $name:|"
     { grep -nE 'FFI|Excimer|DiyTelemetry|DiyProfile' "$f"; grep -niE 'checkpointer|group_commit' "$f"; } | sed "s|^|instrument: $name:|"
   done
+  submission_install_problems "$dir"
   if [ -f "$dir/start.sh" ]; then
     got="$(grep -v '^[[:space:]]*#' "$dir/start.sh" | grep -o -- '-d [^ ]*' | cut -c4- | paste -sd' ' -)"
     want="extension=pcntl extension=sockets extension=event"
@@ -900,6 +904,45 @@ submission_static_problems() {
   done < <(find "$dir" -mindepth 1 -maxdepth 1 | sort)
 }
 
+# submission_install_problems <folder>: the `install` and `pin` lines of submission_static_problems, for the folder's install.sh.
+submission_install_problems() {
+  local file="$1/install.sh" line n=0 pending="" fetched="" version sha extras_sha extras_version
+  if [ ! -f "$file" ]; then echo "install: there is no install.sh"; return 0; fi
+  while IFS= read -r line; do
+    n=$((n + 1))
+    [[ "$line" =~ ^[[:space:]]*# ]] && continue
+    [ -n "${line//[[:space:]]/}" ] || continue
+    if [ -n "$pending" ]; then
+      [[ "$line" == *"sha256sum -c"* && "$line" == *"$fetched"* ]] || echo "install: line $pending downloads without a sha256sum -c of the file on the next line"
+      pending=""
+    fi
+    if [[ "$line" =~ (^|[\&\;\|\(])[[:space:]]*(curl|wget)[[:space:]] ]]; then
+      fetched="$(grep -o -- '-o [^ ]*' <<<"$line" | head -n 1 | cut -c4- | tr -d '"')"
+      if [ -n "$fetched" ]; then pending="$n"; else echo "install: line $n downloads without -o <file>, so nothing can check it"; fi
+    fi
+    if [[ "$line" =~ (^|[^/A-Za-z0-9_.$-])(phpize|php-config|php)([[:space:]]|$|\)) ]]; then
+      echo "install: line $n runs ${BASH_REMATCH[2]} without its full path (use /opt/php-gcob/bin/${BASH_REMATCH[2]})"
+    fi
+  done <"$file"
+  [ -z "$pending" ] || echo "install: line $pending downloads and the file ends before a sha256sum -c"
+  read -r version sha _ <<<"$(lab_source_release 8.5)"
+  grep -q "^PHP_VERSION=$version\$" "$file" || echo "pin: install.sh does not pin PHP $version (the lab's 8.5 image)"
+  grep -q "^PHP_SHA256=$sha\([[:space:]]\|\$\)" "$file" || echo "pin: install.sh's PHP_SHA256 is not the lab's $sha"
+  extras_version="$(sed -n 's/^EVENT_VERSION=//p' "$LAB/images/install-extras.sh")"
+  extras_sha="$(sed -n 's/^EVENT_SHA256=\([0-9a-f]*\).*/\1/p' "$LAB/images/install-extras.sh")"
+  grep -q "^EVENT_VERSION=$extras_version\$" "$file" || echo "pin: install.sh does not pin ext-event $extras_version (lab/images/install-extras.sh)"
+  grep -q "^EVENT_SHA256=$extras_sha\([[:space:]]\|\$\)" "$file" || echo "pin: install.sh's EVENT_SHA256 is not the lab's $extras_sha"
+}
+
+# submission_shellcheck_problems <folder>: the pinned shellcheck (warning level) on install.sh, build.sh and start.sh of the folder; a line
+# `shellcheck: ...` per finding.
+submission_shellcheck_problems() {
+  local out files=() f
+  for f in install.sh build.sh start.sh; do [ -f "$1/$f" ] && files+=("$f"); done
+  [ "${#files[@]}" -gt 0 ] || return 0
+  out="$(docker run --rm -v "$1:/src:ro" -w /src "$LAB_SHELLCHECK_IMAGE" --severity=warning --format=gcc "${files[@]}" 2>&1)" || sed 's|^|shellcheck: |' <<<"$out"
+}
+
 # submission_lint_problems <folder>: `php -l` on every PHP file of the folder, in the lab's php-lab:8.5 image; a line `lint: ...` per file that fails.
 submission_lint_problems() {
   local out
@@ -915,7 +958,7 @@ submission_lint_problems() {
 check_submission() {
   local problems
   [ -d "$SUBMISSION" ] || { echo "submissions/php-Gcob does not exist"; return 1; }
-  problems="$(submission_static_problems "$SUBMISSION"; submission_lint_problems "$SUBMISSION")"
+  problems="$(submission_static_problems "$SUBMISSION"; submission_lint_problems "$SUBMISSION"; submission_shellcheck_problems "$SUBMISSION")"
   [ -z "$problems" ] || { echo "${problems//$'\n'/ | }"; return 1; }
 }
 
@@ -930,7 +973,8 @@ check_submission_catches_violations() {
   printf '<?php\nconst APP_JSON_FLAGS = 1;\nconst APP_BODY_MAX_CHARS = 2;\n$x = getenv("PORT");\n' >"$tmp/ok/constants.php"
   problems="$(submission_static_problems "$tmp/ok")"
   [ -z "$problems" ] || { rm -rf "$tmp"; echo "constants named like a switch, and getenv of PORT, were refused: ${problems//$'\n'/ | }"; return 1; }
-  for kind in getenv getenv-all env-array switch instrument-ffi instrument-checkpointer flags flags-order folder subfolder lint; do
+  for kind in getenv getenv-all env-array switch instrument-ffi instrument-checkpointer flags flags-order folder subfolder lint \
+    no-install unpinned-download bare-phpize bare-php-config bare-php wrong-pin shellcheck; do
     rm -rf "$tmp/f"
     cp -R "$SUBMISSION" "$tmp/f"
     case "$kind" in
@@ -946,8 +990,19 @@ check_submission_catches_violations() {
       folder) prefix=folder; printf 'x\n' >"$tmp/f/notes.txt" ;;
       subfolder) prefix=folder; mkdir "$tmp/f/vendor" ;;
       lint) prefix=lint; printf '<?php\nfunction (\n' >"$tmp/f/broken.php" ;;
+      no-install) prefix=install; rm "$tmp/f/install.sh" ;;
+      unpinned-download) prefix=install; printf 'curl -fsSL -o extra.tgz https://example.org/extra.tgz\ntar -xzf extra.tgz\n' >>"$tmp/f/install.sh" ;;
+      bare-phpize) prefix=install; printf 'phpize\n' >>"$tmp/f/install.sh" ;;
+      bare-php-config) prefix=install; printf 'x="$(php-config --include-dir)"\n' >>"$tmp/f/install.sh" ;;
+      bare-php) prefix=install; printf 'php -v\n' >>"$tmp/f/install.sh" ;;
+      wrong-pin) prefix=pin; sed 's/^PHP_SHA256=607602/PHP_SHA256=607603/' "$SUBMISSION/install.sh" >"$tmp/f/install.sh" ;;
+      shellcheck) prefix=shellcheck; printf 'echo $(date)\n' >>"$tmp/f/build.sh" ;;
     esac
-    if [ "$kind" = lint ]; then problems="$(submission_lint_problems "$tmp/f")"; else problems="$(submission_static_problems "$tmp/f")"; fi
+    case "$kind" in
+      lint) problems="$(submission_lint_problems "$tmp/f")" ;;
+      shellcheck) problems="$(submission_shellcheck_problems "$tmp/f")" ;;
+      *) problems="$(submission_static_problems "$tmp/f")" ;;
+    esac
     grep -q "^$prefix: " <<<"$problems" || { rm -rf "$tmp"; echo "a copy with the '$kind' violation passes: ${problems:-no problem printed}"; return 1; }
   done
   rm -rf "$tmp"
@@ -1002,6 +1057,20 @@ check_submission_default_host_and_port() {
   docker rm -f "$name" >/dev/null 2>&1
   grep -qx 'listening on 0.0.0.0:80' <<<"$log" || { echo "the boot line does not say 0.0.0.0:80: ${log//$'\n'/ | }"; return 1; }
   grep -q '"status":"ok"' <<<"$answer" || { echo "GET /health on port 80 inside the container answered: $answer"; return 1; }
+}
+
+# install.sh with one digit of PHP's sha256 changed stops at the check: it exits non-zero, sha256sum says FAILED, and configure never ran. A
+# throwaway container of the pinned Ubuntu image (the apt step and the download run for real, that is the minute this check takes).
+check_submission_install_stops_on_wrong_sha256() {
+  local tmp out rc=0
+  tmp="$(mktemp -d)"
+  sed 's/^PHP_SHA256=607602/PHP_SHA256=607603/' "$SUBMISSION/install.sh" >"$tmp/install.sh"
+  cmp -s "$SUBMISSION/install.sh" "$tmp/install.sh" && { rm -rf "$tmp"; echo "the fixture changed nothing: install.sh has no PHP_SHA256=607602 line"; return 1; }
+  out="$(docker run --rm "${LAB_RESOURCE_FLAGS[@]}" -v "$tmp:/src:ro" "$(lab_base_image)" bash /src/install.sh 2>&1)" || rc=$?
+  rm -rf "$tmp"
+  [ "$rc" != 0 ] || { echo "install.sh exited 0 on a wrong sha256"; return 1; }
+  grep -q 'php.tar.xz: FAILED' <<<"$out" || { echo "no 'php.tar.xz: FAILED' in the output: $(tail -5 <<<"$out" | tr '\n' ' ')"; return 1; }
+  ! grep -q '^checking ' <<<"$out" || { echo "configure ran after the wrong sha256"; return 1; }
 }
 
 # The submission's own cases (lab/check/submission-test.php, run with the submissions folder mounted): the configuration refusals leave
@@ -2464,6 +2533,7 @@ CHECKS=(
   check_submission
   check_submission_catches_violations
   check_submission_cases
+  check_submission_install_stops_on_wrong_sha256
   check_submission_passes_challenge_test
   check_submission_both_workers_answer
   check_submission_default_host_and_port
