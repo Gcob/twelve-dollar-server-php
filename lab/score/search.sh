@@ -12,8 +12,11 @@
 # each next one --step % under the last, until one passes (the score) or --max-holds have failed ("no hold passed down to N"). --max-probes
 # caps the climb: when that many probes passed, the holds start at the highest of them. --pause seconds between two k6 runs (default 60).
 # k6's exit code decides: 0 passes, 99 fails (a threshold crossed), anything else is a harness error: the search stops. A run that FAILS is void when
-# the load box was over 85 % CPU on more than 10 % of the plateau's seconds or on 5 in a row (k6's garbage collector alone spikes a second or two) or k6 held over 90 % of the load box's memory (k6 may have caused the failure; a run that passes anyway is a valid pass, its GC spikes could only hurt the latency): the search ends at "at least <highest
-# pass>, bound by k6". --ramp-up exists for the smoke only (it passes -e RAMP_UP); without it the script's own 60 s stands.
+# the load box was over 85 % CPU on more than 10 % of the plateau's seconds or on 5 in a row (k6's garbage collector alone spikes a second or two) or k6 held over 90 % of the load box's memory (k6 may have caused the failure; a run that passes anyway is a valid pass, its GC spikes could only hurt the latency).
+# A void run is neither a pass nor a fail. A void PROBE ends the climb (the holds start at the highest passing probe, as after a fail) and the
+# end says `bound_by_k6: true`: the load box, not the server, may have been the limit. A void HOLD runs again once, at the same size; void
+# again, it counts as not passed and the next hold steps down. The rerun of a void probe is not the driver's: a person looks at it first
+# (a bigger load box, say). A search that ends with no passing hold says so (`end.result` no-score). --ramp-up exists for the smoke only (it passes -e RAMP_UP); without it the script's own 60 s stands.
 #
 # <ctl> is a command line, split on spaces and tabs (see lab/score/run-k6.sh): `ssh host sudo /srv/score/server-ctl.sh`. It answers `facts`
 # (one JSON object), `restart`, `sample-start <dir>` and `sample-stop <dir>`.
@@ -23,7 +26,7 @@
 # every decision with its reason, and the end: the score or why there is none) and one folder a run, with its run.json. It prints one row a run
 # (cpu% is the service's share of one core over the plateau; acc/s the median accepts a second on it).
 # search.json keeps the arguments but not the server's address or the controller's command line (a results folder is public).
-# Exit codes: 0 the search ended on a result (a score, no score, or bound by k6: `end.result` says which), 1 a harness error, 2 usage or refusal.
+# Exit codes: 0 the search ended on a result (a score or no score: `end.result` says which, and `end.bound_by_k6` whether a void run touched the search), 1 a harness error, 2 usage or refusal.
 set -euo pipefail
 
 LAB="$(cd "$(dirname "$0")/.." && pwd)"
@@ -98,14 +101,15 @@ decide() {
   sj_update --arg d "$1" --arg r "$2" '.decisions += [{decision: $d, reason: $r}]'
 }
 
+bound_by_k6=false
 finish() {  # finish <result> <score or null> <reason> <exit code>
-  sj_update --arg result "$1" --argjson score "$2" --arg reason "$3" '.end = {result: $result, score: $score, reason: $reason}'
+  sj_update --arg result "$1" --argjson score "$2" --arg reason "$3" --argjson bound "$bound_by_k6" '.end = {result: $result, score: $score, reason: $reason, bound_by_k6: $bound}'
   echo "end: $3"
   exit "$4"
 }
 
 # --- one run -------------------------------------------------------------------------------------------------------------------------
-run_no=0 best_pass=0
+run_no=0
 echo "kind     users  pass  p95 ms  p99 ms  errors   req/s   cpu%   us/req  acc/s  wall"
 # run_one <kind> <users> <duration>: runs k6 once and sets R_PASS, R_VOID, R_EXIT, R_FOLDER from its run.json; prints the row.
 run_one() {
@@ -132,12 +136,10 @@ run_one() {
   if [ "$R_EXIT" != 0 ] && [ "$R_EXIT" != 99 ]; then
     finish harness-error null "k6 exited with $R_EXIT at $R_FOLDER: not a pass and not a threshold failure" 1
   fi
-  if [ "$R_VOID" = true ]; then
-    finish bound-by-k6 null "at least ${best_pass:-0}, bound by k6: $(jq -r '.void_reason' "$out/$R_FOLDER/run.json") at $R_FOLDER" 0
-  fi
-  [ "$R_PASS" != true ] || [ "$users" -le "$best_pass" ] || best_pass="$users"
   return 0
 }
+
+void_reason() { jq -r '.void_reason' "$out/$R_FOLDER/run.json"; }
 
 # --- the search ---------------------------------------------------------------------------------------------------------------------
 decide "warm-up at $warm_users users for $warm_duration" "not scored; a failing warm-up is a harness error"
@@ -145,7 +147,6 @@ run_one warmup "$warm_users" "$warm_duration"
 if [ "$R_PASS" != true ]; then
   finish harness-error null "the warm-up failed at $R_FOLDER (k6 exit $R_EXIT): the server is not ready, there is nothing to measure" 1
 fi
-best_pass=0
 
 users="$start" probes=0 last_pass=""
 while true; do
@@ -160,6 +161,10 @@ while true; do
     fi
     users="$(score_next_up "$users" "$step" "$round")"
   else
+    if [ "$R_VOID" = true ]; then
+      bound_by_k6=true
+      decide "the climb ends at $users users" "the probe is void ($(void_reason)): neither a pass nor a fail; the holds start at the highest passing probe"
+    fi
     break
   fi
 done
@@ -171,12 +176,18 @@ while true; do
   [ "$hold_users" -gt 0 ] || finish no-score null "no hold passed: the next one would be 0 users" 0
   decide "hold at $hold_users users for $hold" "$hold_why"
   run_one hold "$hold_users" "$hold"
+  if [ "$R_VOID" = true ] && [ "$R_PASS" != true ]; then
+    bound_by_k6=true
+    decide "hold at $hold_users users again, once" "the first one is void ($(void_reason)): k6 may have caused the failure"
+    run_one hold "$hold_users" "$hold"
+    [ "$R_VOID" != true ] || [ "$R_PASS" = true ] || decide "the hold at $hold_users users counts as not passed" "void twice: the next hold steps down"
+  fi
   if [ "$R_PASS" = true ]; then
     finish score "$hold_users" "score $hold_users: the hold of $hold passed at $R_FOLDER" 0
   fi
   failed_holds=$((failed_holds + 1))
   if [ "$failed_holds" -ge "$max_holds" ]; then
-    finish no-score null "no hold passed down to $hold_users ($failed_holds holds failed)" 0
+    finish no-score null "no hold passed down to $hold_users ($failed_holds holds failed)$([ "$bound_by_k6" = false ] || echo ", and k6 may have been the limit: a void run was met")" 0
   fi
   hold_users="$(score_next_down "$hold_users" "$step" "$round")"
   hold_why="$step % under the failed hold, rounded to $round"

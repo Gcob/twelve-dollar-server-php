@@ -1385,7 +1385,7 @@ bash lab/score/search.sh --base-url http://<server>:80 --ctl "ssh <server> sudo 
 
 | File | What it does |
 | --- | --- |
-| `search.sh` | The driver: warm-up, probes 5 % up from 71,000 (rounded to the nearest 1,000), holds 5 % down from the highest passing probe, 60 s between k6 runs, the server restarted before every run. k6's exit code decides (0 pass, 99 fail, other a harness error). Writes `search.json` and a folder a run. |
+| `search.sh` | The driver: warm-up, probes 5 % up from 71,000 (rounded to the nearest 1,000), holds 5 % down from the highest passing probe, 60 s between k6 runs, the server restarted before every run. k6's exit code decides (0 pass, 99 fail, other a harness error). A void run is neither: a void probe ends the climb (the holds start at the highest passing probe, and `end.bound_by_k6` says so), a void hold runs again once, and void twice it counts as not passed. Writes `search.json` and a folder a run. |
 | `run-k6.sh` | One k6 run: restart, samplers, k6 in the pinned image (`--user`, host network, 1,048,576 files), `run.json`. |
 | `analyze.jq`, `score-lib.sh` | The numbers of a run from its samples (plateau, us/req, accepts a second, peaks, the wall of a failed run), and the arithmetic of the search. Pure logic, tested without Docker. |
 | `server-sample.sh` | The server box's sampler: cheap counters a second (bash builtins on `/proc` and the cgroup), its own CPU under 1 % of a core. |

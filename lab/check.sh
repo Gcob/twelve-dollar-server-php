@@ -2708,10 +2708,30 @@ score_check_search() {
   score_search "99"
   [ "$SCORE_RC" = 1 ] && [ "$(score_runs)" = "warmup:1000:false" ] && grep -q 'warm-up failed' "$SCORE_OUT/search.json" \
     || { echo "a failing warm-up is a harness error, the search stops (exit $SCORE_RC): $(score_runs)"; return 1; }
-  score_search "0 0 99/lbspike=0.9+lbspikes=5,6,7,8,9 0"
-  [ "$SCORE_RC" = 0 ] && [ "$(score_runs)" = "warmup:1000:true probe:71000:true probe:75000:false" ] \
-    && [ "$(jq -r '.end | [.result, .reason] | join("|")' "$SCORE_OUT/search.json" | cut -c1-39)" = "bound-by-k6|at least 71000, bound by k6" ] \
-    || { echo "a failing void run ends the search at 'at least 71000, bound by k6' (exit $SCORE_RC): $(score_runs) $(jq -c .end "$SCORE_OUT/search.json")"; return 1; }
+  # A void probe (k6 may have caused its failure) is neither a pass nor a fail: it ends the climb, and the holds start at the highest passing probe.
+  local void="99/lbspike=0.9+lbspikes=5,6,7,8,9"
+  score_search "0 0 $void 0"
+  [ "$SCORE_RC" = 0 ] && [ "$(score_runs)" = "warmup:1000:true probe:71000:true probe:75000:false hold:71000:true" ] \
+    && [ "$(jq -r '.end | [.result, .score, .bound_by_k6] | map(tostring) | join(" ")' "$SCORE_OUT/search.json")" = "score 71000 true" ] \
+    || { echo "a void probe ends the climb, the hold at 71000 runs and is the score, the end says k6 bound it (exit $SCORE_RC): $(score_runs) $(jq -c .end "$SCORE_OUT/search.json")"; return 1; }
+  score_search "0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0" --max-probes 1
+  [ "$(jq -r '.end.bound_by_k6' "$SCORE_OUT/search.json")" = false ] || { echo "a search no void run touched must say bound_by_k6 false: $(jq -c .end "$SCORE_OUT/search.json")"; return 1; }
+  # The published run: probes pass up to 135,000, the 142,000 probe is void, the hold at 135,000 passes.
+  score_search "0 0 0 $void 0" --start 129000
+  [ "$SCORE_RC" = 0 ] && [ "$(score_runs)" = "warmup:1000:true probe:129000:true probe:135000:true probe:142000:false hold:135000:true" ] \
+    && [ "$(jq -r '.end.score' "$SCORE_OUT/search.json")" = 135000 ] \
+    || { echo "129,000 and 135,000 pass, 142,000 is void: the hold at 135,000 is the score (exit $SCORE_RC): $(score_runs) $(jq -c .end "$SCORE_OUT/search.json")"; return 1; }
+  # A void hold runs again once: it passes the second time, or it counts as not passed and the next hold steps down.
+  score_search "0 0 99 $void 0"
+  [ "$SCORE_RC" = 0 ] && [ "$(score_runs)" = "warmup:1000:true probe:71000:true probe:75000:false hold:71000:false hold:71000:true" ] && [ "$(jq -r '.end.score' "$SCORE_OUT/search.json")" = 71000 ] \
+    || { echo "a void hold runs again at the same size, and its pass is the score (exit $SCORE_RC): $(score_runs)"; return 1; }
+  score_search "0 0 99 $void $void 0"
+  [ "$SCORE_RC" = 0 ] && [ "$(score_runs)" = "warmup:1000:true probe:71000:true probe:75000:false hold:71000:false hold:71000:false hold:67000:true" ] && [ "$(jq -r '.end.score' "$SCORE_OUT/search.json")" = 67000 ] \
+    || { echo "a hold void twice counts as not passed: the next hold steps down (exit $SCORE_RC): $(score_runs)"; return 1; }
+  score_search "0 0 99 $void $void 99" --max-holds 2
+  [ "$SCORE_RC" = 0 ] && [ "$(score_runs)" = "warmup:1000:true probe:71000:true probe:75000:false hold:71000:false hold:71000:false hold:67000:false" ] \
+    && [ "$(jq -r '.end | [.result, .score, .bound_by_k6] | map(tostring) | join(" ")' "$SCORE_OUT/search.json")" = "no-score null true" ] && grep -q 'no hold passed' "$SCORE_OUT/search.json" \
+    || { echo "a void hold run twice is one failed hold, and a search with no passing hold says so (exit $SCORE_RC): $(score_runs) $(jq -c .end "$SCORE_OUT/search.json")"; return 1; }
   score_search "0 0/lbspike=0.9+lbspikes=5,6,7,8,9 99 0"
   [ "$SCORE_RC" = 0 ] && [ "$(score_runs)" = "warmup:1000:true probe:71000:true probe:75000:false hold:71000:true" ] && [ "$(jq -r '.end.score' "$SCORE_OUT/search.json")" = 71000 ] \
     || { echo "a passing probe with k6 over the line is a valid pass: the search goes on and the hold at 71000 is the score (exit $SCORE_RC): $(score_runs) $(jq -c .end "$SCORE_OUT/search.json")"; return 1; }
