@@ -1,6 +1,6 @@
 # $12 server challenge in PHP
 
-**Status:** 🔵 Phase 6 running (the submission, `submissions/php-Gcob/`): scopes 1 and 2 done, 3 running, 4 waits for a quiet VM · approved on 2026-11-21 · snapshot 2026-11-21-0920 ·
+**Status:** 🔵 Phase 6 running (the submission, `submissions/php-Gcob/`): scopes 1 to 3 done, both reviews' fixes in, scope 4 measuring on the quiet VM · approved on 2026-11-21 · snapshot 2026-11-21-0920 ·
 **Round:** 6
 **Since your last read:** phase 6 is planned in [details/phase-6.md](details/phase-6.md): 4 scopes (the clean copy, the
 install in a clean Ubuntu container, the README and its rules audit, one parity pair), your three choices recorded as
@@ -13,10 +13,6 @@ chosen (D77); its delivery in [runs/phase-5b/run.md](runs/phase-5b/run.md) ("Del
 
 > **Answer freely:** a letter or `ok`, your own choice (`other: …`), `?` if it's unclear, or
 > `badly framed: …` if an option is missing or the question doesn't hold.
-
-**🔴 A quiet Docker VM for about 20 minutes (phase 6, scope 4):** stop your other containers when you can and say
-"quiet" (the planning session relays it). The run measures one pair (the submission against the lab, 24,000 req/s),
-then tells you you can start them again. It never stops or starts them itself (D15).
 
 **🟠 Delete the AWS policy `twelve-dollar-x86-calibration`** (detach it from your CLI user, then delete it): scope 9
 is done and `teardown.sh --verify` shows nothing tagged left (only the terminated instance).
