@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Prints the Markdown tables of README.md from the two searches' files next to this script: <dir>/search.json (the arguments, the decisions, the end)
 # and <dir>/<NN-kind-users>/run.json (one a k6 run; a folder called rerun-... holds a run made again by hand), for search-1-void/ (the first search, ended by a void rule that was then replaced),
-# search-2/ (the second, up to 129,000 users) and search-3/ (the runs made by hand after it: no search.json, a decisions.log). Nothing is computed from anything else. SEARCH_DIRS overrides
-# the folders, in order (lab/check.sh runs it on a made-up search).
+# search-2/ (the second, up to 129,000 users) and search-3/ (the runs made by hand after it: no search.json, a decisions.log). Nothing is computed from anything else. SEARCH_DIRS overrides the folders, in order.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -61,7 +60,7 @@ tables() {
     echo "|---|---|---|"
     jq -r '.decisions | to_entries[] | "| \(.key + 1) | \(.value.decision) | \(.value.reason) |"' "$DIR/search.json"
     echo
-    jq -r '"End: **\(.end.result)**" + (if .end.score != null then ", score **\(.end.score)**" else "" end) + ". \(.end.reason)"' "$DIR/search.json"
+    jq -r '"End (as the driver wrote it, under the rules then in force): **\(.end.result)**" + (if .end.score != null then ", score **\(.end.score)**" else "" end) + ". \(.end.reason)"' "$DIR/search.json"
   else
     echo "The decisions, in the load box's clock (UTC), as the by-hand script logged them:"
     echo

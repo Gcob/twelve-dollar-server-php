@@ -8,8 +8,10 @@ steps: the predictions and the plan of the runs first (before any AWS call, comm
 ## Predictions
 
 Copied unchanged from the phase's plan. Prediction 1 was judged earlier, on the Mac (0.286 to 0.298 MiB a VU at 2,000 and 5,000 VUs, inside 0.25 to 0.45).
+Two names in the predictions are the plan's own: "scope 1" is the first piece of the phase's work, the harness and its k6 memory measurement on the Mac,
+and "S1-b" is a variant measured in an earlier folder of this lab (`2026-11-24-x86-s1b`: two server processes on one port).
 
-> Written by the project manager on 2026-11-24 at 23:45, before any phase 7 run, and revised at 00:05 after the plan review, still before any run.
+> Written by the project manager on 2026-11-24 at 23:45 EST, before any phase 7 run, and revised at 00:05 EST after the plan review, still before any run.
 
 1. **k6's memory a VU** with the real `load.js` and real think time (scope 1, the Mac): 0.25 to 0.45 MiB (the lab's
    0.343 at shortened think time), so the `m5.4xlarge` stays.
@@ -39,7 +41,9 @@ Copied unchanged from the phase's plan. Prediction 1 was judged earlier, on the 
 Written before the launch. The boxes are an `m5.4xlarge` (the load box: k6 at 71,000 users and more needs 19 GiB and over) and a `c5.large` limited to
 one vCPU at launch (the server box), both Ubuntu 24.04, both with a hard shutdown cap of 240 minutes armed at the first ssh.
 
-The order of the session, each step with its time written in the private run log:
+The order of the session, each step with its time written in the private run log. `launch.sh` and `teardown.sh` are the session's AWS scripts: they
+are private (not in this repository, because they hold account details), and so is the run log. `launch.sh --dry-run` asks AWS whether each call is
+allowed without making anything; `teardown.sh --verify` lists what is still alive under the session's tag and ends `TEARDOWN CLEAN` when nothing is.
 
 1. `launch.sh --dry-run`: a refusal of any call stops the session (the policy is never edited). Then the teardown of what the dry run made and `--verify`
    clean, then the real launch.
@@ -56,9 +60,10 @@ The order of the session, each step with its time written in the private run log
    the end, and once in the middle if the search runs past 90 minutes.
 8. The teardown, then `--verify` ending `TEARDOWN CLEAN`; the key file deleted.
 
-How the search reads a run: k6's exit code decides (0 pass, 99 threshold crossed, anything else a harness error and a stop). A run is void when the
-load box was over 85 % CPU on a plateau second or k6 held over 90 % of that box's memory: the search then ends at "at least the highest pass, bound
-by k6". The wall of a failing run is named in this order: k6 (void), memory (an OOM line, or `MemAvailable` under 100 MiB), died (the service stopped
+How the search reads a run: k6's exit code decides (0 pass, 99 threshold crossed, anything else a harness error and a stop). A failing run is void when the
+load box was over 85 % CPU on more than 10 % of the plateau's seconds (or on 5 in a row) or k6 held over 90 % of that box's memory (the rule changed
+during the session, see "What differed from the plan"). A void probe ends the climb and the holds start at the highest passing probe; a void hold runs
+again once, and counts as not passed if it is void again. The wall of a failing run is named in this order: k6 (void), memory (an OOM line, or `MemAvailable` under 100 MiB), died (the service stopped
 with neither), network (an ENA allowance counter grew), fds (`ListenDrops` grew, or k6 had dial errors while a process held 65,435 descriptors or more), cpu (the service over 88 %
 of the core on its plateau's median second), latency below saturation.
 
@@ -104,7 +109,7 @@ So the server's own wall lies between 135,000 and 142,000 or above, and it is no
 | Memory | MemTotal 1,899 MiB (1,944,868 kB, `mem=2G` on the boot line), no swap; 406 MiB used at idle before the install, 414 MiB with the service | MemTotal 62 GiB (65,113,488 kB) |
 | Disk | `fsync`: a 4 KiB write with `oflag=dsync` takes 1.72 ms (500 in 0.86 s) | |
 | `nf_conntrack` | module loaded (Ubuntu's image), 0 entries, no rule | module loaded, 0 entries (Docker still writes `ip6` tables with `{"iptables": false}`); its table raised to 1,048,576 by the setup |
-| EC2 conntrack allowance, `conntrack_allowance_available` | 136,801 (read at 07:38, 136,750 at the start of the smoke) | 820,833 |
+| EC2 conntrack allowance, `conntrack_allowance_available` | 136,801 (read at 07:38 EST, 136,750 at the start of the smoke) | 820,833 |
 | Network | both boxes in one cluster placement group, one subnet | |
 
 Round trip between the boxes (100 pings, 0.2 s apart): min 0.058 ms, avg 0.069 ms, max 0.098 ms, 0 % lost.
@@ -120,8 +125,8 @@ Round trip between the boxes (100 pings, 0.2 s apart): min 0.058 ms, avg 0.069 m
 
 - **Three bugs of the scripts, found by the real boxes** (each fixed in a `fix(lab)` commit with a check that failed first): the metadata service answers without a final newline, so the address check read 3 addresses instead of 4; the live copy of the read-only seed kept its mode, so the database was read-only for the service and 10 of the 42 checks failed (the setup's own check only polled `/health`); the analysis counted the gauge `conntrack_allowance_available` as a counter that grew.
 - **The void rule changed twice.** First: any plateau second with the load box over 85 % made a run void. The first probe (71,000 users) was void that way and the search stopped: the load box's median was 11 % and 6 of 120 seconds were over 85 %, never more than 2 in a row, the pattern of k6's garbage collector on its 20 GiB heap. Second: a run is void when the load box is over 85 % on more than 10 % of the plateau's seconds or on 5 in a row, or when k6 holds over 90 % of its memory. The second search then stopped at the probe at 129,000 (13 of 117 seconds, 4 in a row at most, 11.1 %) although it had passed. Third, the rule now in the driver: this saturation voids **only a run that fails**, because k6's pauses can only make the measured latency worse, so a run that passes despite them is a valid pass. A failing run with the load box over the line is void: it is neither a pass nor a fail. The run JSON files in this folder were regenerated from the raw files (`analyze.jq` of this commit, run again on each run's own CSVs) under the final rules, the third rule and the CPU wall's median second: the passing runs at 71,000 (first search), 129,000 and 135,000 now say `void: false`, and the files gained `service_share_median` and the load box's seconds over 85 %. `search.json` and `decisions.log` are as the driver and the by-hand script wrote them at the time, under the rules then in force: the first search ends on a void pass at 71,000, the second on "bound by k6, at least 123,000", and `decisions.log` has `void=true` on the winning hold. The tables below read the files by the third rule (the "reading" column).
-- **Port 80 and connection tracking.** The plan kept port 80 closed (so EC2 tracked the connections, each taking one of the server box's 136,801 tracked-connection allowance: it fell by about the number of users in every run before the opening). A tracked search could not go past about 136,000 users. Jacob opened port 80 to everyone himself during the session: the checks of the session's rule list saw it first at 09:34, and the last read without it was at 09:32. Every run of the two searches and the probe at 135,000 started with it closed (tracked); run 16, the first 142,000 probe, started closed and the rule appeared during it (it logged `conntrack_allowance_exceeded` +65,810 and 4,033 dial errors: tracked flows from before the rule); the hold at 135,000 and the two later 142,000 probes started after it, with fresh untracked connections: `conntrack_allowance_exceeded` stayed 0 and `conntrack_allowance_available` went up instead of down (the gauge is a count of tracked connections). Internet scanners may add a few requests to the measurement while the port is open.
-- **The by-hand runs.** After the second search ended, the runs from 135,000 users (runs 15 to 19) were made by hand with the driver's own `run-k6.sh` (same flags, a fresh database and 60 s pause between runs, no new warm-up) by a small script of the session, because the time left would not allow a new search from the warm-up. What it did: probes up from 135,000 (5 % steps), then the hold at 135,000 after a void 142,000 probe (the driver would have stopped there with "at least 135,000, bound by k6", without a hold), then 142,000 run again twice, where the driver would also have stopped (the first 142,000 was tracked, the second and third untracked, all void). The session stopped there and did not try 139,000. The scripts of that session are in the private repository only.
+- **Port 80 and connection tracking.** The plan kept port 80 closed (so EC2 tracked the connections, each taking one of the server box's 136,801 tracked-connection allowance: it fell by about the number of users in every run before the opening). A tracked search could not go past about 136,000 users. Jacob opened port 80 to everyone himself during the session: the checks of the session's rule list saw it first at 09:34 EST (14:34 UTC, the time the tables below use), and the last read without it was at 09:32 EST (14:32 UTC). Every run of the two searches and the probe at 135,000 started with it closed (tracked); run 16, the first 142,000 probe, started closed and the rule appeared during it (it logged `conntrack_allowance_exceeded` +65,810 and 4,033 dial errors: tracked flows from before the rule); the hold at 135,000 and the two later 142,000 probes started after it, with fresh untracked connections: `conntrack_allowance_exceeded` stayed 0 and `conntrack_allowance_available` went up instead of down (the gauge is a count of tracked connections). Internet scanners may add a few requests to the measurement while the port is open.
+- **The by-hand runs.** After the second search ended, the runs from 135,000 users (runs 15 to 19) were made by hand with the driver's own `run-k6.sh` (same flags, a fresh database and 60 s pause between runs, no new warm-up) by a small script of the session, because the time left would not allow a new search from the warm-up. What it did: probes up from 135,000 (5 % steps), then the hold at 135,000 after a void 142,000 probe, then 142,000 run again twice (the first 142,000 was tracked, the second and third untracked, all void). The session stopped there and did not try 139,000. The driver as it was during the session stopped at a void probe, without a hold ("at least 135,000, bound by k6"); the driver in this repository now does what the script did here: a void probe ends the climb and the holds start at the highest pass, so it reproduces the 135,000 hold. The rerun of a void probe stays a person's call: the driver does not make it, the by-hand session did. The scripts of that session are in the private repository only.
 - **The load box's `nf_conntrack_count` and its ENA counters were not sampled during the runs.** They were read once at setup (0 entries, `conntrack_allowance_available` 820,833, every `_exceeded` counter 0) and never again, so "k6 cannot be ruled out" cannot be tested from the load box's side in either direction.
 - **Smaller:** the kernel is 7.0, not 6.x; `nf_conntrack` is loaded on both boxes (empty), not absent; `--shape` ran in parallel with the load box's setup (they do not depend on each other); the seed push was forgotten before the first `server-setup.sh` (it refused in 1 s, nothing installed); k6 held 20 GiB at 71,000 users and 44 to 45 GiB at 142,000 on the `m5.4xlarge` load box, as the Mac measurement of 0.29 MiB a user predicted.
 - **Not measured, not planned:** no hold above 135,000 and no hold below it was run (the first hold passed); the soft-limit's accepts show from 129,000 up (the median accepts a second is 104 at 129,000 and 736 at 135,000).
@@ -153,7 +158,7 @@ The tables are regenerated by `summarize.sh` from the per-run JSON files in the 
 | 1 | warm-up at 1000 users for 2m | not scored; a failing warm-up is a harness error |
 | 2 | probe at 71000 users for 2m | the start |
 
-End: **bound-by-k6**. at least 0, bound by k6: the load box's CPU reached 99 % on a plateau second at 02-probe-71000
+End (as the driver wrote it, under the rules then in force): **bound-by-k6**. at least 0, bound by k6: the load box's CPU reached 99 % on a plateau second at 02-probe-71000
 
 ### search-2
 
@@ -225,7 +230,7 @@ End: **bound-by-k6**. at least 0, bound by k6: the load box's CPU reached 99 % o
 | 13 | probe at 123000 users for 2m | 5 % up from 117000, rounded to 1000 |
 | 14 | probe at 129000 users for 2m | 5 % up from 123000, rounded to 1000 |
 
-End: **bound-by-k6**. at least 123000, bound by k6: the load box's CPU was over 85 % on 13 of 117 plateau seconds (4 in a row at most, peak 100 %) at 14-probe-129000
+End (as the driver wrote it, under the rules then in force): **bound-by-k6**. at least 123000, bound by k6: the load box's CPU was over 85 % on 13 of 117 plateau seconds (4 in a row at most, peak 100 %) at 14-probe-129000
 
 ### search-3
 
@@ -303,7 +308,7 @@ The decisions, in the load box's clock (UTC), as the by-hand script logged them:
 | 7 | Accepts a second: 1,000 to 2,500 at most during a probe's ramp near 100,000 users, under 10 a second on the plateau below 128,000 | Ramp: inside (1,755 at 101,000, 2,303 at 123,000). Plateau: the median is 0 (so, under 10) but the largest second is 794 to 1,827 below 128,000 . Half missed. |
 | 8 | The wall is the CPU: the first failing probe has the service at 88 % or more, no ENA counter grown, no `ListenDrops`, no OOM, load box under 50 % | Missed: 142,000 failed with the service at 78 to 86 % of the core over the plateau (87.4, 90.6 and 90.4 % on the median second), `pps_allowance_exceeded` grown, the load box over 85 % on 19 to 26 seconds, so no wall is named. No `ListenDrops`, no OOM kill; ten TCP out-of-memory lines in run 16. |
 | 9 | Highest passing probe 111,000 to 135,000, the hold passes there or one step under | Inside, at the top: 135,000 passed as a probe and as a hold. |
-| 10 | The score 105,000 to 135,000; the bench estimate 67,000 to 86,000 | Inside, at the top edge: 135,000, the bench estimate about 86,000 (a lower bound). 71,000 is beaten with room. |
+| 10 | The score 105,000 to 135,000; the bench estimate 67,000 to 86,000 | Inside, at the top edge: 135,000, the bench estimate about 86,000 (CPU-scaled; whether the bench would read above or below it is not known). 71,000 is beaten with room. |
 | 11 | Memory: `memory.current` under 1.2 GiB, `MemAvailable` never under 250 MiB, no OOM | Inside on the numbers: peak 881 MiB in the passing hold (1,090 MiB in the worst 142,000 run), `MemAvailable` minimum 785 MiB, no OOM kill; but ten TCP out-of-memory lines in run 16 (the kernel's TCP memory, not the OOM killer; none in the passing hold). |
 | 12 | The load box at 130,000 VUs: 35 to 55 GiB of k6, CPU under 50 %, never the wall | k6's memory inside (39.8 GiB at 129,000, 42 to 45 at 135,000 and 142,000); the median CPU is 20 %, but the load box was over 85 % on 12 to 33 plateau seconds from 123,000 up, and k6 cannot be ruled out as part of the 142,000 failures. Half missed. |
 | 13 | 15 to 19 k6 runs, 2 h 30 to 3 h 30, under 5 USD | 21 runs on AWS (2 of the first search, 14 of the second, 5 by hand) plus the smoke: over. 2 h 29 launch to teardown: 1 min under the range. About 2 USD by the hourly prices (an estimate, not a bill): inside. |

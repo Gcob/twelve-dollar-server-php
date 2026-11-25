@@ -126,9 +126,9 @@ in 5 % steps, then a 5-minute hold.
 core and 881 MiB at peak. At 142,000 users the run failed, and we could not separate the server's wall from the load
 generator's. So 135,000 is a lower bound.
 
-This is not what the bench will read. The AWS core costs about 1.57 times less per request than the bench's box, as
+This is not what the bench will read. The bench's core is about 1.57 times slower per request than the AWS core, as
 estimated from two entries (the leaderboard's numbers against the same entries on this Xeon), so the bench should read
-lower. We give no number for it. The runs, one by one:
+lower. The results give an estimate, labelled as one; this README claims none. The runs, one by one:
 [lab/results/2026-11-25-x86-score](https://github.com/Gcob/twelve-dollar-server-php/tree/main/lab/results/2026-11-25-x86-score).
 
 What is checked: `test/test.sh` passes 42 of 42 in a clean Ubuntu 24.04 container (1 CPU, 2 GiB,

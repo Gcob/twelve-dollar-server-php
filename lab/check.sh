@@ -2534,7 +2534,9 @@ check_results_check_catches_drift() {
     || { echo "a block with no END passes or is not named (exit $rc): ${out//$'\n'/ | }"; return 1; }
 }
 
-# The score search (lab/score/): the next-step rule, the plateau window, the per-run numbers and the walls, each on fixtures, no Docker.
+# The score search (lab/score/): the next-step rule, the plateau window, the per-run numbers and the walls, each on fixtures; the search itself runs
+# against a fake controller and a fake k6. Only the sampler part needs Docker (the image `php-lab:8.5`, for bash 5 and a Linux /proc), and the
+# refusals copy `bench/load.js` from the challenge's clone in `reference/`.
 # score_check_steps: the arithmetic of the search (Jacob's 5 % steps, rounded to the nearest n; holds start at the highest pass).
 score_check_steps() {
   local got
@@ -2897,19 +2899,19 @@ boxes_setup_run() {
 }
 
 # The shape checks and the service checks of server-setup.sh --check, each failing alone on its own fixture: two CPUs, 4 GiB, a swap, the
-# unit not active, another user, a low open files limit, no ambient capability. The droplet's shape passes, and a loaded nf_conntrack is
+# unit not active, another user, a low open files limit, no ambient capability, no curl. The droplet's shape passes, and a loaded nf_conntrack is
 # printed without failing.
 check_score_server_setup_checks() {
   local dir kind line want
   dir="$(mktemp -d)"
   boxes_fixture "$dir"
-  boxes_setup_run "$dir" -- --check
+  boxes_setup_run "$dir" SCORE_CURL=bash -- --check
   [ "$BOXES_RC" = 0 ] || { echo "the droplet's shape and a healthy service fail (exit $BOXES_RC): ${BOXES_OUT//$'\n'/ | }"; return 1; }
-  for want in cpus memory swap unit user limits capability; do
+  for want in cpus memory swap unit user limits capability curl; do
     grep -q "^ok    $want: " <<<"$BOXES_OUT" || { echo "no 'ok    $want:' line on the good fixture: ${BOXES_OUT//$'\n'/ | }"; return 1; }
   done
   grep -q '^info  conntrack: nf_conntrack is not loaded' <<<"$BOXES_OUT" || { echo "no conntrack line: ${BOXES_OUT//$'\n'/ | }"; return 1; }
-  for kind in cpus memory swap unit user limits capability; do
+  for kind in cpus memory swap unit user limits capability curl; do
     rm -rf "$dir"
     dir="$(mktemp -d)"
     boxes_fixture "$dir"
@@ -2921,9 +2923,10 @@ check_score_server_setup_checks() {
       user) printf 'Name:\tphp\nUid:\t0\t0\t0\t0\nCapAmb:\t0000000000000400\n' >"$dir/proc/4242/status" ;;
       limits) printf 'Max open files            1024                 524288               files\n' >"$dir/proc/4242/limits" ;;
       capability) printf 'Name:\tphp\nUid:\t0\t0\t0\t0\nCapAmb:\t0000000000000000\n' >"$dir/proc/4242/status" ;;
+      curl) ;;   # the program is swapped for one that does not exist, below
     esac
     # Why: the fixture's process runs as root, so only the 'user' case expects another user.
-    boxes_setup_run "$dir" "SCORE_SETUP_USER=$([ "$kind" = user ] && echo deploy || echo root)" -- --check
+    boxes_setup_run "$dir" "SCORE_SETUP_USER=$([ "$kind" = user ] && echo deploy || echo root)" "SCORE_CURL=$([ "$kind" = curl ] && echo no-such-curl-here || echo bash)" -- --check
     [ "$BOXES_RC" = 1 ] || { echo "the '$kind' fixture exits $BOXES_RC, not 1: ${BOXES_OUT//$'\n'/ | }"; return 1; }
     line="$(grep "^FAIL  $kind: " <<<"$BOXES_OUT" || true)"
     [ -n "$line" ] || { echo "no 'FAIL  $kind:' line on the '$kind' fixture: ${BOXES_OUT//$'\n'/ | }"; return 1; }
@@ -2933,7 +2936,7 @@ check_score_server_setup_checks() {
   dir="$(mktemp -d)"
   boxes_fixture "$dir"
   printf 'nf_conntrack 180224 1 - Live 0x0000000000000000\next4 1 0\n' >"$dir/modules"
-  boxes_setup_run "$dir" -- --check
+  boxes_setup_run "$dir" SCORE_CURL=bash -- --check
   [ "$BOXES_RC" = 0 ] && grep -q '^info  conntrack: nf_conntrack is loaded' <<<"$BOXES_OUT" || { echo "a loaded nf_conntrack is printed and does not fail (exit $BOXES_RC): ${BOXES_OUT//$'\n'/ | }"; return 1; }
   rm -rf "$dir"
 }

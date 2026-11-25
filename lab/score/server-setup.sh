@@ -13,8 +13,9 @@
 # install.sh's 120 s, and they are not disabled), the user `deploy`, the submission copied to /srv/php-Gcob, `bash install.sh` as root (timed),
 # `build.sh` as deploy, the seed (/srv/seed/feed.db: it must already be there, sent from the load box by `k6-setup.sh --push-seed`; it is
 # made root's and read-only), /srv/data for deploy, the controller (/srv/score/), the unit installed and enabled but not started, then one
-# `server-ctl.sh restart` and the checks of the running service. The challenge's 42 checks are not run here: they need jq and curl, which
-# stay off this box, so they run from the load box (`k6-setup.sh --check-42`).
+# `server-ctl.sh restart` and the checks of the running service. The challenge's 42 checks are not run here: they need jq, which stays off this
+# box, so they run from the load box (`k6-setup.sh --check-42`). `curl` is on this box because Ubuntu's image ships it, and `server-ctl.sh
+# restart` polls /health with it: the checks say so when it is missing.
 #
 # Every line is `ok`, `FAIL` or `info`, then the check's name and what it saw; the exit code is 0 only when nothing failed. The files the shape
 # checks read can be swapped (SCORE_CPUINFO, SCORE_MEMINFO, SCORE_SWAPS, SCORE_MODULES), and so can the unit's cgroup and /proc
@@ -36,6 +37,7 @@ MEM_LIMIT_MIB=2048
 # CAP_NET_BIND_SERVICE is capability 10: the bit 0x400.
 AMBIENT_WANT=0000000000000400
 NOFILE_WANT=65535
+CURL="${SCORE_CURL:-curl}"
 
 TREE="$(cd "$(dirname "$0")/../.." && pwd)"
 SUBMISSION=/srv/php-Gcob
@@ -96,6 +98,8 @@ check_service() {
   local pids=() pid uid user users="" limits_bad="" caps_bad="" soft hard capamb decoded="" nproc_seen
   # Why: the sampler reads the ENA's allowance counters with ethtool; the install adds it when the image has none.
   if command -v ethtool >/dev/null 2>&1; then info ethtool "present (the sampler reads the ENA's counters with it)"; else info ethtool "missing: the sampler cannot read the ENA's allowance counters"; fi
+  # Why: nothing installs curl here (the image has it); `server-ctl.sh restart` polls /health with it, and without it every restart would fail after 60 s.
+  if command -v "$CURL" >/dev/null 2>&1; then ok curl "present (server-ctl.sh restart polls /health with it)"; else bad curl "missing: server-ctl.sh restart polls /health with it, and Ubuntu's image ships it"; fi
   if systemctl is-active --quiet "$UNIT"; then ok unit "$UNIT is active"; else bad unit "$UNIT is not active"; fi
   if [ -r "$UNIT_CGROUP/cgroup.procs" ]; then
     while read -r pid; do pids+=("$pid"); done <"$UNIT_CGROUP/cgroup.procs"

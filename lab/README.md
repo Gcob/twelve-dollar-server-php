@@ -1399,10 +1399,10 @@ over 85 % CPU on more than 10 % of the plateau's seconds or on 5 in a row, or k6
 over 88 % of a core on the plateau's median second, not its mean: a few seconds at 100 % do not make a CPU wall), else `latency-below-saturation`. The plateau includes the seconds of k6's graceful ramp down in which the VUs
 still run their last iteration: `vus` leaves the target only when they finish.
 
-`check_score` covers it with no Docker: the next-step rule (71,000, 75,000, 79,000, ...; holds from the highest pass; 6 failing holds stop;
+`check_score` covers it: the next-step rule (71,000, 75,000, 79,000, ...; holds from the highest pass; 6 failing holds stop;
 rounding), numbers worked out by hand on a made-up run (`lab/check/fixtures/score/make-run.awk`), one fixture a wall and two for their order, the
 search against a fake controller and a fake k6 (exit 0, 99 and 1, a void run, a failing warm-up) and the refusals (a `load.js` with one byte
-changed, an existing `--out`, facts that fail).
+changed, an existing `--out`, facts that fail). Most of it needs no Docker; the server sampler's part runs in the `php-lab:8.5` image (it needs bash 5 and a Linux `/proc`), and the refusals copy `load.js` from the challenge's clone in `reference/`.
 
 ### The two boxes (`lab/score/`, phase 7)
 
@@ -1412,7 +1412,7 @@ on the real boxes is the first real test.
 
 | File | What it does |
 | --- | --- |
-| `server-setup.sh` | On the server box, as root. `--shape` adds `mem=2G` to the kernel's boot line (a `grub.d` drop-in that appends) and reboots. Then, with `--launch-epoch`: the shape checks (one CPU, at most 2,048 MiB, no swap; a `FAIL` stops before anything is installed), the 240-minute shutdown re-armed, a wait for cloud-init and the package manager's lock, the user `deploy`, the submission in `/srv/php-Gcob`, `install.sh` as root and `build.sh` as `deploy`, the seed, the unit, one restart, and the checks of the running processes (user, `Max open files`, ambient capability). `--check` runs only the checks. The challenge's 42 checks run from the load box: `jq` and `curl` stay off this box. |
+| `server-setup.sh` | On the server box, as root. `--shape` adds `mem=2G` to the kernel's boot line (a `grub.d` drop-in that appends) and reboots. Then, with `--launch-epoch`: the shape checks (one CPU, at most 2,048 MiB, no swap; a `FAIL` stops before anything is installed), the 240-minute shutdown re-armed, a wait for cloud-init and the package manager's lock, the user `deploy`, the submission in `/srv/php-Gcob`, `install.sh` as root and `build.sh` as `deploy`, the seed, the unit, one restart, and the checks of the running processes (user, `Max open files`, ambient capability, `curl` present). `--check` runs only the checks. The challenge's 42 checks run from the load box: `jq` stays off this box, and `curl` is the one Ubuntu's image ships (`server-ctl.sh` polls `/health` with it, and the setup checks it is there). |
 | `php-gcob.service` | The unit: `User=deploy`, `LimitNOFILE=65535`, `AmbientCapabilities=CAP_NET_BIND_SERVICE`, port 80, `Restart=no`; the bench names only the limit and the capability, so nothing else is set. |
 | `server-ctl.sh` | The server box's controller, run through `sudo`: `restart` (stop, remove the live database and its `-wal`/`-shm`, copy the seed, start, poll `/health` every 0.1 s, 60 s at most), `sample-start`/`sample-stop` (the sampler on the unit's cgroup), `facts`, `died`. |
 | `ctl-ssh.sh` | The controller the driver gets on the load box: the same commands over ssh, and `sample-stop <dir>` brings the sampler's files back into the driver's folder. |
