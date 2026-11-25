@@ -27,9 +27,6 @@ themselves after 4 hours; at the end `teardown.sh --verify` must show nothing le
 policy. **Q22** (port 80 opened to the internet only if EC2's connection tracking would be the wall) is best answered
 before the go; without an answer the session stays closed and names the table if it binds.
 
-**🟠 Delete the AWS policy `twelve-dollar-x86-calibration`** (detach it from your CLI user, then delete it): scope 9
-is done and `teardown.sh --verify` shows nothing tagged left (only the terminated instance).
-
 ### Q18/19 [run, lab] : a series driver and a host-state line in the lab, first thing in 5b?
 
 Six measuring scopes rewrote the same script (quiet check, dated start and end, one `steplab.sh` per series, the gap
