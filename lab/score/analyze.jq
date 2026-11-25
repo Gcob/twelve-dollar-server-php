@@ -109,15 +109,17 @@ def window($rows; $s; $e): [$rows[] | select(.ts >= $s and .ts <= $e)];
 | ([$lb[].k6_mem_current, $lb[].k6_mem_peak | select(. != null)] | maxn) as $k6_mem_peak
 | ([$lb[].mem_total_kb | select(. != null)] | maxn) as $lb_mem_kb
 # Why not "any second over 85 %": k6's garbage collector marks its heap (20 GiB at 71,000 users) on every core for a second or two every 35 s or so, which
-# is not k6 being the wall. A run is void when the load box is over 85 % on more than 10 % of the plateau's seconds, or on 5 seconds in a row.
+# is not k6 being the wall. The load box is "over the line" when it is over 85 % on more than 10 % of the plateau's seconds, or on 5 seconds in a row, or
+# k6 holds over 90 % of its memory. Over the line voids only a run that FAILS (k6 may have caused it): k6's saturation can only make the measured latency
+# worse, so a run that passes despite it is a valid pass.
 | (if ($lb_hot | length) > 0 and ($lb_hot_n * 10 > ($lb_hot | length) or $lb_streak >= 5) then "the load box's CPU was over 85 % on \($lb_hot_n) of \($lb_hot | length) plateau seconds (\($lb_streak) in a row at most, peak \($lb_cpu_max * 100 | round) %)"
    elif $k6_mem_peak != null and $lb_mem_kb != null and $k6_mem_peak > $lb_mem_kb * 1024 * 0.9 then "the k6 container held \($k6_mem_peak / 1048576 | round) MiB, over 90 % of the load box's memory"
-   else null end) as $void_reason
+   else null end) as $over_line
 
 # Why only `_exceeded`: conntrack_allowance_available is a gauge (it falls as connections open and rises as they close), not a count of drops.
 | ($meta.k6_exit == 0) as $pass
 | (if $pass then null
-   elif $void_reason != null then "k6"
+   elif $over_line != null then "k6"
    elif ($oom_e != null and $oom_s != null and $oom_e > $oom_s) or ($avail_min != null and $avail_min < 102400) then "memory"
    elif $meta.server_died then "died"
    elif $ena_diff != null and ($ena_diff | to_entries | any(.value > 0 and (.key | endswith("_exceeded")))) then "network"
@@ -127,7 +129,7 @@ def window($rows; $s; $e): [$rows[] | select(.ts >= $s and .ts <= $e)];
 
 | {
     kind: $meta.kind, users: $users, duration_s: $meta.duration_s, k6_exit: $meta.k6_exit, pass: $pass,
-    void: ($void_reason != null), void_reason: $void_reason,
+    void: (($pass | not) and $over_line != null), void_reason: (if $pass then null else $over_line end),
     p95_ms: $dur["p(95)"], p99_ms: $dur["p(99)"],
     error_rate: ($failed.value // $failed.rate),
     http_reqs: $reqs.count,
@@ -155,7 +157,7 @@ def window($rows; $s; $e): [$rows[] | select(.ts >= $s and .ts <= $e)];
       fds_max: $fds_max,
       rows: ($srv | length)
     },
-    loadbox: {cpu_max: $lb_cpu_max, plateau_seconds: ($lb_hot | length), seconds_over_85: $lb_hot_n, longest_streak_over_85: $lb_streak, k6_memory_peak_bytes: $k6_mem_peak, mem_total_kb: $lb_mem_kb, k6_cgroup_layout: $meta.cgroup_layout},
+    loadbox: {over_line: ($over_line != null), cpu_max: $lb_cpu_max, plateau_seconds: ($lb_hot | length), seconds_over_85: $lb_hot_n, longest_streak_over_85: $lb_streak, k6_memory_peak_bytes: $k6_mem_peak, mem_total_kb: $lb_mem_kb, k6_cgroup_layout: $meta.cgroup_layout},
     healthy_s: $meta.healthy_s, service_died: $meta.server_died, dial_errors: $meta.dial_errors,
     wall: $wall
   }

@@ -2615,7 +2615,12 @@ score_check_walls() {
     && score_expect "4 seconds in a row: not void" "$j" '[.void, .loadbox.longest_streak_over_85] | join(" ")' "false 4" || return 1
   j="$(score_run lbspike=0.9 plateau=120 lbspikes=20,21,22,23,24 -- 99)" \
     && score_expect "5 seconds in a row: void" "$j" '[.void, .wall, .loadbox.seconds_over_85, .loadbox.longest_streak_over_85] | join(" ")' "true k6 5 5" || return 1
-  j="$(score_run k6mib=7100 -- 0)" && score_expect "k6 over 90 % of the load box's memory, even though it passed" "$j" '[.pass, .void, (.wall // "none")] | join(" ")' "true true none" || return 1
+  # k6's saturation voids only a run that fails: its garbage collector can only make the measured latency worse, so a run that passes despite it is a valid pass.
+  j="$(score_run lbspike=0.9 plateau=120 lbspikes=20,21,22,23,24 -- 0)" \
+    && score_expect "5 seconds in a row over 85 % but k6 exited 0: a valid pass, not void, and the run still says k6 was over the line" "$j" '[.pass, .void, (.wall // "none"), .loadbox.over_line] | join(" ")' "true false none true" || return 1
+  j="$(score_run k6mib=7100 -- 0)" && score_expect "k6 over 90 % of the load box's memory but it passed: a valid pass" "$j" '[.pass, .void, (.wall // "none"), .loadbox.over_line] | join(" ")' "true false none true" || return 1
+  j="$(score_run k6mib=7100 -- 99)" && score_expect "k6 over 90 % of the load box's memory and it failed: void" "$j" '[.pass, .void, .wall] | join(" ")' "false true k6" || return 1
+  j="$(score_run -- 0)" && score_expect "a quiet load box is not over the line" "$j" '.loadbox.over_line' "false" || return 1
   j="$(score_run oom=1 -- 99)" && score_expect "a new OOM line" "$j" '.wall' "memory" || return 1
   j="$(score_run avail=51200 -- 99)" && score_expect "MemAvailable under 100 MiB" "$j" '.wall' "memory" || return 1
   j="$(score_run -- 99 server-died.txt=died)" && score_expect "the service died with no OOM line and MemAvailable high: its own wall, not memory" "$j" '[.wall, .service_died] | join(" ")' "died true" || return 1
@@ -2694,10 +2699,13 @@ score_check_search() {
   score_search "99"
   [ "$SCORE_RC" = 1 ] && [ "$(score_runs)" = "warmup:1000:false" ] && grep -q 'warm-up failed' "$SCORE_OUT/search.json" \
     || { echo "a failing warm-up is a harness error, the search stops (exit $SCORE_RC): $(score_runs)"; return 1; }
-  score_search "0 0 0/lbspike=0.9+lbspikes=5,6,7,8,9 0"
-  [ "$SCORE_RC" = 0 ] && [ "$(score_runs)" = "warmup:1000:true probe:71000:true probe:75000:true" ] \
+  score_search "0 0 99/lbspike=0.9+lbspikes=5,6,7,8,9 0"
+  [ "$SCORE_RC" = 0 ] && [ "$(score_runs)" = "warmup:1000:true probe:71000:true probe:75000:false" ] \
     && [ "$(jq -r '.end | [.result, .reason] | join("|")' "$SCORE_OUT/search.json" | cut -c1-39)" = "bound-by-k6|at least 71000, bound by k6" ] \
-    || { echo "a void run ends the search at 'at least 71000, bound by k6' (exit $SCORE_RC): $(score_runs) $(jq -c .end "$SCORE_OUT/search.json")"; return 1; }
+    || { echo "a failing void run ends the search at 'at least 71000, bound by k6' (exit $SCORE_RC): $(score_runs) $(jq -c .end "$SCORE_OUT/search.json")"; return 1; }
+  score_search "0 0/lbspike=0.9+lbspikes=5,6,7,8,9 99 0"
+  [ "$SCORE_RC" = 0 ] && [ "$(score_runs)" = "warmup:1000:true probe:71000:true probe:75000:false hold:71000:true" ] && [ "$(jq -r '.end.score' "$SCORE_OUT/search.json")" = 71000 ] \
+    || { echo "a passing probe with k6 over the line is a valid pass: the search goes on and the hold at 71000 is the score (exit $SCORE_RC): $(score_runs) $(jq -c .end "$SCORE_OUT/search.json")"; return 1; }
 }
 
 # The refusals: a load.js with one byte changed, an --out that exists, a controller whose facts fail. Nothing runs, not even a restart.
