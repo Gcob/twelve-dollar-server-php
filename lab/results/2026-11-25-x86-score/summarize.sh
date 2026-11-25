@@ -51,6 +51,11 @@ tables() {
   all_runs | jq -r "$PRELUDE"'
     "| \(.folder) | \(.server.accepts_per_s_median | r1) | \(.server.accepts_per_s_max_plateau | r1) | \(.server.accepts_per_s_max_run | r1) | \(.server.cpu_busy_median | pct) | \(.loadbox.k6_memory_peak_bytes | gib) | \(.loadbox.cpu_max | pct) | \(.loadbox.seconds_over_85 // "-") (\(.loadbox.longest_streak_over_85 // "-")) / \(.loadbox.plateau_seconds // "-") | \(.server.memory_current_peak | mib) | \(if .server.mem_available_min_kb == null then "-" else (.server.mem_available_min_kb / 1024 | round) end) | \(.server.ena_allowance_diff // {} | to_entries | map(select(.value > 0 and (.key | endswith("_exceeded"))) | "\(.key) +\(.value)") | if length == 0 then "none" else join(", ") end) | \(.server.listen_drops // "-") | \(.server.tcp_inuse_peak // "-") | \(.dial_errors) |"'
   echo
+  echo "| Run | users | pps_allowance_exceeded (packets over the packets-a-second allowance, over the run) | conntrack_allowance_exceeded | conntrack_allowance_available change | reading |"
+  echo "|---|---|---|---|---|---|"
+  all_runs | jq -r "$PRELUDE"'
+    "| \(.folder) | \(.users) | \(.server.ena_allowance_diff.pps_allowance_exceeded // "-") | \(.server.ena_allowance_diff.conntrack_allowance_exceeded // "-") | \(.server.ena_allowance_diff.conntrack_allowance_available // "-") | \(if .pass then "valid pass" elif .void then "void (k6 over the line)" else "fail" end) |"'
+  echo
   if [ -f "$DIR/search.json" ]; then
     echo "| # | decision | reason |"
     echo "|---|---|---|"
