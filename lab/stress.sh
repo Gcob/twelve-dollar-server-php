@@ -20,7 +20,7 @@ SERVER=lab-stress-server
 CLIENT=lab-stress-client
 
 usage() {
-  echo "usage: lab/stress.sh --image <variant> --server <php file under lab/> [--ext <name>]... [--env K=V]... [--seccomp-unconfined]" >&2
+  echo "usage: lab/stress.sh --image <variant> --server <php file under lab/ or submissions/> [--ext <name>]... [--env K=V]... [--seccomp-unconfined]" >&2
   echo "                     [--connections <n>] [--requests <n>] [--procs <n>] [--pipelines 1,16] [--port <n>]" >&2
   exit 2
 }

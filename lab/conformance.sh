@@ -22,7 +22,7 @@ SERVER=lab-conformance-server
 CLIENT=lab-conformance-client
 
 usage() {
-  echo "usage: lab/conformance.sh --image <variant> --server <php file under lab/> [--ext <name>]... [--env K=V]... [--port <n>] [--seccomp-unconfined]" >&2
+  echo "usage: lab/conformance.sh --image <variant> --server <php file under lab/ or submissions/> [--ext <name>]... [--env K=V]... [--port <n>] [--seccomp-unconfined]" >&2
   exit 2
 }
 fail() { echo "conformance: $*" >&2; exit 1; }

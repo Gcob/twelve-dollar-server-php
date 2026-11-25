@@ -71,6 +71,8 @@ The times in `results/build-times.md` are one build after the other (`8.6` is sh
 An unknown variant exits non-zero and lists the known ones. `lab/run.sh` runs a command in the image with 1 CPU, 2 GiB,
 no swap, 65535 file descriptors, on the host network, pinned to CPU 2; `lab/` is mounted at `/lab` (read-only, except
 `lab/results/` and `lab/data/`). The CPU layout and the limits live in `lab/lib.sh`, shared by every lab script.
+A server file may also be under the repo's `submissions/` folder (`--server submissions/php-Gcob/server.php`): it is mounted read-only at
+`/submissions`, and only in a container that starts such a file (`LAB_RUN_SUBMISSIONS=1 bash lab/run.sh ...` mounts it for a check).
 `php-info` prints the PHP, Swoole and SQLite versions, OPcache and JIT, and which extensions are present (`swoole:
 not built` when the image has no Swoole), then `pcntl`, `sockets`, `event` (its version, or `not built`), `excimer` (the same) and the
 Workerman version of its two trees (`workerman: 5.2.4 (stock, nocache)`).
@@ -1125,7 +1127,7 @@ bash lab/steplab.sh --image 8.5 --rate 24000 --think-scale 0.02 --idle 60000 --s
 Each run is `lab/realistic.sh --hold <rate>,<seconds>` (a fresh seed copy, server and idle connections each time), with `--no-series`
 (no per-second probes) and the server's telemetry off unless the variant sets `APP_TELEMETRY`. The default warm-up is a tenth of the
 rate for 60 s (`--warmup <req/s>,<s>` changes it). `--variant <name>=<K=V,K=V...>` sets environment variables (an empty list is the
-skeleton as it is); `--server-variant <name>=<php file under lab/>` runs another server file; `--variant-args <name>=<arguments>` adds
+skeleton as it is); `--server-variant <name>=<php file under lab/ or submissions/>` runs another server file; `--variant-args <name>=<arguments>` adds
 arguments to that variant's `lab/realistic.sh` call, split on spaces and given last, so a variant can run on another image and with its own
 extension and `php.ini` (`--variant-args "other=--image 8.3-apt --ext swoole"`). **The first variant is the reference.** Runs are **interleaved by round**: every round runs every variant once, and `--pairs` rounds follow each other, so a slow drift of the VM hits every variant alike.
 
@@ -1378,6 +1380,25 @@ bash lab/check.sh
 
 One line per check, `ok` or `FAIL`, non-zero exit if any fails. To add one, write a `check_<name>` function in the
 script and list it in `CHECKS`.
+
+**The submission** (`submissions/php-Gcob`, the chosen variants in a clean copy with no switch) has its own checks:
+`check_submission` (it reads only `SQLITE_PATH`, `JWT_SECRET`, `HOST` and `PORT`, holds none of the lab's switch names or instruments,
+`start.sh` passes the three extensions then the lab's `LAB_SERVER_PHP_FLAGS` in order, `php -l` passes in `php-lab:8.5`, and the folder holds
+only the allowed files) with `check_submission_catches_violations` (a fixture for each rule), `check_submission_passes_challenge_test`
+(42/42, no `--env`), `check_submission_both_workers_answer` (the boot lines, and 200 held connections that grow the socket table of each
+worker), `check_submission_default_host_and_port` (0.0.0.0:80 in a container with a network of its own) and `check_submission_cases`
+(`lab/check/submission-test.php`: the configuration refusals, SIGTERM, a killed worker, and the soft limit on socket pairs and through the loop). It also runs `lab/check/post-insert-test.php` (a new post is committed when `post_insert()` returns, and a commit made to fail with a deferred foreign key is an exception).
+`check_submission` also reads `install.sh` (every `curl` followed by a `sha256sum -c` of its file, every `phpize`, `php-config` and `php` by its full
+`/opt/php-gcob/bin/` path, the PHP and ext-event pins equal to the lab's images) and runs the pinned shellcheck on `install.sh`, `build.sh` and
+`start.sh`; `check_submission_install_stops_on_wrong_sha256` runs `install.sh` with one digit of PHP's sha256 changed and sees it stop before `configure`.
+It reads `README.md` too: each link to this repo must be a `/tree/main/` or `/blob/main/` link to a path that exists in the tree (the README is read in the
+challenge's repo, where `lab/` does not exist), no link may be relative, and it holds no home path and no e-mail address.
+
+`lab/submission-test.sh [--ci] [--keep]` installs and tests the submission in a clean Ubuntu 24.04 container the way the bench does (`install.sh`
+as root, `build.sh` and `test/run.sh` as `deploy` on port 80, a second start on `0.0.0.0:80`, the processes' user and open-files limit, port 80
+refused without the capability) or, with `--ci`, the way the challenge's own CI does (Ubuntu's PHP 8.3 first on the `PATH`, `sudo bash install.sh`,
+`test/run.sh` on `127.0.0.1:3000`). One CPU, 2 GiB, a network of its own. It takes about 4 minutes on the arm64 VM (the compile is most of it) and is
+not part of `lab/check.sh`.
 
 `check_results_regenerate` keeps the results folders honest: it runs every `lab/results/*/summarize.sh` (from its
 folder, reading only the raw files next to it) and checks the folder's `README.md` against it, byte for byte, so a

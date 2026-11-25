@@ -60,7 +60,7 @@ VOLUME=lab-macro-run
 LAG_GATE_S=4
 
 usage() {
-  echo "usage: lab/macro.sh --image <variant> --server <php file under lab/> --rate <req/s> --duration <s> [--warmup <s>]" >&2
+  echo "usage: lab/macro.sh --image <variant> --server <php file under lab/ or submissions/> --rate <req/s> --duration <s> [--warmup <s>]" >&2
   echo "                    [--script <k6 js under lab/>] [--out <path>] [--port <n>] [--path </url/path>]" >&2
   echo "                    [--pre-vus <n>] [--max-vus <n>] [--php-ini key=value]... [--ext <name>]... [--env K=V]..." >&2
   echo "                    [--label <text>] [--fresh-db] [--cold] [--per-second] [--profile <collapsed stacks file>] [--seccomp-unconfined]" >&2

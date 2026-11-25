@@ -47,7 +47,7 @@ DEFAULT_STEPS=1000,5000,10000,20000,30000,40000,50000,60000,65000,66000
 SETTLE_S=1
 
 usage() {
-  echo "usage: lab/conns.sh --image <variant> --server <php file under lab/> [--ext <name>]... [--env K=V]... [--label <text>]" >&2
+  echo "usage: lab/conns.sh --image <variant> --server <php file under lab/ or submissions/> [--ext <name>]... [--env K=V]... [--label <text>]" >&2
   echo "                    [--steps a,b,...] [--max <n>] [--server-nofile <n>] [--port <n>] [--out <path>] [--seccomp-unconfined]" >&2
   exit 2
 }

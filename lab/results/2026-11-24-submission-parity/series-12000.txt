@@ -1,0 +1,4 @@
+# The same pair at 12,000 req/s, the rate of 5b's S1-b pairs, where two processes stay under saturation: 3 pairs, the alternating order, everything else as series.txt.
+# Run by `bash lab/stages.sh lab/results/2026-11-24-submission-parity/series-12000.txt --out lab/results/2026-11-24-submission-parity`; the driver's stages.json of this run is kept as stages-12000.json.
+# The floor is the S1 series' A/A at 12,000 req/s (one process, the bare skeleton in the old order), not this pair's own.
+parity-12000 --image 8.5 --think-scale 0.02 --idle 60000 --seconds 60 --rate 12000 --pairs 3 --floor-from lab/results/2026-11-23-s1-fd-wall/aa-12000 --ext pcntl --ext sockets --ext event --variant lab=APP_WORKERS=2,APP_SOFT_CONN_LIMIT=64000,APP_PRAGMAS=mmap-off --variant sub=APP_SOFT_CONN_LIMIT=64000 --server-variant sub=submissions/php-Gcob/server.php

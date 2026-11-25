@@ -4,7 +4,7 @@
 # of the seed (lab_start_app: the suite's golden answers need a fresh database, and it writes to it); the suite runs in a second
 # container on the same host network, from an image with the four programs it needs (lab/images/Dockerfile.tools).
 #
-#   bash lab/challenge-test.sh --image 8.5 [--server lab/app/server.php] [--php-ini <php.ini>] [--ext sockets --ext event] [--env K=V]... [--port 18110]
+#   bash lab/challenge-test.sh --image 8.5 [--server <php file under lab/ or submissions/>] [--php-ini <php.ini>] [--ext sockets --ext event] [--env K=V]... [--port 18110]
 #
 # --env K=V (repeatable) is passed to the server container, after JWT_SECRET and SQLITE_PATH: the way to run the suite on a variant
 # (`--env APP_SOFT_CONN_LIMIT=0`).
@@ -22,7 +22,7 @@ SERVER=lab-challenge-server
 TESTER=lab-challenge-test
 
 usage() {
-  echo "usage: lab/challenge-test.sh --image <variant> [--server <php file under lab/>] [--php-ini <php.ini under lab/>] [--ext <name>]... [--env K=V]... [--port <n>]" >&2
+  echo "usage: lab/challenge-test.sh --image <variant> [--server <php file under lab/ or submissions/>] [--php-ini <php.ini under lab/>] [--ext <name>]... [--env K=V]... [--port <n>]" >&2
   exit 2
 }
 fail() { echo "challenge-test: $*" >&2; exit 1; }
