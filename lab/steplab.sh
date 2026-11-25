@@ -10,7 +10,7 @@
 # 24,000 req/s that passed the 97 % rule were all negative), which then works against the variant, never for it. `--order fixed` runs the
 # order given in every round. Each run's `steplab` object records its `position` in the round (0-based) and the `order` rule.
 #
-# FIXME(pending): Jacob must confirm the round order and the floor rule (plan/plan.md, Q19). Assumes A: alternate the order, floor = |median| + interquartile range of an A/A folder, every run counted.
+# Settled by Jacob on 2026-11-25: the round order alternates, and the floor is |median| + interquartile range of an A/A folder, every run counted.
 #
 #   bash lab/steplab.sh --image 8.5 --rate 24000 --think-scale 0.02 --idle 60000 --seconds 60 --pairs 3 \
 #       --variant ref= --variant telemetry-on=APP_TELEMETRY=1 [--server-variant <name>=<php file under lab/ or submissions/>]... \
