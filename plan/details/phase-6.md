@@ -211,7 +211,9 @@ go on meanwhile. Scope 1's smoke pair and scope 2's container are not measuremen
   telemetry off, alternating order (round 1 runs the reference last, D71), `--floor-from
   lab/results/2026-11-24-cpu-steps-5b/aa-24000` (0.864 µs/req), `--ext pcntl --ext sockets --ext event` on both sides.
   Reference `lab` = `lab/app/server.php` with `APP_WORKERS=2,APP_SOFT_CONN_LIMIT=64000,APP_PRAGMAS=mmap-off`; variant
-  `sub` = `submissions/php-Gcob/server.php`, no env.
+  `sub` = `submissions/php-Gcob/server.php` with `APP_SOFT_CONN_LIMIT=64000` given to the harness only (so its VU cap
+  and its JSON read the limit as the lab's side does; the copy ignores the variable, `check_submission` proves it reads
+  no other; scope 1's hand-back).
 - **The floor's caveat:** 5b's A/A ran one process; this pair runs two on one CPU. The README says so; no new A/A
   (D60: one pair is a screen).
 - **The verdict, two-sided:** `steplab`'s one-pair screen reads one side only ("not better"), so the README computes
