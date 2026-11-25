@@ -1372,6 +1372,52 @@ that closes every connection idle for 2 s): ended at once, all 50 held; ended 4 
 - **Swoole at its fd limit accepts nothing more but still completes the handshake,** so the client's connect succeeds and the
   request times out: 65,522 connections answered with `nofile` 65535 (the server keeps about 13 fds for itself).
 
+## The score search (`lab/score/`)
+
+Arjay's search with the challenge's own `bench/load.js`, run as it is (its git blob hash is checked against the reference's at commit
+`162699a` before anything starts), from the load box against a server box. Phase 7 runs it on AWS; here it is built and smoked on the Mac.
+
+```bash
+bash lab/score/smoke.sh                 # the whole search at a small size, against the submission in a lab container (about 7 minutes)
+bash lab/score/smoke.sh --k6-memory     # load.js at 1, 2,000 and 5,000 VUs: the k6 container's memory a VU (about 9 minutes)
+bash lab/score/search.sh --base-url http://<server>:80 --ctl "ssh <server> sudo /srv/score/server-ctl.sh" --out <new folder> --tokens <tokens.json>
+```
+
+| File | What it does |
+| --- | --- |
+| `search.sh` | The driver: warm-up, probes 5 % up from 71,000 (rounded to the nearest 1,000), holds 5 % down from the highest passing probe, 60 s between k6 runs, the server restarted before every run. k6's exit code decides (0 pass, 99 fail, other a harness error). A void run is neither: a void probe ends the climb (the holds start at the highest passing probe, and `end.bound_by_k6` says so), a void hold runs again once, and void twice it counts as not passed. Writes `search.json` and a folder a run. |
+| `run-k6.sh` | One k6 run: restart, samplers, k6 in the pinned image (`--user`, host network, 1,048,576 files), `run.json`. |
+| `analyze.jq`, `score-lib.sh` | The numbers of a run from its samples (plateau, us/req, accepts a second, peaks, the wall of a failed run), and the arithmetic of the search. Pure logic, tested without Docker. |
+| `server-sample.sh` | The server box's sampler: cheap counters a second (bash builtins on `/proc` and the cgroup), its own CPU under 1 % of a core. |
+| `loadbox-sample.sh` | The load box's sampler: k6's REST API a second, the host's CPU, the k6 container's memory. |
+| `ctl-local.sh` | The smoke's controller (`restart`, `sample-start`, `sample-stop`, `facts`) for the submission in a lab container. |
+
+The plateau is read from k6's REST API (`vus` equals the target) and the server's rows, stamped with milliseconds, are matched to it by time
+(the counters are interpolated at its first and last second). A failed run gets a **wall**, the first rule that holds: `k6` (the failed run is void: the load box
+over 85 % CPU on more than 10 % of the plateau's seconds or on 5 in a row, or k6 over 90 % of its memory; a second or two of garbage collection is not that; a run that passes is a valid pass whatever k6 did, since k6's saturation can only make the latency worse), `memory` (a new OOM line, or MemAvailable under 100 MiB), `died` (the service died with neither: a PHP fatal, a segfault, a stop), `network`
+(an ENA allowance counter grew), `fds` (ListenDrops grew, or dial errors with a process within 100 of 65,535 files), `cpu` (the service
+over 88 % of a core on the plateau's median second, not its mean: a few seconds at 100 % do not make a CPU wall), else `latency-below-saturation`. The plateau includes the seconds of k6's graceful ramp down in which the VUs
+still run their last iteration: `vus` leaves the target only when they finish.
+
+`check_score` covers it: the next-step rule (71,000, 75,000, 79,000, ...; holds from the highest pass; 6 failing holds stop;
+rounding), numbers worked out by hand on a made-up run (`lab/check/fixtures/score/make-run.awk`), one fixture a wall and two for their order, the
+search against a fake controller and a fake k6 (exit 0, 99 and 1, a void run, a failing warm-up) and the refusals (a `load.js` with one byte
+changed, an existing `--out`, facts that fail). Most of it needs no Docker; the server sampler's part runs in the `php-lab:8.5` image (it needs bash 5 and a Linux `/proc`), and the refusals copy `load.js` from the challenge's clone in `reference/`.
+
+### The two boxes (`lab/score/`, phase 7)
+
+On AWS the search runs from a load box against a server box shaped like the droplet. The scripts that set them up are checked here as far as a laptop
+allows (`check_score_unit`, `check_score_server_setup_*`, `check_score_server_ctl*`, `check_score_ctl_ssh`, `check_score_k6_setup_*`); their first run
+on the real boxes is the first real test.
+
+| File | What it does |
+| --- | --- |
+| `server-setup.sh` | On the server box, as root. `--shape` adds `mem=2G` to the kernel's boot line (a `grub.d` drop-in that appends) and reboots. Then, with `--launch-epoch`: the shape checks (one CPU, at most 2,048 MiB, no swap; a `FAIL` stops before anything is installed), the 240-minute shutdown re-armed, a wait for cloud-init and the package manager's lock, the user `deploy`, the submission in `/srv/php-Gcob`, `install.sh` as root and `build.sh` as `deploy`, the seed, the unit, one restart, and the checks of the running processes (user, `Max open files`, ambient capability, `curl` present). `--check` runs only the checks. The challenge's 42 checks run from the load box: `jq` stays off this box, and `curl` is the one Ubuntu's image ships (`server-ctl.sh` polls `/health` with it, and the setup checks it is there). |
+| `php-gcob.service` | The unit: `User=deploy`, `LimitNOFILE=65535`, `AmbientCapabilities=CAP_NET_BIND_SERVICE`, port 80, `Restart=no`; the bench names only the limit and the capability, so nothing else is set. |
+| `server-ctl.sh` | The server box's controller, run through `sudo`: `restart` (stop, remove the live database and its `-wal`/`-shm`, copy the seed, start, poll `/health` every 0.1 s, 60 s at most), `sample-start`/`sample-stop` (the sampler on the unit's cgroup), `facts`, `died`. |
+| `ctl-ssh.sh` | The controller the driver gets on the load box: the same commands over ssh, and `sample-stop <dir>` brings the sampler's files back into the driver's folder. |
+| `k6-setup.sh` | On the load box. The setup (Docker with `{"iptables": false}` before its first start, so `nf_conntrack` never loads; the pinned k6 image; the secondary addresses; ephemeral ports 1,024 to 65,535; the challenge at `162699a` with `load.js`'s hash checked; the seed and its tokens; an ssh key), then `--check`, `--rtt`, `--push-seed`, `--check-42`, `--allowance`, `--print-ips` and `--smoke` (one minute of the real run at 100 users). |
+
 ## Checks
 
 ```bash

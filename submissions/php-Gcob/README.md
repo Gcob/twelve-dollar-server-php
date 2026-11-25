@@ -116,7 +116,21 @@ The code is in this folder: `app.php` (the five endpoints and SQLite), `connecti
 
 ## Results
 
-**Not scored yet.** The entry has not been run on x86 with the challenge's load, so there is no users number and no
-estimate here. What is checked: `test/test.sh` passes 42 of 42 in a clean Ubuntu 24.04 container (1 CPU, 2 GiB,
+**Our own run, not the bench's score.** We ran the entry on AWS with the challenge's `bench/load.js`, unchanged. The
+server was a `c5.large` limited to one core (EC2's CPU options) and 2 GB for the whole box (`mem=2G`), with no swap.
+`install.sh` installed it and systemd started it as `deploy` with `LimitNOFILE=65535` and `CAP_NET_BIND_SERVICE`. k6
+ran on a separate 16-vCPU box in the same placement group. The search was shortened: 2-minute probes from 71,000 users
+in 5 % steps, then a 5-minute hold.
+
+135,000 users held for 5 minutes: p95 171 ms, p99 328 ms, no error, 14,122 requests a second, the server at 83 % of its
+core and 881 MiB at peak. At 142,000 users the run failed, and we could not separate the server's wall from the load
+generator's. So 135,000 is a lower bound.
+
+This is not what the bench will read. The bench's core is about 1.57 times slower per request than the AWS core, as
+estimated from two entries (the leaderboard's numbers against the same entries on this Xeon), so the bench should read
+lower. The results give an estimate, labelled as one; this README claims none. The runs, one by one:
+[lab/results/2026-11-25-x86-score](https://github.com/Gcob/twelve-dollar-server-php/tree/main/lab/results/2026-11-25-x86-score).
+
+What is checked: `test/test.sh` passes 42 of 42 in a clean Ubuntu 24.04 container (1 CPU, 2 GiB,
 `install.sh` as root, `build.sh` and `start.sh` as `deploy` on port 80), and in a run that copies the challenge's CI
 setup, where Ubuntu's PHP 8.3 is first on the `PATH` (`bash lab/submission-test.sh --ci`).

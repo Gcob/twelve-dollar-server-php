@@ -1,0 +1,59 @@
+{
+  "facts": {
+    "cpu_model": "Intel(R) Xeon(R) Platinum 8275CL CPU @ 3.00GHz",
+    "nproc": 1,
+    "mem_total_mib": 1899,
+    "kernel": "7.0.0-1018-aws",
+    "swap_mib": 0
+  },
+  "arguments": {
+    "base_url": "http://<server>:80",
+    "ctl": "bash ...",
+    "start": 71000,
+    "step_percent": 5,
+    "probe": "2m",
+    "hold": "5m",
+    "warmup": "1000,2m",
+    "max_holds": 6,
+    "max_probes": 20,
+    "round": 1000,
+    "pause_s": 60,
+    "ramp_up": null,
+    "local_ips": "4 addresses of the load box (not published)"
+  },
+  "runs": [
+    {
+      "folder": "01-warmup-1000",
+      "kind": "warmup",
+      "users": 1000,
+      "k6_exit": 0,
+      "pass": true,
+      "void": false,
+      "wall": null
+    },
+    {
+      "folder": "02-probe-71000",
+      "kind": "probe",
+      "users": 71000,
+      "k6_exit": 0,
+      "pass": true,
+      "void": true,
+      "wall": null
+    }
+  ],
+  "decisions": [
+    {
+      "decision": "warm-up at 1000 users for 2m",
+      "reason": "not scored; a failing warm-up is a harness error"
+    },
+    {
+      "decision": "probe at 71000 users for 2m",
+      "reason": "the start"
+    }
+  ],
+  "end": {
+    "result": "bound-by-k6",
+    "score": null,
+    "reason": "at least 0, bound by k6: the load box's CPU reached 99 % on a plateau second at 02-probe-71000"
+  }
+}

@@ -234,6 +234,26 @@ check_public_guard_catches_leak() {
   fi
 }
 
+# AWS's traces: a private address, an `ip-N-N-N-N` host name, an id of each kind (8 or 17 hex digits) and a 12-digit account id are refused; the
+# addresses that name no box (loopback, 0.0.0.0, the documentation ranges), version numbers and shorter ids pass. Built at run time, or the
+# tree scan would flag these lines.
+check_public_guard_catches_aws_traces() {
+  local guard="$REPO/tools/public-guard.sh" sample kind hex8=deadbeef hex17=0abc123def4567890 dot=. dash=-
+  for sample in "10${dot}0${dot}12${dot}34" "172${dot}31${dot}0${dot}9" "3${dot}98${dot}91${dot}79" "listening on 192${dot}168${dot}1${dot}20:80" "ip${dash}10${dash}0${dash}12${dash}34" "ip${dash}10${dash}0${dash}12${dash}34.ca-central-1.compute.internal" \
+    "account $(printf '%s' 1234 5678 9012)" "arn:aws:iam::$(printf '%s' 1234 5678 9012):user/x"; do
+    if printf '%s\n' "$sample" | bash "$guard" stdin >/dev/null 2>&1; then echo "the guard let '$sample' through"; return 1; fi
+  done
+  for kind in i sg vol eni ami subnet vpc pg key; do
+    for sample in "$kind-$hex8" "$kind-$hex17" "(group $kind-$hex17)" "--id $kind-$hex8."; do
+      if printf '%s\n' "$sample" | bash "$guard" stdin >/dev/null 2>&1; then echo "the guard let '$sample' through"; return 1; fi
+    done
+  done
+  for sample in "listening on 127${dot}0${dot}0${dot}1:80" "bind 0${dot}0${dot}0${dot}0" "metadata at 169${dot}254${dot}169${dot}254" "the documentation range 192${dot}0${dot}2${dot}7" "198${dot}51${dot}100${dot}4" "203${dot}0${dot}113${dot}250" \
+    "PHP 8${dot}5${dot}13" "k6 1${dot}8${dot}3" "Docker 2${dot}1${dot}12 and a 5-part 5${dot}2${dot}4${dot}1${dot}7" "a 13-digit epoch 1700000000000" "an 11-digit number 12345678901" "sg-12345 is too short" "the key-value pairs" "pg-dump" "mi-casa"; do
+    printf '%s\n' "$sample" | bash "$guard" stdin >/dev/null 2>&1 || { echo "the guard refused '$sample', which names no box"; return 1; }
+  done
+}
+
 # The Mac's per-user temp folder is not a home path, but it is as private: the guard refuses it, with or without /private.
 check_public_guard_catches_temp_folder() {
   # Why: the sample is built at run time, or the tree scan would flag this very line.
@@ -2514,6 +2534,727 @@ check_results_check_catches_drift() {
     || { echo "a block with no END passes or is not named (exit $rc): ${out//$'\n'/ | }"; return 1; }
 }
 
+# The score search (lab/score/): the next-step rule, the plateau window, the per-run numbers and the walls, each on fixtures; the search itself runs
+# against a fake controller and a fake k6. Only the sampler part needs Docker (the image `php-lab:8.5`, for bash 5 and a Linux /proc), and the
+# refusals copy `bench/load.js` from the challenge's clone in `reference/`.
+# score_check_steps: the arithmetic of the search (Jacob's 5 % steps, rounded to the nearest n; holds start at the highest pass).
+score_check_steps() {
+  local got
+  # shellcheck source=score/score-lib.sh
+  source "$LAB/score/score-lib.sh" || { echo "lab/score/score-lib.sh does not load"; return 1; }
+  got="$(u=71000; for _ in 1 2 3 4 5 6 7 8; do printf '%s ' "$u"; u="$(score_next_up "$u" 5 1000)"; done)"
+  [ "$got" = "71000 75000 79000 83000 87000 91000 96000 101000 " ] || { echo "probes up from 71,000: $got"; return 1; }
+  got="$(score_next_down 71000 5 1000)"
+  [ "$got" = 67000 ] || { echo "5 % under 71,000 is 67,000 (rounded), got $got"; return 1; }
+  got="$(score_next_down 67000 5 1000) $(score_next_down 64000 5 1000)"
+  [ "$got" = "64000 61000" ] || { echo "holds down from 67,000: $got"; return 1; }
+  got="$(score_round 74550 1000) $(score_round 70775 1000) $(score_round 70500 1000) $(score_round 70499 1000)"
+  [ "$got" = "75000 71000 71000 70000" ] || { echo "rounding to the nearest 1,000 (half up): $got"; return 1; }
+  got="$(score_next_up 200 50 10) $(score_next_down 300 50 10)"
+  [ "$got" = "300 150" ] || { echo "the smoke's size (step 50 %, round 10): $got"; return 1; }
+}
+
+# score_run <options of make-run.awk> -- <k6 exit> [files to add to the folder: name=text]...: makes a run's sampler files in a temporary folder
+# (lab/check/fixtures/score/make-run.awk) and prints lab/score/score-lib.sh's run JSON for it (100 users, k6 started 2 s before the first
+# REST row).
+score_run() {
+  local opts=() dir code kv
+  while [ "$1" != "--" ]; do opts+=("$1"); shift; done
+  shift
+  code="$1"
+  shift
+  dir="$(mktemp -d)"
+  awk -v "dir=$dir" -v "opts=${opts[*]-}" -f "$LAB/check/fixtures/score/make-run.awk" || return 1
+  for kv in "$@"; do printf '%s\n' "${kv#*=}" >"$dir/${kv%%=*}"; done
+  score_run_json "$dir" hold 100 10 "$code" 4 1699999998 systemd
+  rm -rf "$dir"
+}
+
+# score_expect <what> <json> <jq expression> <expected>: fails with a message when the expression does not print the expected text.
+score_expect() {
+  local got
+  got="$(jq -r "$3" <<<"$2")" || { echo "$1: jq failed on $3"; return 1; }
+  [ "$got" = "$4" ] || { echo "$1: $3 is '$got', expected '$4'"; return 1; }
+}
+
+# The numbers of a passing run, from the hand arithmetic written in make-run.awk.
+score_check_numbers() {
+  local j
+  j="$(score_run -- 0)" || { echo "score_run_json failed: $j"; return 1; }
+  score_expect "a passing run" "$j" '[.kind, .users, .k6_exit, .pass, .void, .wall] | join(" ")' "hold 100 0 true false " || return 1
+  score_expect "the summary" "$j" '[.p95_ms, .p99_ms, .error_rate, .http_reqs] | join(" ")' "120 300 0 10160" || return 1
+  score_expect "the plateau window (seconds where vus is 100, matched by time)" "$j" '.plateau | [.start, .end, .seconds, .http_reqs, .req_per_s] | join(" ")' "1700000005 1700000015 10 10000 1000" || return 1
+  j="$(score_run instant=1 early404=2 -- 0)" && score_expect "a run whose users are there from the start and whose first rows have no http_reqs (404): 0 requests then" "$j" '.plateau | [.start, .seconds, .http_reqs] | join(" ")' "1700000000 15 10100" || return 1
+  j="$(score_run -- 0)" || return 1
+  score_expect "the VU init time (first row with vus > 0 minus the container start)" "$j" '.vu_init_s' "3" || return 1
+  score_expect "us per request (500: 0.5 core for 10 s over 10,000 requests, server rows .4 after the REST rows)" "$j" '.server.us_per_req' "500" || return 1
+  score_expect "the service share" "$j" '.server.service_share' "0.5" || return 1
+  score_expect "the box's busy share" "$j" '.server | [.cpu_busy_median, .cpu_busy_max] | join(" ")' "0.6 0.6" || return 1
+  score_expect "others (box busy minus the service minus the sampler, over the 2 CPUs)" "$j" '.server.others_median' "0.3475" || return 1
+  score_expect "accepts a second" "$j" '.server | [.accepts_per_s_median, .accepts_per_s_max_plateau, .accepts_per_s_max_run] | join(" ")' "40 55 90" || return 1
+  score_expect "the peaks" "$j" '.server | [.memory_current_peak, .rss_peak, .mem_available_min_kb, .tcp_inuse_peak, .tcp_tw_peak, .tcp_mem_peak] | join(" ")' "118000000 59000000 2000000 180 18 36" || return 1
+  score_expect "the differences" "$j" '.server | [.listen_overflows, .listen_drops, .retrans_segs] | join(" ")' "0 0 54" || return 1
+  score_expect "the ENA counters" "$j" '.server.ena_allowance_diff | [.bw_in_allowance_exceeded, .pps_allowance_exceeded] | join(" ")' "0 0" || return 1
+  score_expect "the OOM lines" "$j" '.server | [.oom_lines_start, .oom_lines_end] | join(" ")' "1 1" || return 1
+  score_expect "the fds' max a process" "$j" '.server.fds_max | [.["11"], .["12"]] | join(" ")' "120 130" || return 1
+  score_expect "the load box" "$j" '.loadbox | [(.cpu_max * 100 | round), .k6_memory_peak_bytes, .k6_cgroup_layout] | join(" ")' "30 228589568 systemd" || return 1
+  score_expect "the healthy seconds" "$j" '.healthy_s' "4" || return 1
+}
+
+# Each wall of a failed run (k6 exited 99), one fixture each, and the two orders the rule decides.
+score_check_walls() {
+  local j
+  j="$(score_run -- 99)" && score_expect "a failed run with room left" "$j" '[.pass, .wall] | join(" ")' "false latency-below-saturation" || return 1
+  j="$(score_run lbspike=0.9 lbspikes=5,6,7,8,9 -- 99)" && score_expect "the load box at 90 % for 5 seconds in a row on a 10 s plateau" "$j" '[.void, .wall] | join(" ")' "true k6" || return 1
+  # The shape of the real 71,000-user probe on AWS: k6's garbage collector took the load box to 90 % or more for 1 or 2 seconds, 6 seconds in 120.
+  j="$(score_run lbspike=0.9 plateau=120 lbspikes=8,9,41,42,75,76 -- 99)" \
+    && score_expect "6 spike seconds of 120, at most 2 in a row: not void" "$j" '[.void, .wall, .loadbox.plateau_seconds, .loadbox.seconds_over_85, .loadbox.longest_streak_over_85] | join(" ")' "false latency-below-saturation 120 6 2" || return 1
+  j="$(score_run lbspike=0.9 plateau=120 lbspikes=10,19,28,37,46,55,64,73,82,91,100,109 -- 99)" \
+    && score_expect "12 seconds of 120 (10 %), apart: not void" "$j" '[.void, .loadbox.seconds_over_85, .loadbox.longest_streak_over_85] | join(" ")' "false 12 1" || return 1
+  j="$(score_run lbspike=0.9 plateau=120 lbspikes=10,19,28,37,46,55,64,73,82,91,100,109,118 -- 99)" \
+    && score_expect "13 seconds of 120 (over 10 %), apart: void" "$j" '[.void, .wall, .loadbox.seconds_over_85, .loadbox.longest_streak_over_85] | join(" ")' "true k6 13 1" || return 1
+  j="$(score_run lbspike=0.9 plateau=120 lbspikes=20,21,22,23 -- 99)" \
+    && score_expect "4 seconds in a row: not void" "$j" '[.void, .loadbox.longest_streak_over_85] | join(" ")' "false 4" || return 1
+  j="$(score_run lbspike=0.9 plateau=120 lbspikes=20,21,22,23,24 -- 99)" \
+    && score_expect "5 seconds in a row: void" "$j" '[.void, .wall, .loadbox.seconds_over_85, .loadbox.longest_streak_over_85] | join(" ")' "true k6 5 5" || return 1
+  # k6's saturation voids only a run that fails: its garbage collector can only make the measured latency worse, so a run that passes despite it is a valid pass.
+  j="$(score_run lbspike=0.9 plateau=120 lbspikes=20,21,22,23,24 -- 0)" \
+    && score_expect "5 seconds in a row over 85 % but k6 exited 0: a valid pass, not void, and the run still says k6 was over the line" "$j" '[.pass, .void, (.wall // "none"), .loadbox.over_line] | join(" ")' "true false none true" || return 1
+  j="$(score_run k6mib=7100 -- 0)" && score_expect "k6 over 90 % of the load box's memory but it passed: a valid pass" "$j" '[.pass, .void, (.wall // "none"), .loadbox.over_line] | join(" ")' "true false none true" || return 1
+  j="$(score_run k6mib=7100 -- 99)" && score_expect "k6 over 90 % of the load box's memory and it failed: void" "$j" '[.pass, .void, .wall] | join(" ")' "false true k6" || return 1
+  j="$(score_run -- 0)" && score_expect "a quiet load box is not over the line" "$j" '.loadbox.over_line' "false" || return 1
+  j="$(score_run oom=1 -- 99)" && score_expect "a new OOM line" "$j" '.wall' "memory" || return 1
+  j="$(score_run avail=51200 -- 99)" && score_expect "MemAvailable under 100 MiB" "$j" '.wall' "memory" || return 1
+  j="$(score_run -- 99 server-died.txt=died)" && score_expect "the service died with no OOM line and MemAvailable high: its own wall, not memory" "$j" '[.wall, .service_died] | join(" ")' "died true" || return 1
+  j="$(score_run oom=1 -- 99 server-died.txt=died)" && score_expect "the service died and an OOM line appeared: memory, and the death is still recorded" "$j" '[.wall, .service_died] | join(" ")' "memory true" || return 1
+  j="$(score_run avail=51200 -- 99 server-died.txt=died)" && score_expect "the service died and MemAvailable fell under 100 MiB: memory" "$j" '.wall' "memory" || return 1
+  j="$(score_run ena=3 -- 99 server-died.txt=died)" && score_expect "the service died and an ENA counter grew: died comes before network" "$j" '.wall' "died" || return 1
+  j="$(score_run ena=3 -- 99)" && score_expect "an ENA counter grew" "$j" '.wall' "network" || return 1
+  j="$(score_run drops=4 -- 99)" && score_expect "ListenDrops grew" "$j" '.wall' "fds" || return 1
+  j="$(score_run fds=65500 -- 99 'k6.log=time="x" level=warning msg="Request Failed" error="Get: dial tcp: i/o timeout"')" && score_expect "dial errors with a process within 100 fds of 65,535" "$j" '.wall' "fds" || return 1
+  j="$(score_run fds=100 -- 99 'k6.log=time="x" level=warning msg="Request Failed" error="Get: dial tcp: i/o timeout"')" && score_expect "dial errors with fds far from the limit" "$j" '.wall' "latency-below-saturation" || return 1
+  j="$(score_run fds=65500 -- 99)" && score_expect "a process near 65,535 fds but no dial error" "$j" '.wall' "latency-below-saturation" || return 1
+  j="$(score_run svc=0.9 -- 99)" && score_expect "the service over 88 % of a core on the plateau" "$j" '.wall' "cpu" || return 1
+  # The wall reads the plateau's median second of the service's share: a few seconds at 100 % lift the mean over the line, not the median, and the reverse.
+  j="$(score_run svc=0.85 svcspike=1.0 svcspikes=7,8,9 -- 99)" && score_expect "the service's mean share over 88 % (3 seconds at 100 %, 7 at 85 %) but its median second under: not the CPU" "$j" '[.server.service_share > 0.88, .wall] | join(" ")' "true latency-below-saturation" || return 1
+  j="$(score_run svc=0.9 svcspike=0.5 svcspikes=7,8,9 -- 99)" && score_expect "the service's mean share under 88 % (3 seconds at 50 %, 7 at 90 %) but its median second over: the CPU" "$j" '[.server.service_share < 0.88, .wall] | join(" ")' "true cpu" || return 1
+  j="$(score_run svc=0.4 busy=0.95 -- 99)" && score_expect "the box busy but the service under 88 %: the others are the load" "$j" '.wall' "latency-below-saturation" || return 1
+  j="$(score_run svc=0.95 busy=0.95 oom=1 -- 99)" && score_expect "an OOM line with the CPU at 95 %" "$j" '.wall' "memory" || return 1
+  j="$(score_run svc=0.9 busy=0.9 ena=2 -- 99)" && score_expect "an ENA counter grown with the CPU at 90 %" "$j" '.wall' "network" || return 1
+  j="$(score_run svc=0.9 busy=0.9 cavail=500 -- 99)" && score_expect "conntrack_allowance_available going up is a gauge, not a counter that grew: the wall is the CPU" "$j" '.wall' "cpu" || return 1
+  j="$(score_run -- 0)" && score_expect "a passing run has no wall" "$j" '.wall' "null" || return 1
+  # The service's cgroup can disappear while the sampler goes on (a failed unit with Restart=no): the cgroup columns are empty from then on, the
+  # end file is there with the OOM lines. An OOM line new in the run names the wall; an end file that is missing is unknown, never zero.
+  j="$(score_run nocg=12 oom=1 -- 99 server-died.txt=died)" && score_expect "the cgroup gone at second 12 with an OOM line in the end file: memory" "$j" '[.wall, .service_died] | join(" ")' "memory true" || return 1
+  j="$(score_run nocg=12 -- 99 server-died.txt=died)" && score_expect "the cgroup gone at second 12, no OOM line: died" "$j" '.wall' "died" || return 1
+  j="$(score_run -- 99 server-died.txt=died server-end.txt=)" && score_expect "no end file (the sampler died with the service): the OOM lines and the ENA counters at the end are unknown, not zero" "$j" '.server | [.oom_lines_end, .ena_allowance_diff] | map(tostring) | join(" ")' "null null" || return 1
+  j="$(score_run srvrows=0 -- 99)" && score_expect "a server.csv with its header and no row: empty server numbers, no crash" "$j" '.server | [.listen_drops, .listen_overflows, .retrans_segs, .service_share, .us_per_req, .rows] | map(tostring) | join(" ")' "null null null null null 0" || return 1
+}
+
+# score_search <exits> [search.sh options]...: runs lab/score/search.sh against the fake controller and the fake k6 (lab/check/fixtures/score/),
+# whose runs exit with the codes of <exits> in order. Leaves the folder in SCORE_OUT, the log in SCORE_LOG, the output in SCORE_TEXT and the
+# search's exit code in SCORE_RC.
+score_search() {
+  local exits="$1" fx="$LAB/check/fixtures/score" tmp
+  shift
+  tmp="$(mktemp -d)"
+  SCORE_OUT="$tmp/search" SCORE_LOG="$tmp/log" SCORE_RC=0
+  echo "$exits" >"$tmp/exits"
+  : >"$SCORE_LOG"
+  SCORE_TEXT="$(FAKE_EXITS="$tmp/exits" FAKE_LOG="$SCORE_LOG" SCORE_K6_COMMAND="bash $fx/fake-k6.sh" bash "$LAB/score/search.sh" \
+    --base-url http://server.example:80 --ctl "bash $fx/fake-ctl.sh" --out "$SCORE_OUT" --pause 0 "$@" 2>&1)" || SCORE_RC=$?
+}
+
+# score_ran <search.json expression over .runs>: the runs as "kind:users:pass" words, in order.
+score_runs() {
+  jq -r '[.runs[] | "\(.kind):\(.users):\(.pass)"] | join(" ")' "$SCORE_OUT/search.json"
+}
+
+score_check_search() {
+  local got
+  score_search "0 0 0 99 99 0"
+  [ "$SCORE_RC" = 0 ] || { echo "a search that finds 71,000 exits $SCORE_RC: ${SCORE_TEXT//$'\n'/ | }"; return 1; }
+  got="$(score_runs)"
+  [ "$got" = "warmup:1000:true probe:71000:true probe:75000:true probe:79000:false hold:75000:false hold:71000:true" ] \
+    || { echo "the runs of a pass, a pass, a fail, then holds from the highest pass: $got"; return 1; }
+  [ "$(jq -r '.end | [.result, .score] | join(" ")' "$SCORE_OUT/search.json")" = "score 71000" ] || { echo "the end is not score 71000: $(jq -c .end "$SCORE_OUT/search.json")"; return 1; }
+  [ "$(grep -c '^ctl restart$' "$SCORE_LOG")" = 6 ] || { echo "the server must restart before each of the 6 k6 runs, the warm-up included: $(grep -c '^ctl restart$' "$SCORE_LOG")"; return 1; }
+  [ "$(grep -c '^ctl sample-' "$SCORE_LOG")" = 12 ] || { echo "each run needs a sample-start and a sample-stop"; return 1; }
+  grep -q '^k6 1000 2m$' "$SCORE_LOG" && grep -q '^k6 71000 2m$' "$SCORE_LOG" && grep -q '^k6 75000 5m$' "$SCORE_LOG" \
+    || { echo "durations: the warm-up and the probes run 2 minutes, the holds 5: $(tr '\n' ' ' <"$SCORE_LOG")"; return 1; }
+  [ "$(jq '.decisions | length' "$SCORE_OUT/search.json")" -ge 6 ] || { echo "every step has a decision with its reason"; return 1; }
+  jq -e '.facts.nproc == 2 and .arguments.base_url == "http://<server>:80" and (.runs | all(.folder != null))' "$SCORE_OUT/search.json" >/dev/null \
+    || { echo "search.json has no facts, or keeps the server's address: $(jq -c '.facts, .arguments' "$SCORE_OUT/search.json")"; return 1; }
+  [ -f "$SCORE_OUT/06-hold-71000/run.json" ] || { echo "no folder with a run.json per run"; return 1; }
+  grep -q '^warmup' <<<"$SCORE_TEXT" && grep -q '^hold     71000' <<<"$SCORE_TEXT" || { echo "the table has no row for the warm-up and the passing hold: ${SCORE_TEXT//$'\n'/ | }"; return 1; }
+
+  score_search "0 99 99 0"
+  got="$(score_runs)"
+  [ "$got" = "warmup:1000:true probe:71000:false hold:67000:false hold:64000:true" ] \
+    || { echo "a first probe that fails starts the holds 5 % under it (67,000), then 64,000 (63,650 rounded): $got"; return 1; }
+  [ "$(jq -r '.end.score' "$SCORE_OUT/search.json")" = 64000 ] || { echo "the score of a search that holds at 64,000"; return 1; }
+
+  score_search "0 99 99 99 99 99 99 99"
+  got="$(score_runs)"
+  [ "$SCORE_RC" = 0 ] && [ "$got" = "warmup:1000:true probe:71000:false hold:67000:false hold:64000:false hold:61000:false hold:58000:false hold:55000:false hold:52000:false" ] \
+    || { echo "6 failing holds stop the search (exit $SCORE_RC): $got"; return 1; }
+  [ "$(jq -r '.end | [.result, .score, .reason] | map(tostring) | join("|")' "$SCORE_OUT/search.json")" = "no-score|null|no hold passed down to 52000 (6 holds failed)" ] \
+    || { echo "the end of 6 failing holds: $(jq -c .end "$SCORE_OUT/search.json")"; return 1; }
+
+  score_search "0 0 0 0" --max-probes 2
+  [ "$(score_runs)" = "warmup:1000:true probe:71000:true probe:75000:true hold:75000:true" ] || { echo "--max-probes 2 starts the holds at the second probe: $(score_runs)"; return 1; }
+
+  score_search "0 1"
+  [ "$SCORE_RC" = 1 ] && [ "$(score_runs)" = "warmup:1000:true probe:71000:false" ] && [ "$(jq -r ".runs[-1].k6_exit" "$SCORE_OUT/search.json")" = 1 ] && [ "$(jq -r '.end.result' "$SCORE_OUT/search.json")" = harness-error ] \
+    || { echo "a k6 exit of 1 is a harness error: the search stops and exits 1 (exit $SCORE_RC): $(score_runs)"; return 1; }
+  score_search "99"
+  [ "$SCORE_RC" = 1 ] && [ "$(score_runs)" = "warmup:1000:false" ] && grep -q 'warm-up failed' "$SCORE_OUT/search.json" \
+    || { echo "a failing warm-up is a harness error, the search stops (exit $SCORE_RC): $(score_runs)"; return 1; }
+  # A void probe (k6 may have caused its failure) is neither a pass nor a fail: it ends the climb, and the holds start at the highest passing probe.
+  local void="99/lbspike=0.9+lbspikes=5,6,7,8,9"
+  score_search "0 0 $void 0"
+  [ "$SCORE_RC" = 0 ] && [ "$(score_runs)" = "warmup:1000:true probe:71000:true probe:75000:false hold:71000:true" ] \
+    && [ "$(jq -r '.end | [.result, .score, .bound_by_k6] | map(tostring) | join(" ")' "$SCORE_OUT/search.json")" = "score 71000 true" ] \
+    || { echo "a void probe ends the climb, the hold at 71000 runs and is the score, the end says k6 bound it (exit $SCORE_RC): $(score_runs) $(jq -c .end "$SCORE_OUT/search.json")"; return 1; }
+  score_search "0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0" --max-probes 1
+  [ "$(jq -r '.end.bound_by_k6' "$SCORE_OUT/search.json")" = false ] || { echo "a search no void run touched must say bound_by_k6 false: $(jq -c .end "$SCORE_OUT/search.json")"; return 1; }
+  # The published run: probes pass up to 135,000, the 142,000 probe is void, the hold at 135,000 passes.
+  score_search "0 0 0 $void 0" --start 129000
+  [ "$SCORE_RC" = 0 ] && [ "$(score_runs)" = "warmup:1000:true probe:129000:true probe:135000:true probe:142000:false hold:135000:true" ] \
+    && [ "$(jq -r '.end.score' "$SCORE_OUT/search.json")" = 135000 ] \
+    || { echo "129,000 and 135,000 pass, 142,000 is void: the hold at 135,000 is the score (exit $SCORE_RC): $(score_runs) $(jq -c .end "$SCORE_OUT/search.json")"; return 1; }
+  # A void hold runs again once: it passes the second time, or it counts as not passed and the next hold steps down.
+  score_search "0 0 99 $void 0"
+  [ "$SCORE_RC" = 0 ] && [ "$(score_runs)" = "warmup:1000:true probe:71000:true probe:75000:false hold:71000:false hold:71000:true" ] && [ "$(jq -r '.end.score' "$SCORE_OUT/search.json")" = 71000 ] \
+    || { echo "a void hold runs again at the same size, and its pass is the score (exit $SCORE_RC): $(score_runs)"; return 1; }
+  score_search "0 0 99 $void $void 0"
+  [ "$SCORE_RC" = 0 ] && [ "$(score_runs)" = "warmup:1000:true probe:71000:true probe:75000:false hold:71000:false hold:71000:false hold:67000:true" ] && [ "$(jq -r '.end.score' "$SCORE_OUT/search.json")" = 67000 ] \
+    || { echo "a hold void twice counts as not passed: the next hold steps down (exit $SCORE_RC): $(score_runs)"; return 1; }
+  score_search "0 0 99 $void $void 99" --max-holds 2
+  [ "$SCORE_RC" = 0 ] && [ "$(score_runs)" = "warmup:1000:true probe:71000:true probe:75000:false hold:71000:false hold:71000:false hold:67000:false" ] \
+    && [ "$(jq -r '.end | [.result, .score, .bound_by_k6] | map(tostring) | join(" ")' "$SCORE_OUT/search.json")" = "no-score null true" ] && grep -q 'no hold passed' "$SCORE_OUT/search.json" \
+    || { echo "a void hold run twice is one failed hold, and a search with no passing hold says so (exit $SCORE_RC): $(score_runs) $(jq -c .end "$SCORE_OUT/search.json")"; return 1; }
+  score_search "0 0/lbspike=0.9+lbspikes=5,6,7,8,9 99 0"
+  [ "$SCORE_RC" = 0 ] && [ "$(score_runs)" = "warmup:1000:true probe:71000:true probe:75000:false hold:71000:true" ] && [ "$(jq -r '.end.score' "$SCORE_OUT/search.json")" = 71000 ] \
+    || { echo "a passing probe with k6 over the line is a valid pass: the search goes on and the hold at 71000 is the score (exit $SCORE_RC): $(score_runs) $(jq -c .end "$SCORE_OUT/search.json")"; return 1; }
+}
+
+# A run that is stopped after its server sampler started (Ctrl-C, a harness error) must stop that sampler: it was started with setsid on the
+# server box and would keep using the one CPU there for the next run. A run that ends normally stops it once.
+score_check_run_k6_cleanup() {
+  local fx="$LAB/check/fixtures/score" tmp pid i
+  tmp="$(mktemp -d)"
+  echo "0" >"$tmp/exits"
+  : >"$tmp/log"
+  FAKE_K6_SLEEP=4 FAKE_EXITS="$tmp/exits" FAKE_LOG="$tmp/log" SCORE_K6_COMMAND="bash $fx/fake-k6.sh" bash "$LAB/score/run-k6.sh" \
+    --base-url http://server.example:80 --ctl "bash $fx/fake-ctl.sh" --out "$tmp/run" --kind probe --users 100 --duration 20s >/dev/null 2>&1 &
+  pid=$!
+  for i in $(seq 1 50); do grep -q '^k6 ' "$tmp/log" && break; sleep 0.1; done
+  kill -TERM "$pid"
+  wait "$pid" 2>/dev/null || true
+  [ "$(grep -c '^ctl sample-start$' "$tmp/log")" = 1 ] && [ "$(grep -c '^ctl sample-stop$' "$tmp/log")" = 1 ] \
+    || { echo "a run stopped by a signal after sample-start must call sample-stop once: $(tr '\n' ' ' <"$tmp/log")"; rm -rf "$tmp"; return 1; }
+  rm -rf "$tmp"
+}
+
+# The refusals: a load.js with one byte changed, an --out that exists, a controller whose facts fail. Nothing runs, not even a restart.
+score_check_refusals() {
+  local fx="$LAB/check/fixtures/score" tmp
+  tmp="$(mktemp -d)"
+  mkdir -p "$tmp/challenge/bench" "$tmp/challenge/seed"
+  cp "$REPO/reference/twelve-dollar-server-challenge/bench/load.js" "$tmp/challenge/bench/load.js"
+  sed -i.bak 's/const LIKE_PROB = 0.15/const LIKE_PROB = 0.16/' "$tmp/challenge/bench/load.js" && rm -f "$tmp/challenge/bench/load.js.bak"
+  score_search "0 0" --challenge "$tmp/challenge"
+  [ "$SCORE_RC" = 2 ] && grep -q "not the challenge's script" <<<"$SCORE_TEXT" && [ ! -s "$SCORE_LOG" ] && [ ! -e "$SCORE_OUT" ] \
+    || { echo "a load.js with one byte changed must be refused (exit 2, nothing run), got exit $SCORE_RC and log '$(tr '\n' ' ' <"$SCORE_LOG")': ${SCORE_TEXT//$'\n'/ | }"; return 1; }
+  cp "$REPO/reference/twelve-dollar-server-challenge/bench/load.js" "$tmp/challenge/bench/load.js"
+  score_search "0 0 0" --challenge "$tmp/challenge" --max-probes 1
+  [ "$SCORE_RC" != 2 ] || { echo "the unchanged load.js is refused: ${SCORE_TEXT//$'\n'/ | }"; return 1; }
+  mkdir -p "$tmp/exists"
+  score_search "0 0" --out "$tmp/exists"
+  [ "$SCORE_RC" = 2 ] && grep -q 'exists' <<<"$SCORE_TEXT" && [ ! -s "$SCORE_LOG" ] || { echo "an existing --out must be refused with nothing run (exit $SCORE_RC)"; return 1; }
+  FAKE_FACTS_FAIL=1 score_search "0 0"
+  [ "$SCORE_RC" = 2 ] && grep -q 'facts' <<<"$SCORE_TEXT" || { echo "a controller whose facts fail must be refused (exit $SCORE_RC): ${SCORE_TEXT//$'\n'/ | }"; return 1; }
+  [ "$(grep -c '^ctl restart$' "$SCORE_LOG")" = 0 ] || { echo "the server restarted before the facts were known"; return 1; }
+}
+
+# The server's sampler, in a lab container (it needs bash 5 and a Linux /proc): the facts of its start files from a kernel log with a host name
+# and a dmesg line (only the message stays), and a real run of 4 seconds beside a sleeping process: the header, 24 columns a row, the open
+# files of that process on the first row, and its own CPU under 1 % of a core.
+score_check_sampler() {
+  local out dir rows
+  docker image inspect "$LAB_IMAGE:8.5" >/dev/null 2>&1 || { echo "image $LAB_IMAGE:8.5 is missing (run lab/build.sh 8.5)"; return 1; }
+  dir="$(mktemp -d)"
+  printf '%s\n' 'Nov 24 10:00:00 some-host kernel: Out of memory: Killed process 4242 (php) total-vm:1kB' \
+    '[  123.456789] oom-kill:constraint=CONSTRAINT_MEMCG,task=php' 'Nov 24 10:00:01 some-host kernel: eth0: link up' >"$dir/kernel.log"
+  out="$(docker run --rm -v "$LAB:/lab:ro" -v "$dir:/k:ro" -e SCORE_KERNEL_LOG=/k/kernel.log "$LAB_IMAGE:8.5" bash /lab/score/server-sample.sh --facts-only 2>&1)" \
+    || { echo "--facts-only failed: ${out//$'\n'/ | }"; return 1; }
+  grep -qxF 'oom Out of memory: Killed process 4242 (php) total-vm:1kB' <<<"$out" && grep -qxF 'oom oom-kill:constraint=CONSTRAINT_MEMCG,task=php' <<<"$out" \
+    && ! grep -q 'some-host' <<<"$out" && [ "$(grep -c '^oom ' <<<"$out")" = 2 ] \
+    || { echo "the OOM lines are not the two messages without a host name or a timestamp: ${out//$'\n'/ | }"; return 1; }
+  grep -q '^nproc [0-9]' <<<"$out" && grep -q '^ena-unread ethtool is not installed' <<<"$out" || { echo "no nproc, or no line saying ethtool is missing: ${out//$'\n'/ | }"; return 1; }
+  out="$(docker run --rm -v "$LAB:/lab:ro" "$LAB_IMAGE:8.5" bash -c '
+    sleep 30 & sleep 1
+    bash /lab/score/server-sample.sh --cgroup /sys/fs/cgroup --pids-of "sleep 30" --out /tmp/s/server.csv >/tmp/stdout.txt 2>&1 &
+    mkdir -p /tmp/s; sleep 5; kill -TERM %2; wait %2; cat /tmp/stdout.txt; cat /tmp/s/server.csv' 2>&1)" || { echo "the sampler run failed: ${out//$'\n'/ | }"; return 1; }
+  grep -q '^sampler: .* (0\.[0-9][0-9] % of one core)$' <<<"$out" || { echo "the sampler is over 1 % of a core, or prints nothing: ${out//$'\n'/ | }"; return 1; }
+  rows="$(grep -c '^[0-9]*\.[0-9][0-9][0-9],' <<<"$out")"
+  [ "$rows" -ge 3 ] || { echo "expected 3 rows or more in 5 s, got $rows: ${out//$'\n'/ | }"; return 1; }
+  [ "$(grep '^[0-9]*\.[0-9][0-9][0-9],' <<<"$out" | head -n 1 | awk -F, '{ print NF }')" = 24 ] || { echo "a row has not 24 columns"; return 1; }
+  grep '^[0-9]*\.[0-9][0-9][0-9],' <<<"$out" | head -n 1 | grep -qE ',[0-9]+:[0-9]+$' || { echo "the first row has no open files of the process: $(grep '^[0-9]*\.' <<<"$out" | head -n 1)"; return 1; }
+}
+
+# The sampler goes on when the service's cgroup disappears (a failed unit with Restart=no: systemd removes the folder): the cgroup columns are
+# empty from then on, the process is still there at the stop, and server-end.txt is written, because the OOM lines it holds are what names the memory wall.
+score_check_sampler_cgroup_gone() {
+  local out
+  docker image inspect "$LAB_IMAGE:8.5" >/dev/null 2>&1 || { echo "image $LAB_IMAGE:8.5 is missing (run lab/build.sh 8.5)"; return 1; }
+  out="$(docker run --rm -v "$LAB:/lab:ro" "$LAB_IMAGE:8.5" bash -c '
+    mkdir -p /tmp/cg /tmp/s
+    printf "usage_usec 1000\n" >/tmp/cg/cpu.stat; echo 1000 >/tmp/cg/memory.current
+    bash /lab/score/server-sample.sh --cgroup /tmp/cg --pids-of "sleep 30" --out /tmp/s/server.csv >/tmp/s/stdout.txt 2>&1 &
+    pid=$!
+    sleep 4; rm -rf /tmp/cg; sleep 4
+    kill -0 $pid 2>/dev/null && echo "alive-after-removal"
+    kill -TERM $pid; wait $pid; echo "rc=$?"
+    [ -s /tmp/s/server-end.txt ] && echo "end-file"
+    awk -F, "NR > 1 && \$10 == \"\" { n++ } END { print \"empty-cgroup-rows \" n + 0 }" /tmp/s/server.csv' 2>&1)" || { echo "the cgroup-gone run failed: ${out//$'\n'/ | }"; return 1; }
+  grep -qx 'alive-after-removal' <<<"$out" && grep -qx 'rc=0' <<<"$out" && grep -qx 'end-file' <<<"$out" \
+    || { echo "the sampler must outlive the cgroup, stop with exit 0 and write server-end.txt: ${out//$'\n'/ | }"; return 1; }
+  [ "$(sed -n 's/^empty-cgroup-rows //p' <<<"$out")" -ge 2 ] || { echo "the rows after the removal must have an empty cgroup column, 2 or more: ${out//$'\n'/ | }"; return 1; }
+}
+
+check_score() {
+  score_check_steps || return 1
+  score_check_numbers || return 1
+  score_check_walls || return 1
+  score_check_search || return 1
+  score_check_refusals || return 1
+  score_check_run_k6_cleanup || return 1
+  score_check_sampler || return 1
+  score_check_sampler_cgroup_gone || return 1
+}
+
+# The boxes' scripts (lab/score/server-setup.sh, server-ctl.sh, ctl-ssh.sh, k6-setup.sh, php-gcob.service). Their first run was on AWS:
+# these checks cover what a laptop can, with the paths the scripts read swapped for fixtures and the system's own
+# commands (systemctl, shutdown, curl, ssh) stood in for by stubs on the PATH.
+
+# boxes_stubs <dir> <name>...: a stub for each name in <dir>, to be put first on the PATH. A stub logs its name and arguments to
+# <dir>/calls and exits with the code in <dir>/<name>.rc (0 when there is none), after printing <dir>/<name>.out if that exists.
+boxes_stubs() {
+  local dir="$1" name
+  shift
+  : >"$dir/calls"
+  for name in "$@"; do
+    printf '#!/usr/bin/env bash\necho "%s $*" >>"%s/calls"\n[ ! -f "%s/%s.out" ] || cat "%s/%s.out"\nexit "$(cat "%s/%s.rc" 2>/dev/null || echo 0)"\n' \
+      "$name" "$dir" "$dir" "$name" "$dir" "$name" "$dir" "$name" >"$dir/$name"
+    chmod +x "$dir/$name"
+  done
+}
+
+# The systemd unit passes `systemd-analyze verify` in a clean Ubuntu container with systemd installed (the image has none): the unit
+# as it is, and a copy whose ExecStart program does not exist, which must not pass. The user `deploy` and the unit's paths exist, as on the box.
+check_score_unit() {
+  local image out
+  image="$(lab_base_image)"
+  [ -n "$image" ] || { echo "no base image found in lab/images/Dockerfile.src"; return 1; }
+  out="$(docker run --rm -i -v "$LAB/score/php-gcob.service:/unit.service:ro" "$image" bash -c '
+    apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq --no-install-recommends systemd >/dev/null 2>&1 || { echo "setup: apt failed"; exit 1; }
+    useradd -m deploy; mkdir -p /etc/systemd/system /srv/php-Gcob; touch /srv/php-Gcob/start.sh
+    cp /unit.service /etc/systemd/system/good.service
+    sed "s#^ExecStart=/usr/bin/bash #ExecStart=/usr/bin/no-such-shell #" /unit.service >/etc/systemd/system/bad.service
+    systemd-analyze verify /etc/systemd/system/good.service >/tmp/good.log 2>&1; echo "good rc=$?"; cat /tmp/good.log
+    systemd-analyze verify /etc/systemd/system/bad.service >/tmp/bad.log 2>&1; echo "bad rc=$?"' 2>&1)" || { echo "the container failed: ${out//$'\n'/ | }"; return 1; }
+  grep -qx 'good rc=0' <<<"$out" || { echo "systemd-analyze verify refuses the unit: ${out//$'\n'/ | }"; return 1; }
+  grep -qx 'bad rc=0' <<<"$out" && { echo "systemd-analyze verify passed a unit whose ExecStart program does not exist: the check cannot fail"; return 1; }
+  return 0
+}
+
+# boxes_fixture <dir>: the droplet's shape and a healthy service, as files: one CPU, 1.9 GiB, no swap, no nf_conntrack module, and a unit
+# whose one process (4242, run as root so the user name resolves anywhere) has 65,535 open files and the ambient capability of port 80.
+boxes_fixture() {
+  local dir="$1"
+  mkdir -p "$dir/proc/4242" "$dir/cgroup" "$dir/bin"
+  printf 'processor\t: 0\nmodel name\t: Fixture CPU\n\n' >"$dir/cpuinfo"
+  printf 'MemTotal:        2031616 kB\nMemFree:         1000000 kB\nSwapTotal:             0 kB\n' >"$dir/meminfo"
+  printf 'Filename\t\t\t\tType\t\tSize\t\tUsed\t\tPriority\n' >"$dir/swaps"
+  printf 'ext4 1 0\n' >"$dir/modules"
+  printf '4242\n' >"$dir/cgroup/cgroup.procs"
+  printf 'Name:\tphp\nUid:\t0\t0\t0\t0\nCapAmb:\t0000000000000400\n' >"$dir/proc/4242/status"
+  printf 'Limit                     Soft Limit           Hard Limit           Units\nMax open files            65535                65535                files\n' >"$dir/proc/4242/limits"
+  boxes_stubs "$dir/bin" systemctl shutdown update-grub reboot useradd cloud-init
+}
+
+# boxes_setup_run <dir> [env assignment]... -- <server-setup.sh arguments>...: runs the script on the fixture of <dir>; leaves its output in
+# BOXES_OUT and its exit code in BOXES_RC.
+boxes_setup_run() {
+  local dir="$1" envs=()
+  shift
+  while [ "$1" != -- ]; do envs+=("$1"); shift; done
+  shift
+  BOXES_RC=0
+  BOXES_OUT="$(env PATH="$dir/bin:$PATH" SCORE_CPUINFO="$dir/cpuinfo" SCORE_MEMINFO="$dir/meminfo" SCORE_SWAPS="$dir/swaps" SCORE_MODULES="$dir/modules" \
+    SCORE_UNIT_CGROUP="$dir/cgroup" SCORE_PROC="$dir/proc" SCORE_SETUP_USER=root SCORE_GRUB_DIR="$dir/grub.d" ${envs[@]+"${envs[@]}"} \
+    bash "$LAB/score/server-setup.sh" "$@" 2>&1)" || BOXES_RC=$?
+}
+
+# The shape checks and the service checks of server-setup.sh --check, each failing alone on its own fixture: two CPUs, 4 GiB, a swap, the
+# unit not active, another user, a low open files limit, no ambient capability, no curl. The droplet's shape passes, and a loaded nf_conntrack is
+# printed without failing.
+check_score_server_setup_checks() {
+  local dir kind line want
+  dir="$(mktemp -d)"
+  boxes_fixture "$dir"
+  boxes_setup_run "$dir" SCORE_CURL=bash -- --check
+  [ "$BOXES_RC" = 0 ] || { echo "the droplet's shape and a healthy service fail (exit $BOXES_RC): ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  for want in cpus memory swap unit user limits capability curl; do
+    grep -q "^ok    $want: " <<<"$BOXES_OUT" || { echo "no 'ok    $want:' line on the good fixture: ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  done
+  grep -q '^info  conntrack: nf_conntrack is not loaded' <<<"$BOXES_OUT" || { echo "no conntrack line: ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  for kind in cpus memory swap unit user limits capability curl; do
+    rm -rf "$dir"
+    dir="$(mktemp -d)"
+    boxes_fixture "$dir"
+    case "$kind" in
+      cpus) printf 'processor\t: 0\n\nprocessor\t: 1\n\n' >"$dir/cpuinfo" ;;
+      memory) printf 'MemTotal:        4046848 kB\n' >"$dir/meminfo" ;;
+      swap) printf '/swapfile\t\t\t\tfile\t\t1048572\t\t0\t\t-2\n' >>"$dir/swaps" ;;
+      unit) echo 3 >"$dir/bin/systemctl.rc" ;;
+      user) printf 'Name:\tphp\nUid:\t0\t0\t0\t0\nCapAmb:\t0000000000000400\n' >"$dir/proc/4242/status" ;;
+      limits) printf 'Max open files            1024                 524288               files\n' >"$dir/proc/4242/limits" ;;
+      capability) printf 'Name:\tphp\nUid:\t0\t0\t0\t0\nCapAmb:\t0000000000000000\n' >"$dir/proc/4242/status" ;;
+      curl) ;;   # the program is swapped for one that does not exist, below
+    esac
+    # Why: the fixture's process runs as root, so only the 'user' case expects another user.
+    boxes_setup_run "$dir" "SCORE_SETUP_USER=$([ "$kind" = user ] && echo deploy || echo root)" "SCORE_CURL=$([ "$kind" = curl ] && echo no-such-curl-here || echo bash)" -- --check
+    [ "$BOXES_RC" = 1 ] || { echo "the '$kind' fixture exits $BOXES_RC, not 1: ${BOXES_OUT//$'\n'/ | }"; return 1; }
+    line="$(grep "^FAIL  $kind: " <<<"$BOXES_OUT" || true)"
+    [ -n "$line" ] || { echo "no 'FAIL  $kind:' line on the '$kind' fixture: ${BOXES_OUT//$'\n'/ | }"; return 1; }
+    [ "$(grep -c '^FAIL ' <<<"$BOXES_OUT")" = 1 ] || { echo "the '$kind' fixture fails more than that one check: ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  done
+  rm -rf "$dir"
+  dir="$(mktemp -d)"
+  boxes_fixture "$dir"
+  printf 'nf_conntrack 180224 1 - Live 0x0000000000000000\next4 1 0\n' >"$dir/modules"
+  boxes_setup_run "$dir" SCORE_CURL=bash -- --check
+  [ "$BOXES_RC" = 0 ] && grep -q '^info  conntrack: nf_conntrack is loaded' <<<"$BOXES_OUT" || { echo "a loaded nf_conntrack is printed and does not fail (exit $BOXES_RC): ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  rm -rf "$dir"
+}
+
+# The install mode stops on a bad shape before it installs anything (no user, no copy, no cap armed), and --shape writes the boot line's drop-in
+# (it appends mem=2G to what the image set before it, so it must sort last), runs update-grub, then reboots, in that order and nothing else.
+check_score_server_setup_modes() {
+  local dir out
+  dir="$(mktemp -d)"
+  boxes_fixture "$dir"
+  printf 'processor\t: 0\n\nprocessor\t: 1\n\n' >"$dir/cpuinfo"
+  boxes_setup_run "$dir" -- --launch-epoch 1700000000
+  [ "$BOXES_RC" = 1 ] && grep -q '^FAIL  cpus: ' <<<"$BOXES_OUT" || { echo "a two-CPU box must exit 1 on the cpus line (exit $BOXES_RC): ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  [ ! -s "$dir/bin/calls" ] || { echo "the install mode ran commands before refusing the shape: $(tr '\n' ';' <"$dir/bin/calls")"; return 1; }
+  rm -rf "$dir"
+  dir="$(mktemp -d)"
+  boxes_fixture "$dir"
+  mkdir "$dir/grub.d"
+  boxes_setup_run "$dir" -- --shape
+  [ "$BOXES_RC" = 0 ] || { echo "--shape exits $BOXES_RC: ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  [ "$(tr '\n' ';' <"$dir/bin/calls")" = "update-grub ;reboot ;" ] || { echo "--shape runs update-grub then reboot and nothing else: $(tr '\n' ';' <"$dir/bin/calls")"; return 1; }
+  [ "$(ls "$dir/grub.d")" = "99-twelve-dollar-mem.cfg" ] || { echo "--shape writes one drop-in that sorts after the image's: $(ls "$dir/grub.d")"; return 1; }
+  out="$(GRUB_CMDLINE_LINUX_DEFAULT='console=tty1 console=ttyS0' bash -c '. "$1"; echo "$GRUB_CMDLINE_LINUX_DEFAULT"' _ "$dir/grub.d/99-twelve-dollar-mem.cfg")"
+  [ "$out" = "console=tty1 console=ttyS0 mem=2G" ] || { echo "the drop-in must append mem=2G to the image's boot line, got '$out'"; return 1; }
+  rm -rf "$dir"
+}
+
+# The 240-minute cap, re-armed after the reboot with the time left (its minutes round up; past the cap it arms one minute and fails).
+check_score_server_setup_cap() {
+  local dir
+  dir="$(mktemp -d)"
+  boxes_fixture "$dir"
+  boxes_setup_run "$dir" SCORE_SETUP_NOW=1700003600 -- --cap-only --launch-epoch 1700000000
+  [ "$BOXES_RC" = 0 ] && [ "$(tr '\n' ';' <"$dir/bin/calls")" = "shutdown -h +180;" ] \
+    || { echo "an hour after the launch the cap has 180 minutes left (exit $BOXES_RC): $(tr '\n' ';' <"$dir/bin/calls") ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  : >"$dir/bin/calls"
+  boxes_setup_run "$dir" SCORE_SETUP_NOW=1700014341 -- --cap-only --launch-epoch 1700000000
+  [ "$(tr '\n' ';' <"$dir/bin/calls")" = "shutdown -h +1;" ] || { echo "59 seconds left arm 1 minute: $(tr '\n' ';' <"$dir/bin/calls")"; return 1; }
+  : >"$dir/bin/calls"
+  boxes_setup_run "$dir" SCORE_SETUP_NOW=1700014500 -- --cap-only --launch-epoch 1700000000
+  [ "$BOXES_RC" = 1 ] && [ "$(tr '\n' ';' <"$dir/bin/calls")" = "shutdown -h +1;" ] && grep -q '^FAIL  cap: ' <<<"$BOXES_OUT" \
+    || { echo "past the cap: arm 1 minute and fail (exit $BOXES_RC): $(tr '\n' ';' <"$dir/bin/calls") ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  boxes_setup_run "$dir" -- --cap-only
+  [ "$BOXES_RC" = 2 ] || { echo "--cap-only without --launch-epoch must be a usage error (exit $BOXES_RC)"; return 1; }
+  rm -rf "$dir"
+}
+
+# boxes_ctl_fixture <dir> <curl failures>: what server-ctl.sh reads and runs, in <dir>: a seed, a live copy with its -wal and -shm, and stubs for
+# systemctl, chown and a curl that fails that many times before it answers.
+boxes_ctl_fixture() {
+  local dir="$1"
+  mkdir -p "$dir/bin" "$dir/seed" "$dir/data"
+  boxes_stubs "$dir/bin" systemctl chown
+  printf 'the seed' >"$dir/seed/feed.db"
+  chmod 0444 "$dir/seed/feed.db"   # the real seed is read-only: the live copy must still be writable
+  printf 'a live copy with writes' >"$dir/data/feed.db"
+  printf 'wal' >"$dir/data/feed.db-wal"
+  printf 'shm' >"$dir/data/feed.db-shm"
+  printf '#!/usr/bin/env bash\nn=$(cat "%s/curl.n" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" >"%s/curl.n"\n[ "$n" -gt %s ]\n' "$dir" "$dir" "$2" >"$dir/bin/curl"
+  chmod +x "$dir/bin/curl"
+}
+
+# boxes_ctl_run <dir> [env assignment]... -- <server-ctl.sh arguments>...: leaves the output in BOXES_OUT and the exit code in BOXES_RC.
+boxes_ctl_run() {
+  local dir="$1" envs=()
+  shift
+  while [ "$1" != -- ]; do envs+=("$1"); shift; done
+  shift
+  BOXES_RC=0
+  BOXES_OUT="$(env PATH="$dir/bin:$PATH" SCORE_CTL_SEED="$dir/seed/feed.db" SCORE_CTL_DATA="$dir/data/feed.db" SCORE_CPUINFO="$dir/cpuinfo" SCORE_MEMINFO="$dir/meminfo" \
+    ${envs[@]+"${envs[@]}"} bash "$LAB/score/server-ctl.sh" "$@" 2>&1)" || BOXES_RC=$?
+}
+
+# `restart` on the box's own files: the service stopped, the live copy and its -wal and -shm gone, a fresh copy of the seed owned by deploy, the
+# service started, /health polled until it answers, the healthy seconds as the last line (the driver reads it); no answer in time exits 1, a
+# missing seed exits 1 before the service is touched. `died` and `facts` are the driver's other questions.
+check_score_server_ctl() {
+  local dir calls
+  dir="$(mktemp -d)"
+  boxes_fixture "$dir/shape"
+  boxes_ctl_fixture "$dir" 3
+  cp "$dir/shape/cpuinfo" "$dir/shape/meminfo" "$dir/"
+  boxes_ctl_run "$dir" SCORE_CTL_TIMEOUT=20 -- restart
+  [ "$BOXES_RC" = 0 ] || { echo "restart exits $BOXES_RC: ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  [[ "$(tail -n 1 <<<"$BOXES_OUT")" =~ ^[0-9]+$ ]] || { echo "restart must end with the healthy seconds as a whole number: ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  [ "$(cat "$dir/data/feed.db")" = "the seed" ] || { echo "the live copy is not a fresh copy of the seed"; return 1; }
+  [ "$(ls -l "$dir/data/feed.db" | cut -c2-3)" = rw ] || { echo "the live copy is not writable by its owner (a copy of a read-only seed keeps its mode): $(ls -l "$dir/data/feed.db")"; return 1; }
+  [ ! -e "$dir/data/feed.db-wal" ] && [ ! -e "$dir/data/feed.db-shm" ] || { echo "the live copy's -wal or -shm survived the restart"; return 1; }
+  calls="$(tr '\n' ';' <"$dir/bin/calls")"
+  [ "$calls" = "systemctl stop php-gcob;chown deploy:deploy $dir/data/feed.db;systemctl start php-gcob;" ] \
+    || { echo "restart stops the unit, hands the copy to deploy, then starts the unit: $calls"; return 1; }
+  [ "$(cat "$dir/curl.n")" = 4 ] || { echo "/health is polled until it answers (3 refusals, then ok): $(cat "$dir/curl.n") calls"; return 1; }
+  rm -rf "$dir"
+  dir="$(mktemp -d)"
+  boxes_ctl_fixture "$dir" 1000000
+  SECONDS=0
+  boxes_ctl_run "$dir" SCORE_CTL_TIMEOUT=1 -- restart
+  [ "$BOXES_RC" = 1 ] && grep -q 'did not answer' <<<"$BOXES_OUT" || { echo "a server that never answers /health exits 1 after the timeout (exit $BOXES_RC): ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  [ "$SECONDS" -le 5 ] || { echo "a 1 s timeout took $SECONDS s: the poll does not stop at its timeout"; return 1; }
+  rm -f "$dir/seed/feed.db"
+  : >"$dir/bin/calls"
+  boxes_ctl_run "$dir" -- restart
+  [ "$BOXES_RC" = 1 ] && ! grep -q 'systemctl' "$dir/bin/calls" || { echo "a missing seed must exit 1 before the service is stopped (exit $BOXES_RC): $(tr '\n' ';' <"$dir/bin/calls")"; return 1; }
+  boxes_ctl_run "$dir" -- nonsense
+  [ "$BOXES_RC" = 2 ] || { echo "an unknown command is a usage error (exit $BOXES_RC)"; return 1; }
+  echo 3 >"$dir/bin/systemctl.rc"
+  boxes_ctl_run "$dir" -- died
+  [ "$BOXES_RC" = 0 ] || { echo "died exits 0 when the unit is not active (exit $BOXES_RC)"; return 1; }
+  echo 0 >"$dir/bin/systemctl.rc"
+  boxes_ctl_run "$dir" -- died
+  [ "$BOXES_RC" = 1 ] || { echo "died exits 1 when the unit is active (exit $BOXES_RC)"; return 1; }
+  rm -rf "$dir"
+  dir="$(mktemp -d)"
+  boxes_fixture "$dir"
+  boxes_ctl_fixture "$dir" 0
+  boxes_ctl_run "$dir" -- facts
+  [ "$BOXES_RC" = 0 ] && jq -e 'type == "object" and .nproc == 1 and .mem_total_mib == 1984 and .swap_mib == 0 and (.kernel | type == "string") and .cpu_model == "Fixture CPU"' <<<"$BOXES_OUT" >/dev/null \
+    || { echo "facts prints one JSON object (cpu_model, nproc, mem_total_mib, kernel, swap_mib) of the fixture's box (exit $BOXES_RC): ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  rm -rf "$dir"
+}
+
+# `sample-start` and `sample-stop` in a lab container (the sampler needs bash 5 and a Linux /proc), on the container's own cgroup and a sleeping
+# process: 10 rows of 24 columns in the folder, the start and end facts, and no `server-died.txt` while the unit is active (systemctl is a stub that
+# says so), the file when it is not.
+check_score_server_ctl_sampler() {
+  local dir out rows
+  docker image inspect "$LAB_IMAGE:8.5" >/dev/null 2>&1 || { echo "image $LAB_IMAGE:8.5 is missing (run lab/build.sh 8.5)"; return 1; }
+  dir="$(mktemp -d)"
+  mkdir -p "$dir/bin"
+  printf '#!/usr/bin/env bash\nexit "$(cat /stubs/systemctl.rc 2>/dev/null || echo 0)"\n' >"$dir/bin/systemctl"
+  chmod +x "$dir/bin/systemctl"
+  out="$(docker run --rm -v "$LAB:/lab:ro" -v "$dir/bin:/stubs" -e PATH="/stubs:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+    -e SCORE_CTL_CGROUP=/sys/fs/cgroup -e SCORE_CTL_PIDS_OF="sleep 300" "$LAB_IMAGE:8.5" bash -c '
+      sleep 300 & sleep 1
+      s=/lab/score/server-ctl.sh
+      bash $s sample-start /tmp/run1 || exit 1
+      sleep 11
+      bash $s sample-stop /tmp/run1
+      echo "--- died: $(ls /tmp/run1 | paste -sd" " -)"
+      echo 3 >/stubs/systemctl.rc
+      bash $s sample-start /tmp/run2 && sleep 2 && bash $s sample-stop /tmp/run2 >/dev/null
+      echo "--- dead: $(ls /tmp/run2 | paste -sd" " -)"
+      cat /tmp/run1/server.csv' 2>&1)" || { echo "the controller's sampler run failed: ${out//$'\n'/ | }"; rm -rf "$dir"; return 1; }
+  rm -rf "$dir"
+  grep -q '^--- died: .*server.csv' <<<"$out" && grep -q '^--- died: .*server-start.txt' <<<"$out" && grep -q '^--- died: .*server-end.txt' <<<"$out" \
+    || { echo "sample-stop must leave server.csv, server-start.txt and server-end.txt: ${out//$'\n'/ | }"; return 1; }
+  grep '^--- died: ' <<<"$out" | grep -q 'server-died.txt' && { echo "server-died.txt written while the unit is active"; return 1; }
+  grep '^--- dead: ' <<<"$out" | grep -q 'server-died.txt' || { echo "no server-died.txt while the unit is not active: ${out//$'\n'/ | }"; return 1; }
+  rows="$(grep -c '^[0-9]*\.[0-9][0-9][0-9],' <<<"$out")"
+  [ "$rows" -ge 10 ] || { echo "expected 10 rows or more in 11 s, got $rows"; return 1; }
+  [ "$(grep '^[0-9]*\.[0-9][0-9][0-9],' <<<"$out" | head -n 1 | awk -F, '{ print NF }')" = 24 ] || { echo "a row has not 24 columns"; return 1; }
+}
+
+# ctl-ssh.sh, the controller the driver runs on the load box: each command goes to the server box over ssh (a stub that runs the command
+# here), and `sample-stop <dir>` leaves the sampler's files in <dir> on this side, whatever the folder is called on the server box.
+check_score_ctl_ssh() {
+  local dir remote local_dir out rc
+  dir="$(mktemp -d)"
+  remote="$dir/remote"
+  mkdir -p "$dir/bin" "$remote" "$dir/run"
+  # The ssh stub: drops the options and the host, runs the remote command in a local shell (as ssh does with the joined arguments).
+  printf '%s\n' '#!/usr/bin/env bash' 'echo "ssh $*" >>"$SSH_LOG"' \
+    'while [ "$#" -gt 0 ]; do case "$1" in -n) shift ;; -o|-i|-p) shift 2 ;; *) break ;; esac; done' \
+    'shift' 'exec bash -c "$*"' >"$dir/bin/ssh"
+  chmod +x "$dir/bin/ssh"
+  # The server box's controller, as a stand-in: logs its arguments, leaves files in the folder it is given.
+  printf '%s\n' '#!/usr/bin/env bash' 'echo "ctl $*" >>"$SSH_LOG"' 'case "$1" in' \
+    '  restart) echo "copying"; echo 7 ;;' \
+    '  sample-start) mkdir -p "$2" ;;' \
+    '  sample-stop) printf "ts\n1\n" >"$2/server.csv"; echo "nproc 1" >"$2/server-start.txt"; echo "sampler_cpu_ms 3" >"$2/server-end.txt" ;;' \
+    '  facts) echo "{\"nproc\":1}" ;;' \
+    '  died) exit "${FAKE_DIED:-1}" ;;' 'esac' >"$dir/ctl"
+  run_ssh() { env PATH="$dir/bin:$PATH" SSH_LOG="$dir/log" SCORE_REMOTE_CTL="bash $dir/ctl" SCORE_REMOTE_DIR="$remote/sample" "$@"; }
+  : >"$dir/log"
+  out="$(run_ssh bash "$LAB/score/ctl-ssh.sh" ubuntu@192.0.2.9 restart 2>&1)" || { echo "restart through ssh failed: $out"; return 1; }
+  [ "$(tail -n 1 <<<"$out")" = 7 ] || { echo "restart's last line is the healthy seconds: ${out//$'\n'/ | }"; return 1; }
+  run_ssh bash "$LAB/score/ctl-ssh.sh" ubuntu@192.0.2.9 sample-start "$dir/run" >/dev/null 2>&1 || { echo "sample-start failed"; return 1; }
+  run_ssh bash "$LAB/score/ctl-ssh.sh" ubuntu@192.0.2.9 sample-stop "$dir/run" >/dev/null 2>&1 || { echo "sample-stop failed"; return 1; }
+  for local_dir in server.csv server-start.txt server-end.txt; do
+    [ -s "$dir/run/$local_dir" ] || { echo "sample-stop did not bring $local_dir into the driver's folder: $(ls "$dir/run")"; return 1; }
+  done
+  [ "$(cat "$dir/run/server-end.txt")" = "sampler_cpu_ms 3" ] || { echo "a file was changed on the way"; return 1; }
+  grep -q "^ctl sample-start $remote/sample\$" "$dir/log" && grep -q "^ctl sample-stop $remote/sample\$" "$dir/log" \
+    || { echo "the server box gets its own folder, not the driver's: $(grep '^ctl' "$dir/log" | tr '\n' ';')"; return 1; }
+  out="$(run_ssh bash "$LAB/score/ctl-ssh.sh" ubuntu@192.0.2.9 facts 2>&1)"
+  [ "$out" = '{"nproc":1}' ] || { echo "facts passes the JSON through: $out"; return 1; }
+  FAKE_DIED=0 run_ssh bash "$LAB/score/ctl-ssh.sh" ubuntu@192.0.2.9 died >/dev/null 2>&1 || { echo "died passes the exit code 0 through"; return 1; }
+  rc=0
+  run_ssh bash "$LAB/score/ctl-ssh.sh" ubuntu@192.0.2.9 died >/dev/null 2>&1 || rc=$?
+  [ "$rc" = 1 ] || { echo "died passes the exit code 1 through (got $rc)"; return 1; }
+  rm -rf "$remote/sample"
+  rc=0
+  run_ssh bash "$LAB/score/ctl-ssh.sh" ubuntu@192.0.2.9 sample-stop "$dir/run2" >/dev/null 2>&1 || rc=$?
+  [ "$rc" != 0 ] || { echo "sample-stop with nothing to bring back must fail"; return 1; }
+  printf '#!/usr/bin/env bash\nexit 1\n' >"$dir/ctl"
+  rc=0
+  run_ssh bash "$LAB/score/ctl-ssh.sh" ubuntu@192.0.2.9 restart >/dev/null 2>&1 || rc=$?
+  [ "$rc" != 0 ] || { echo "a failing restart on the server box must fail the controller"; return 1; }
+  rc=0
+  run_ssh bash "$LAB/score/ctl-ssh.sh" ubuntu@192.0.2.9 nonsense >/dev/null 2>&1 || rc=$?
+  [ "$rc" = 2 ] || { echo "an unknown command is a usage error (got $rc)"; return 1; }
+  rm -rf "$dir"
+}
+
+# boxes_k6_fixture <dir>: what k6-setup.sh reads, in <dir>: the challenge's real bench/load.js and a tokens file, the ephemeral range of a box that
+# was set up, no nf_conntrack module, and stubs for the instance metadata (a curl that answers the IMDSv2 paths with a primary and 3 secondary
+# addresses), `ip` (the default route and the interface's 4 addresses), ssh, sudo, sysctl, ping and ethtool.
+boxes_k6_fixture() {
+  local dir="$1"
+  mkdir -p "$dir/bin" "$dir/challenge/bench" "$dir/challenge/seed" "$dir/challenge/test"
+  cp "$REPO/reference/twelve-dollar-server-challenge/bench/load.js" "$dir/challenge/bench/load.js"
+  printf '[]' >"$dir/challenge/seed/tokens.json"
+  printf '1024\t65535\n' >"$dir/range"
+  printf 'ext4 1 0\n' >"$dir/modules"
+  boxes_stubs "$dir/bin" sysctl
+  printf '%s\n' '#!/usr/bin/env bash' 'for last; do :; done' 'case "$last" in' \
+    '  */latest/api/token) echo TOKEN ;;' '  */macs/) echo "02:aa:bb:cc:dd:ee/" ;;' \
+    '  */local-ipv4s) printf "192.0.2.5\n192.0.2.6\n192.0.2.7\n192.0.2.8" ;;' '  */subnet-ipv4-cidr-block) echo 192.0.2.0/24 ;;' '  *) exit 22 ;;' 'esac' >"$dir/bin/curl"
+  printf '%s\n' '#!/usr/bin/env bash' 'echo "ip $*" >>"'"$dir"'/bin/calls"' 'case "$*" in' \
+    '  "route show default") echo "default via 192.0.2.1 dev ens5 proto dhcp src 192.0.2.5 metric 100" ;;' \
+    '  "-4 -o addr show dev ens5") cat "'"$dir"'/addrs" ;;' '  addr\ add*) ;;' '  *) exit 1 ;;' 'esac' >"$dir/bin/ip"
+  printf '2: ens5    inet 192.0.2.5/24 brd 192.0.2.255 scope global dynamic ens5\n2: ens5    inet 192.0.2.6/24 scope global secondary ens5\n2: ens5    inet 192.0.2.7/24 scope global secondary ens5\n2: ens5    inet 192.0.2.8/24 scope global secondary ens5\n' >"$dir/addrs"
+  printf '%s\n' '#!/usr/bin/env bash' 'exec "$@"' >"$dir/bin/sudo"
+  printf '%s\n' '#!/usr/bin/env bash' 'echo "ssh $*" >>"'"$dir"'/bin/calls"' '[ ! -f "'"$dir"'/ssh.rc" ] || exit "$(cat "'"$dir"'/ssh.rc")"' \
+    'while [ "$#" -gt 0 ]; do case "$1" in -n|-q) shift ;; -o|-i|-p) shift 2 ;; *) break ;; esac; done' 'shift' 'exec bash -c "$*"' >"$dir/bin/ssh"
+  printf '%s\n' '#!/usr/bin/env bash' 'exec shasum -a 256 "$@"' >"$dir/bin/sha256sum"
+  chmod +x "$dir/bin/curl" "$dir/bin/ip" "$dir/bin/sudo" "$dir/bin/ssh" "$dir/bin/sha256sum"
+}
+
+# boxes_k6_run <dir> [env assignment]... -- <k6-setup.sh arguments>...: leaves the output in BOXES_OUT and the exit code in BOXES_RC.
+boxes_k6_run() {
+  local dir="$1" envs=()
+  shift
+  while [ "$1" != -- ]; do envs+=("$1"); shift; done
+  shift
+  BOXES_RC=0
+  BOXES_OUT="$(env PATH="$dir/bin:$PATH" K6_SETUP_CHALLENGE="$dir/challenge" K6_SETUP_PORT_RANGE_FILE="$dir/range" SCORE_MODULES="$dir/modules" K6_SETUP_USER="$(id -un)" \
+    ${envs[@]+"${envs[@]}"} bash "$LAB/score/k6-setup.sh" "$@" 2>&1)" || BOXES_RC=$?
+}
+
+# k6-setup.sh --check prints one line per check, names them, and exits non-zero when one fails: on a box that is set up, each passes; a load.js
+# with one byte changed, a default ephemeral range, a missing address and a server that does not answer ssh each fail alone.
+check_score_k6_setup_check() {
+  local dir kind want
+  docker image inspect "$LAB_K6_IMAGE" >/dev/null 2>&1 || { echo "image $LAB_K6_IMAGE is missing (pull it: the scores' k6)"; return 1; }
+  dir="$(mktemp -d)"
+  boxes_k6_fixture "$dir"
+  boxes_k6_run "$dir" -- --check 192.0.2.9
+  [ "$BOXES_RC" = 0 ] || { echo "a box that is set up fails its check (exit $BOXES_RC): ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  for want in k6 nofile addresses ports load.js tokens ssh; do
+    [ "$(grep -c "^ok    $want: " <<<"$BOXES_OUT")" = 1 ] || { echo "no single 'ok    $want:' line: ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  done
+  grep -q '^info  conntrack: nf_conntrack is not loaded' <<<"$BOXES_OUT" || { echo "no conntrack line: ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  [ "$(grep -c '^\(ok   \|FAIL \|info \)' <<<"$BOXES_OUT")" = 8 ] || { echo "one line per check, 8 of them: ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  for kind in load.js ports addresses ssh; do
+    rm -rf "$dir"
+    dir="$(mktemp -d)"
+    boxes_k6_fixture "$dir"
+    case "$kind" in
+      load.js) sed -i.bak 's/const LIKE_PROB = 0.15/const LIKE_PROB = 0.16/' "$dir/challenge/bench/load.js" && rm -f "$dir/challenge/bench/load.js.bak" ;;
+      ports) printf '32768\t60999\n' >"$dir/range" ;;
+      addresses) sed -i.bak '$d' "$dir/addrs" && rm -f "$dir/addrs.bak" ;;
+      ssh) echo 255 >"$dir/ssh.rc" ;;
+    esac
+    boxes_k6_run "$dir" -- --check 192.0.2.9
+    [ "$BOXES_RC" = 1 ] && [ "$(grep -c '^FAIL  ' <<<"$BOXES_OUT")" = 1 ] && grep -q "^FAIL  $kind: " <<<"$BOXES_OUT" \
+      || { echo "the '$kind' fixture must fail that one check and exit 1 (exit $BOXES_RC): ${BOXES_OUT//$'\n'/ | }"; return 1; }
+    [ "$kind" != load.js ] || grep -q "not the challenge's" <<<"$BOXES_OUT" || { echo "a changed load.js is refused with the reason: ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  done
+  rm -rf "$dir"
+  dir="$(mktemp -d)"
+  boxes_k6_fixture "$dir"
+  printf 'nf_conntrack 180224 1 - Live 0x0000000000000000\n' >"$dir/modules"
+  boxes_k6_run "$dir" -- --check
+  grep -q '^info  conntrack: nf_conntrack is loaded: nf_conntrack_max set to 1048576' <<<"$BOXES_OUT" && grep -q '^sysctl -w net.netfilter.nf_conntrack_max=1048576' "$dir/bin/calls" \
+    || { echo "a loaded nf_conntrack gets nf_conntrack_max 1048576 and says so: ${BOXES_OUT//$'\n'/ | } $(cat "$dir/bin/calls")"; return 1; }
+  rm -rf "$dir"
+}
+
+# The other modes of k6-setup.sh, on stubs: --rtt prints only the numbers (no address), --push-seed sends the seed and compares its sha256 on both sides (a
+# copy that differs fails), --check-42 must end `passed=42 failed=0`, --allowance prints the ENA's allowance counters, --print-ips the interface's
+# addresses for k6's --local-ips.
+check_score_k6_setup_modes() {
+  local dir seed
+  dir="$(mktemp -d)"
+  boxes_k6_fixture "$dir"
+  printf '%s\n' '#!/usr/bin/env bash' 'echo "PING 192.0.2.9 (192.0.2.9) 56(84) bytes of data."' 'echo' 'echo "--- 192.0.2.9 ping statistics ---"' \
+    'echo "100 packets transmitted, 100 received, 0% packet loss, time 19905ms"' 'echo "rtt min/avg/max/mdev = 0.112/0.156/0.321/0.032 ms"' >"$dir/bin/ping"
+  printf '%s\n' '#!/usr/bin/env bash' 'echo "NIC statistics:"' 'echo "     tx_timeout: 0"' 'echo "     bw_in_allowance_exceeded: 0"' \
+    'echo "     pps_allowance_exceeded: 2"' 'echo "     conntrack_allowance_available: 4294967295"' >"$dir/bin/ethtool"
+  printf '%s\n' '#!/usr/bin/env bash' 'last=""; for a; do prev="$last"; last="$a"; done' 'cp "$prev" "${last#*:}"' >"$dir/bin/scp"
+  chmod +x "$dir/bin/ping" "$dir/bin/ethtool" "$dir/bin/scp"
+  boxes_k6_run "$dir" -- --rtt 192.0.2.9
+  [ "$BOXES_RC" = 0 ] && [ "$BOXES_OUT" = "rtt: min 0.112 ms, avg 0.156 ms, max 0.321 ms (100 packets, 0 % lost)" ] \
+    || { echo "--rtt prints the three numbers and nothing that names the box (exit $BOXES_RC): ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  boxes_k6_run "$dir" -- --allowance
+  [ "$BOXES_RC" = 0 ] && [ "$BOXES_OUT" = "$(printf 'ena bw_in_allowance_exceeded 0\nena pps_allowance_exceeded 2\nena conntrack_allowance_available 4294967295')" ] \
+    || { echo "--allowance prints one line per allowance counter, and only those (exit $BOXES_RC): ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  boxes_k6_run "$dir" -- --print-ips
+  [ "$BOXES_RC" = 0 ] && [ "$BOXES_OUT" = "192.0.2.5,192.0.2.6,192.0.2.7,192.0.2.8" ] || { echo "--print-ips prints the interface's addresses, comma separated (exit $BOXES_RC): ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  seed="$dir/seed.db"
+  head -c 100000 /dev/urandom >"$seed"
+  mkdir -p "$dir/remote"
+  boxes_k6_run "$dir" K6_SETUP_SEED="$seed" K6_SETUP_REMOTE_SEED_DIR="$dir/remote" K6_SETUP_REMOTE_SUDO=env -- --push-seed 192.0.2.9
+  [ "$BOXES_RC" = 0 ] && cmp -s "$seed" "$dir/remote/feed.db" && grep -q "^ok    seed: sha256 $(shasum -a 256 "$seed" | cut -d' ' -f1) on both boxes" <<<"$BOXES_OUT" \
+    || { echo "--push-seed copies the seed and reports one sha256 for both sides (exit $BOXES_RC): ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  printf '%s\n' '#!/usr/bin/env bash' 'last=""; for a; do prev="$last"; last="$a"; done' 'cp "$prev" "${last#*:}"; echo x >>"${last#*:}"' >"$dir/bin/scp"
+  boxes_k6_run "$dir" K6_SETUP_SEED="$seed" K6_SETUP_REMOTE_SEED_DIR="$dir/remote" K6_SETUP_REMOTE_SUDO=env -- --push-seed 192.0.2.9
+  [ "$BOXES_RC" = 1 ] && grep -q '^FAIL  seed: ' <<<"$BOXES_OUT" || { echo "a copy that differs fails --push-seed (exit $BOXES_RC): ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  printf '%s\n' '#!/usr/bin/env bash' 'echo "  ok   something"' 'echo "passed=42 failed=0"' >"$dir/challenge/test/test.sh"
+  boxes_k6_run "$dir" -- --check-42 192.0.2.9
+  [ "$BOXES_RC" = 0 ] && grep -q '^ok    challenge-test: passed=42 failed=0' <<<"$BOXES_OUT" || { echo "--check-42 passes on passed=42 failed=0 (exit $BOXES_RC): ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  printf '%s\n' '#!/usr/bin/env bash' 'echo "passed=41 failed=1"' 'exit 1' >"$dir/challenge/test/test.sh"
+  boxes_k6_run "$dir" -- --check-42 192.0.2.9
+  [ "$BOXES_RC" = 1 ] && grep -q '^FAIL  challenge-test: passed=41 failed=1' <<<"$BOXES_OUT" || { echo "--check-42 fails on passed=41 failed=1 (exit $BOXES_RC): ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  rm -rf "$dir"
+}
+
 CHECKS=(
   check_seed_files_exist
   check_seed_has_posts
@@ -2630,12 +3371,23 @@ CHECKS=(
   check_stages_live
   check_syscalls_live
   check_syscalls_cleans_up_after_failure
+  check_score
+  check_score_unit
+  check_score_server_setup_checks
+  check_score_server_setup_modes
+  check_score_server_setup_cap
+  check_score_server_ctl
+  check_score_server_ctl_sampler
+  check_score_ctl_ssh
+  check_score_k6_setup_check
+  check_score_k6_setup_modes
   check_shellcheck
   check_shellcheck_catches_warning
   check_results_check_catches_drift
   check_results_regenerate
   check_public_guard
   check_public_guard_catches_leak
+  check_public_guard_catches_aws_traces
   check_public_guard_catches_temp_folder
 )
 

@@ -10,7 +10,7 @@
 # Quartiles by linear interpolation, inclusive: the p-quantile of n sorted values sits at position p * (n - 1) (0-based) and is interpolated
 # between its two neighbours (numpy's default `percentile`, Excel's `QUARTILE.INC`; with 5 values q1 is the 2nd and q3 the 4th).
 #
-# FIXME(pending): Jacob must confirm the round order and the floor rule (plan/plan.md, Q19). Assumes A: alternate the order, floor = |median| + interquartile range of an A/A folder, every run counted.
+# Settled by Jacob on 2026-11-25: the round order alternates, and the floor is |median| + interquartile range of an A/A folder, every run counted.
 #
 # Output: {pairs, differences_us, median_difference_us, q1_us, q3_us, iqr_us, floor_us}, the numbers to 3 decimals (the floor is judged as
 # printed); floor_us is null with fewer than 2 pairs (the spread of one difference says nothing).
