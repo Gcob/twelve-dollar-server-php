@@ -7,7 +7,7 @@
 #   plateau: from second 5 to second 15, 10 s; plateau requests 10 * rate; service burns 10 * svc * 1,000,000 us on it;
 #   passive opens: 40 a second on the plateau (55 at second 9), 10 outside it, 90 at second 2.
 # Options (defaults): users=100 rate=1000 svc=0.5 busy=0.6 lbbusy=0.3 lbspike=0.3 k6mib=200 avail=2000000 drops=0 fds=130 p95=120 p99=300
-# err=0 instant=0 (1: the users are there from the first second, and the first `early404` rows have no http_reqs metric, as in a 1-user run) early404=0 oom=0 (OOM lines at the end) ena=0 (growth of the ENA counter pps_allowance_exceeded) sampler_ms=50 (the sampler's CPU time).
+# err=0 instant=0 (1: the users are there from the first second, and the first `early404` rows have no http_reqs metric, as in a 1-user run) early404=0 oom=0 (OOM lines at the end) ena=0 (growth of the ENA counter pps_allowance_exceeded) cavail=0 (change of the gauge conntrack_allowance_available, which is not a count of anything bad) sampler_ms=50 (the sampler's CPU time).
 function opt(name, def) { return (name in V) ? V[name] : def }
 BEGIN {
   n = split(opts, o, " ")
@@ -15,7 +15,7 @@ BEGIN {
   users = opt("users", 100) + 0; rate = opt("rate", 1000) + 0; svc = opt("svc", 0.5) + 0; busy = opt("busy", 0.6) + 0
   lbbusy = opt("lbbusy", 0.3) + 0; lbspike = opt("lbspike", 0.3) + 0; k6mib = opt("k6mib", 200) + 0; avail = opt("avail", 2000000) + 0
   drops = opt("drops", 0) + 0; fds = opt("fds", 130) + 0; p95 = opt("p95", 120) + 0; p99 = opt("p99", 300) + 0; err = opt("err", 0) + 0
-  instant = opt("instant", 0) + 0; early404 = opt("early404", 0) + 0; oom = opt("oom", 0) + 0; ena = opt("ena", 0) + 0; sampler_ms = opt("sampler_ms", 50) + 0
+  instant = opt("instant", 0) + 0; early404 = opt("early404", 0) + 0; oom = opt("oom", 0) + 0; ena = opt("ena", 0) + 0; cavail = opt("cavail", 0) + 0; sampler_ms = opt("sampler_ms", 50) + 0
   t0 = 1700000000; ramp = 5; plateau = 10; down = 3; rows = ramp + plateau + down
   rest = dir "/rest.tsv"; lb = dir "/loadbox.csv"; srv = dir "/server.csv"
   printf "" > rest
@@ -46,8 +46,8 @@ BEGIN {
     mc = 100000000 + i * 1000000
     printf "%.3f,%d,0,0,%d,0,0,0,0,%d,%d,%d,%d,%d,%d,%d,%d,%d,0,0,%d,0,%d,%s\n", t0 + i + 0.4, su, si, use, mc, mc, mc / 2, avail, 10 * i, i, 2 * i, po, retr, dr, f >> srv
   }
-  print "nproc 2\nena bw_in_allowance_exceeded 5\nena pps_allowance_exceeded 7\noom Out of memory: Killed process 1 (old)" > (dir "/server-start.txt")
-  print "nproc 2\nena bw_in_allowance_exceeded 5\nena pps_allowance_exceeded " (7 + ena) "\noom Out of memory: Killed process 1 (old)" > (dir "/server-end.txt")
+  print "nproc 2\nena bw_in_allowance_exceeded 5\nena pps_allowance_exceeded 7\nena conntrack_allowance_available 100000\noom Out of memory: Killed process 1 (old)" > (dir "/server-start.txt")
+  print "nproc 2\nena bw_in_allowance_exceeded 5\nena pps_allowance_exceeded " (7 + ena) "\nena conntrack_allowance_available " (100000 + cavail) "\noom Out of memory: Killed process 1 (old)" > (dir "/server-end.txt")
   for (i = 1; i <= oom; i++) print "oom Out of memory: Killed process " (100 + i) " (php)" >> (dir "/server-end.txt")
   print "sampler_cpu_ms " sampler_ms "\nsampler_wall_ms 10000" >> (dir "/server-end.txt")
   printf "{\"metrics\":{\"http_req_duration\":{\"avg\":15,\"med\":11,\"p(95)\":%s,\"p(99)\":%s,\"max\":900},\"http_req_failed\":{\"value\":%s,\"passes\":0,\"fails\":0},\"http_reqs\":{\"count\":%d,\"rate\":50}}}\n", p95, p99, err, reqs > (dir "/summary.json")

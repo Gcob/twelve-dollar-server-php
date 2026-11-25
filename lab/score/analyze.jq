@@ -109,12 +109,13 @@ def window($rows; $s; $e): [$rows[] | select(.ts >= $s and .ts <= $e)];
    elif $k6_mem_peak != null and $lb_mem_kb != null and $k6_mem_peak > $lb_mem_kb * 1024 * 0.9 then "the k6 container held \($k6_mem_peak / 1048576 | round) MiB, over 90 % of the load box's memory"
    else null end) as $void_reason
 
+# Why only `_exceeded`: conntrack_allowance_available is a gauge (it falls as connections open and rises as they close), not a count of drops.
 | ($meta.k6_exit == 0) as $pass
 | (if $pass then null
    elif $void_reason != null then "k6"
    elif ($oom_e != null and $oom_s != null and $oom_e > $oom_s) or ($avail_min != null and $avail_min < 102400) then "memory"
    elif $meta.server_died then "died"
-   elif $ena_diff != null and ($ena_diff | to_entries | any(.value > 0)) then "network"
+   elif $ena_diff != null and ($ena_diff | to_entries | any(.value > 0 and (.key | endswith("_exceeded")))) then "network"
    elif ($drops != null and $drops > 0) or ($meta.dial_errors > 0 and ($fds_max | to_entries | any(.value >= 65435))) then "fds"
    elif $service_share != null and $service_share > 0.88 then "cpu"
    else "latency-below-saturation" end) as $wall

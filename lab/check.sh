@@ -2620,6 +2620,7 @@ score_check_walls() {
   j="$(score_run svc=0.4 busy=0.95 -- 99)" && score_expect "the box busy but the service under 88 %: the others are the load" "$j" '.wall' "latency-below-saturation" || return 1
   j="$(score_run svc=0.95 busy=0.95 oom=1 -- 99)" && score_expect "an OOM line with the CPU at 95 %" "$j" '.wall' "memory" || return 1
   j="$(score_run svc=0.9 busy=0.9 ena=2 -- 99)" && score_expect "an ENA counter grown with the CPU at 90 %" "$j" '.wall' "network" || return 1
+  j="$(score_run svc=0.9 busy=0.9 cavail=500 -- 99)" && score_expect "conntrack_allowance_available going up is a gauge, not a counter that grew: the wall is the CPU" "$j" '.wall' "cpu" || return 1
   j="$(score_run -- 0)" && score_expect "a passing run has no wall" "$j" '.wall' "null" || return 1
 }
 
