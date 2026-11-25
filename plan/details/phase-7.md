@@ -119,7 +119,7 @@ In [decisions.md](../decisions.md):
   count sampled, "table full" a void reason.
 - **D100, EC2's connection tracking (project manager, Q22):** both boxes' `conntrack_allowance_available` read after
   launch, the load box's ENA counters sampled too; under 220,000 on the server, port 80 opens to `0.0.0.0/0` (an
-  untracked flow) only with Jacob's yes; else tracked, and named if it binds.
+  untracked flow) for the session only (Jacob, Q22 = A, 2026-11-25 07:34); else tracked, and named if it binds.
 - **D101, the guard learns AWS's traces (project manager):** IPv4 addresses (except loopback, `0.0.0.0` and the
   documentation ranges), `ip-N-N-N-N` host names, AWS ids and 12-digit account ids, in `tools/public-guard.sh`, each
   with a fixture.
@@ -132,7 +132,7 @@ In [decisions.md](../decisions.md):
 | 2   | `feat(lab): the two boxes, set up the bench's way`               | `shellcheck` (the lab's pinned one) passes on every script under `lab/score/`; the unit file passes `systemd-analyze verify` in a clean `ubuntu:24.04` container; `server-ctl.sh restart` exits 1 when `/health` doesn't answer within 60 s; `tools/public-guard.sh` refuses each of
 D101's fixtures (an address, a host name, an AWS id, an account id) and passes on the tree; `server-setup.sh --check` and `k6-setup.sh --check` print one line per check and exit non-zero when one fails (fixtures); the factory's `aws/phase-7/launch.sh --print` makes no AWS call and prints every call it would make (`--dry-run`, AWS's own `DryRun`, waits for the policy), and `teardown.sh --verify` lists placement groups too; the guard passes; `lab/check.sh` all `ok` |
 | 3   | `docs(lab): the score on x86, Arjay's search`                    | `lab/results/<date>-x86-score/README.md`: the predictions copied unchanged and committed before the launch; the machine table (CPU model, kernel, `nproc` 1, MemTotal, no swap, RTT, `fsync`); the setup proofs (install time, `build.sh` ok, 42/42 on the service, healthy seconds, `deploy`, `Max open files 65535`, `CapAmb` with only `cap_net_bind_service`); every k6 run's row and the search's decisions; the score (the highest passing hold) or the measured reason why none passes 71,000, with the wall named by D95's rule; what differs from the bench (D96); `summarize.sh` regenerates the tables; the guard passes; `teardown.sh --verify` ends on `TEARDOWN CLEAN` (its output in the factory's run log) |
-| 4   | `docs(submission): our own run on AWS, labelled` (Q21, coded A)  | the README's "Results" has one paragraph: our own run on AWS, the users held 5 minutes, the boxes, "not the bench's score", the AWS core about 1.5 times faster per request than the bench's, a link to scope 3's folder; `check_submission` resolves the link; the guard passes |
+| 4   | `docs(submission): our own run on AWS, labelled` (D103)        | the README's "Results" has one paragraph: our own run on AWS, the users held 5 minutes, the boxes, "not the bench's score", the AWS core about 1.5 times faster per request than the bench's, a link to scope 3's folder; `check_submission` resolves the link; the guard passes |
 
 Vertical slices: scope 1 is the search end to end on the Mac (the driver, k6, the controller, the probe's JSON,
 the reading), with a local controller in place of the server box; scope 2 is the bench's way in on real boxes (the

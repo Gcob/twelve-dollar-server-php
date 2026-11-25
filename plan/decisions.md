@@ -496,7 +496,8 @@
   64 GiB (about 170,000 VUs). Scope 1 measures k6's memory a VU with the real `load.js`, and the type follows from it before the policy is
   attached: the box must hold 160,000 VUs under 90 % of its memory. At most 0.16 MiB a VU: the `c5.4xlarge`; up to 0.33:
   the `m5.4xlarge`; above: an `r5.4xlarge` (16 vCPUs, 128 GiB). The policy names only the type chosen (plan review
-  item 6; [Q20](plan.md), coded; project manager, phase 7, 2026-11-24).
+  item 6; project manager, phase 7, 2026-11-24; Jacob confirmed it, Q20 = A, 2026-11-25 07:34,
+  [round 6](questions/2026-11-25-0734.ronde-6.md); k6 measured 0.286 to 0.298 MiB a VU: the `m5.4xlarge`).
 - **D94:** the load box gets 3 secondary private addresses (4 in all) and its ephemeral range at 1,024 to 65,535, about
   258,000 connections to the server's one `address:80`; one address at Ubuntu's default range caps k6 at 28,232.
   Rule 11 binds the server box, which keeps Ubuntu's defaults (project manager, phase 7, 2026-11-24).
@@ -542,13 +543,23 @@
 - **D100:** EC2's security groups track each connection on the network card, a limit the bench box doesn't have. After
   launch both boxes' `conntrack_allowance_available` is read (`ethtool -S`), and the load box's ENA counters are
   sampled too. If the server's allowance is under 220,000 (1.5 times the search's top), port 80 opens to `0.0.0.0/0`
-  on the server's group (an untracked flow) only with Jacob's yes ([Q22](plan.md)); without it, the session runs
-  tracked and names the table if it binds (plan review item 4; project manager, phase 7, 2026-11-24).
+  on the session's group (an untracked flow) for the session only, closed with the group at teardown; the results say
+  when it opened and that scanners may add a few requests. Over 220,000 nothing opens, and the table is named if it
+  binds (plan review item 4; project manager, phase 7, 2026-11-24; Jacob, Q22 = A, 2026-11-25 07:34, which replaced
+  the coded B while scope 3 ran, [round 6](questions/2026-11-25-0734.ronde-6.md)).
 - **D101:** the public guard learns AWS's traces: IPv4 addresses (except `127.*`, `0.0.0.0` and the documentation
   ranges), `ip-N-N-N-N` host names, AWS ids (`i-`, `sg-`, `vol-`, `eni-`, `ami-`, `subnet-`, `vpc-`, `pg-`, `key-`
   followed by hex) and 12-digit account ids, each with a fixture; the summaries write "the server" and "4 source
   addresses" instead of values. Phase 8 reuses the boxes, so the guard, not a per-folder check (plan review item 9;
   project manager, phase 7, 2026-11-24).
+
+- **D102:** the step lab alternates the order of a round (round 1 runs the reference last, then they swap) and one
+  floor rule covers every pair, A/A included: a run under the 97 % rule counts, the floor is the A/A differences'
+  `|median|` plus their interquartile range. As coded since 5b's scope 2 (D71); its `FIXME(pending)` lines go (Jacob,
+  Q19 = A, 2026-11-25 07:34, [round 6](questions/2026-11-25-0734.ronde-6.md)).
+- **D103:** the submission's README states our own AWS run in one labelled paragraph ("not the bench's score"), with
+  the boxes, the users held, the wall, the factor said but not divided, and a link to the results; no bench estimate
+  as a claim (Jacob, Q21 = A, 2026-11-25 07:34, [round 6](questions/2026-11-25-0734.ronde-6.md)).
 
 ## History
 
