@@ -2,11 +2,13 @@
 // A small client for the checks of the DIY server's connection limits (lab/check.sh). It runs in a container on the host network and
 // prints one JSON object per line.
 //
-//   php conn-client.php <port> seq <n> [--keep]
+//   php conn-client.php <port> seq <n> [--keep] [--hold <seconds>]
 //       Opens <n> connections one after the other; each sends GET /health and reads the whole response. A response that says
 //       `Connection: close` must be followed by the end of the stream. Without --keep each connection is closed when it is done; with it
 //       they all stay open, and the summary tells for each whether the server closed it.
 //       Prints {"event":"seq","n","answered","close_header","server_closed","kept_alive","errors":[...]} (and "connections": [...] with --keep).
+//       With --keep and --hold the connections that are still open stay so for <seconds> after the summary is printed (the server's own
+//       once-a-second statistics line can then show them).
 //   php conn-client.php <port> burst <n> <hold seconds>
 //       Opens <n> connections at once, each with one request. After 1.5 s prints {"event":"phase1","answered":k}, holds for <hold> seconds,
 //       then closes the answered ones (the server's seats go to the ones still waiting) and reads until all are answered or 15 s have
@@ -59,6 +61,8 @@ if ($port < 1 || !in_array($mode, ['seq', 'burst'], true)) {
 if ($mode === 'seq') {
     $n = (int) ($argv[3] ?? 0);
     $keep = in_array('--keep', $argv, true);
+    $holdAt = array_search('--hold', $argv, true);
+    $holdAfter = $holdAt === false ? 0.0 : (float) ($argv[$holdAt + 1] ?? 0);
     $summary = ['event' => 'seq', 'n' => $n, 'answered' => 0, 'close_header' => 0, 'server_closed' => 0, 'kept_alive' => 0, 'errors' => []];
     $held = [];
     for ($i = 0; $i < $n; $i++) {
@@ -108,6 +112,9 @@ if ($mode === 'seq') {
         }
     }
     emit($summary);
+    if ($keep && $holdAfter > 0) {
+        usleep((int) ($holdAfter * 1000000));
+    }
     exit($summary['errors'] === [] ? 0 : 1);
 }
 

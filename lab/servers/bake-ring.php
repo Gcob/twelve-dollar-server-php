@@ -11,4 +11,4 @@ require __DIR__ . '/ring-server.php';
 
 // The database copy takes a few seconds, so the server listens only once it is done.
 handler_boot();
-ring_serve('0.0.0.0', (int) (getenv('PORT') ?: 8080), null, getenv('APP_TELEMETRY') === '1');
+ring_serve(ring_open_or_exit(1, null), '0.0.0.0', (int) (getenv('PORT') ?: 8080), getenv('APP_TELEMETRY') === '1');

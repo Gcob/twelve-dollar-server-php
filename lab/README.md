@@ -1326,7 +1326,7 @@ bash lab/conns.sh --image 8.5 --server lab/servers/uring-noop.php --ext sockets 
 
 ### The app on a ring (`APP_RING=1`, `lab/servers/ring-server.php`)
 
-`APP_RING=1 lab/app/server.php` serves the challenge app from our own io_uring loop in PHP through FFI: one process, one ring, the spike's
+`APP_RING=1 lab/app/server.php` serves the challenge app from our own io_uring loop in PHP through FFI: one process, one ring by default (`APP_RINGS`, below), the spike's
 design (raw syscalls, no liburing, no SQPOLL, direct descriptors, multishot accept and receive, one `io_uring_enter` per turn, nothing newer than kernel
 6.8) with the DIY server's parser and answers copied in (`parse`, `parseHead`, the `Connection: close` of the soft limit, the 400 and the 500), so what it
 answers is what `DiyConnection` answers (`check_ring_answers_like_diy` sends 30 raw requests to both: same bytes, same connections closed). With `APP_RING`
@@ -1334,7 +1334,7 @@ unset the app runs as it always did (the DIY files are not even loaded when it i
 `bash lab/challenge-test.sh --image 8.5 --seccomp-unconfined --ext sockets --env APP_RING=1`.
 
 - **Refused at boot** (a message, exit 1): `APP_WORKERS` of 2 or more (the ring replaces the processes), `APP_GROUP_COMMIT=1`, `APP_CHECKPOINTER`,
-  `APP_PROFILE`, `APP_LOOP`, and an `APP_RING` that is not 0 or 1. `APP_SOFT_CONN_LIMIT` works as on the DIY loop.
+  `APP_PROFILE`, `APP_LOOP`, and an `APP_RING` that is not 0 or 1. `APP_SOFT_CONN_LIMIT` works as on the DIY loop (across rings: see below).
 - **Boot lines:** `loop: ring, 1 ring` (what `lab/steplab.sh --expect-loop` and the run's `server.loop` read), `ring-settings: ...` (the pools), `socket: ...`.
   With `APP_TELEMETRY=1` a `ring:` line a second: turns, requests, CQEs, flushes, accepted, open, `short_sends`, `big_sends`, `send_waits`, `recv_dry`, `stalls`,
   `limit_closes`, `slots_in_use`, `requests_per_turn`, `cqes_per_turn`. No `telemetry` JSON line: the DIY loop's timers are not on the ring.
@@ -1347,6 +1347,23 @@ unset the app runs as it always did (the DIY files are not even loaded when it i
 - **`lab/stress.sh --app --path '/posts/{id}'`:** random posts of the seed (1 to 500,000), each response a 200 whose `"id"` is the request's, in order on its
   connection, one at a time and pipelined. `--app` starts the server as the app on a fresh seed copy. `/noop?id={id}` (the default) is the spike's echo.
 - **`lab/servers/bake-ring.php`** is the ring on the bake-off's handler, so `lab/conformance.sh --server lab/servers/bake-ring.php --ext sockets --seccomp-unconfined` runs.
+- **Several rings, `APP_RINGS=<n>` (1 to 4, default 1; refused otherwise, and refused without `APP_RING=1`):** n rings in the one process, each with its own table
+  of direct descriptors as large as `RLIMIT_NOFILE` gives (65,535 at most), all accepting from the one listening socket and each pausing its accept 16
+  descriptors before its table is full. Three rings held 150,000 connections with 12 file descriptors in the process (`results/2026-11-26-three-rings/`).
+  The loop blocks on the ring that had completions in its last turn (500 µs at most, so a ring that is not the active one is looked at twice a millisecond when
+  everything is idle) and, in the same turn, enters every other ring whose `IORING_SQ_TASKRUN` flag is set or that has SQEs queued: only an `io_uring_enter` of its
+  own submits a ring's SQEs and runs its deferred work. `APP_SOFT_CONN_LIMIT` counts the open connections of all the rings together. `loop: ring, 3 rings`; with
+  `APP_TELEMETRY=1` the `ring:` line adds `ring0_open=`, `ring0_turns=`, `ring0_requests=`, `ring0_requests_per_turn=` for each ring, and the run's JSON has
+  `server.ring.per_ring`. `lab/realistic.sh --server-nofile <n>` (in a pair: `--variant-args ring='--server-nofile 32768'`) sets the server's open-file limit for
+  that run, so 60,000 idle connections span two rings; the JSON's `server.nofile` says what it was. Test knobs: `URING_TABLE_SIZE` (32 to 65535: a smaller table
+  than `RLIMIT_NOFILE` gives) and `URING_FAIL_STEP` (`files` or `buffer_ring`: that step of the last ring's boot asks the kernel for something it refuses).
+- **The fallback:** the server builds every ring (setup with its flags, the mappings, the table, the buffer ring) before it opens the database or a socket. If the
+  kernel refuses a step (`EPERM` under Docker's default filter, `ENOSYS`, `EINVAL`, `EMFILE`) the rings built so far are given back, it prints `loop: epoll
+  (io_uring refused: <step> <errno>)` and runs the DIY loop as `APP_WORKERS=2` does (two processes on `SO_REUSEPORT`, the soft limit 64,000 each or
+  `APP_SOFT_CONN_LIMIT` when lower), which is what the submission ships: it needs `--ext pcntl --ext sockets --ext event`. Never silent, never mid-run.
+  `check_rings_fall_back_to_epoll` runs it under Docker's default filter (42/42 on the fallback) and with a refused buffer ring and a refused table on the last of 3 rings.
+- **The tests of several rings:** `check_rings_refusals`, `check_rings_soft_limit_across_rings`, `check_rings_loop_follows_the_active_ring`,
+  `check_rings_fall_back_to_epoll`, `check_rings_in_steplab`.
 
 ## Connection test
 

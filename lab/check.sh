@@ -3576,6 +3576,110 @@ check_ring_stress_posts() {
   [ -z "$left" ] || { echo "containers left behind: ${left//$'\n'/ }"; return 1; }
 }
 
+# ring_max <container> <field>: the largest value of a field over the `ring:` lines (for `ring1_open`: the most connections the ring held in any second).
+ring_max() {
+  docker logs "$1" 2>&1 | grep '^ring: ' | grep -o " $2=[0-9]*" | cut -d= -f2 | sort -n | tail -n 1
+}
+
+# APP_RINGS is a whole number from 1 to 4: 0, 5, text and a negative number are refused with a message that says so and exit code 1, and without
+# APP_RING=1 the switch is refused too (it would do nothing, and a run that thinks it measures three rings would measure the DIY loop).
+check_rings_refusals() {
+  local out v
+  out="$(bash "$LAB/run.sh" 8.5 sh -c '
+    for v in APP_RINGS=0 APP_RINGS=5 APP_RINGS=two APP_RINGS=-1; do
+      echo "== $v"
+      env SQLITE_PATH=/nonexistent JWT_SECRET=x APP_RING=1 "$v" php -d extension=sockets /lab/app/server.php 2>&1
+      echo "exit $?"
+    done
+    echo "== no ring"
+    env SQLITE_PATH=/nonexistent JWT_SECRET=x APP_RINGS=2 php -d extension=sockets /lab/app/server.php 2>&1
+    echo "exit $?"' 2>&1)" || { echo "the run failed: ${out//$'\n'/ | }"; return 1; }
+  for v in APP_RINGS=0 APP_RINGS=5 APP_RINGS=two APP_RINGS=-1; do
+    grep -A2 -x "== $v" <<<"$out" | grep -q "^ring-server: APP_RINGS must be a whole number from 1 to 4, got '${v#*=}'" || { echo "$v is not refused with a reason: ${out//$'\n'/ | }"; return 1; }
+    grep -A2 -x "== $v" <<<"$out" | grep -qx 'exit 1' || { echo "$v does not exit with 1: ${out//$'\n'/ | }"; return 1; }
+  done
+  grep -A2 -x '== no ring' <<<"$out" | grep -qx 'server: APP_RINGS needs APP_RING=1' || { echo "APP_RINGS without APP_RING is not refused: ${out//$'\n'/ | }"; return 1; }
+}
+
+# The soft limit counts every ring's connections together: 2 rings with a table of 80 (each pauses its accept at 64, so 101 connections fill the
+# first ring and spill to the second), a limit of 100: the first 100 connections answer as always and stay open, the 101st answers with
+# Connection: close and is ended, 0 errors, and the server counted exactly one such close. Without the shared count each ring would see at most
+# 64 open and never close. The boot line says `ring, 2 rings`.
+check_rings_soft_limit_across_rings() {
+  local name=lab-check-rings seq log
+  ring_start "$name" 18177 APP_RINGS=2 URING_TABLE_SIZE=80 APP_SOFT_CONN_LIMIT=100 || { docker rm -f "$name" >/dev/null 2>&1; return 1; }
+  seq="$(docker exec "$name" php /lab/check/conn-client.php 18177 seq 101 --keep --hold 2.5)"
+  log="$(docker logs "$name" 2>&1)"
+  docker rm -f "$name" >/dev/null 2>&1
+  grep -qx 'loop: ring, 2 rings' <<<"$log" || { echo "the loop line is not 'loop: ring, 2 rings': ${log//$'\n'/ | }"; return 1; }
+  jq -e '.answered == 101 and .errors == [] and (.connections | length) == 101
+    and ([.connections[:100][] | .close_header or .server_closed] | any | not) and .connections[100] == {close_header: true, server_closed: true}' <<<"$seq" >/dev/null \
+    || { echo "expected 100 kept open and the 101st closed with the header, no errors: $(jq -c '{answered, close_header, server_closed, kept_alive, errors}' <<<"$seq")"; return 1; }
+  [ "$(grep '^ring: ' <<<"$log" | grep -o ' limit_closes=[0-9]*' | cut -d= -f2 | awk '{s += $1} END {print s + 0}')" = 1 ] || { echo "the ring: lines do not count exactly one limit close: ${log//$'\n'/ | }"; return 1; }
+  [ "$(grep '^ring: ' <<<"$log" | grep -o ' ring1_open=[0-9]*' | cut -d= -f2 | sort -n | tail -n 1)" -gt 0 ] || { echo "the connections never reached the second ring, so the limit was not counted across rings: ${log//$'\n'/ | }"; return 1; }
+}
+
+# The loop blocks on the ring that had completions in its last turn, not always on the first. 90 idle connections over 2 rings of 80 (the first fills to
+# its accept limit of 64) put the last connection on the second ring; 30,000 requests one at a time over it must be answered, each by its own
+# post's answer, while the first ring is hardly entered: on any `ring:` line of a second that served 1,000 requests or more on ring 1, ring 0 had
+# at most 100 turns (a loop that waits on ring 0 enters it 2,000 times a second, once per 500 µs of its wait).
+check_rings_loop_follows_the_active_ring() {
+  local name=lab-check-rings out line busy=0 turns0
+  ring_start "$name" 18177 APP_RINGS=2 URING_TABLE_SIZE=80 || { docker rm -f "$name" >/dev/null 2>&1; return 1; }
+  out="$(docker exec "$name" php -d extension=sockets /lab/check/ring-client.php 18177 follow 90 30000 2>&1)" || { docker rm -f "$name" >/dev/null 2>&1; echo "ring-client follow failed: ${out//$'\n'/ | }"; return 1; }
+  while IFS= read -r line; do
+    [[ "$line" =~ ring1_requests=([0-9]+) ]] || continue
+    [ "${BASH_REMATCH[1]}" -ge 1000 ] || continue
+    [[ "$line" =~ ring0_turns=([0-9]+) ]] || continue
+    turns0="${BASH_REMATCH[1]}"
+    busy=$((busy + 1))
+    [ "$turns0" -le 100 ] || { docker rm -f "$name" >/dev/null 2>&1; echo "ring 0 had $turns0 turns in a second that served ring 1: $line"; return 1; }
+  done < <(docker logs "$name" 2>&1 | grep '^ring: ')
+  [ "$(ring_max "$name" ring0_open)" -gt 0 ] && [ "$(ring_max "$name" ring1_open)" -gt 0 ] && [ "$(ring_sum "$name" ring0_requests)" = 0 ] || { docker rm -f "$name" >/dev/null 2>&1; echo "the idle connections did not span both rings, or ring 0 served requests"; return 1; }
+  docker rm -f "$name" >/dev/null 2>&1
+  [ "$busy" -gt 0 ] && grep -q '^ok    ' <<<"$out" || { echo "no second of the statistics served 1,000 requests on ring 1 ($busy), or the client failed: ${out//$'\n'/ | }"; return 1; }
+}
+
+# The fallback. Under Docker's default seccomp filter the kernel refuses io_uring_setup (EPERM): the server prints `loop: epoll (io_uring refused:
+# setup 1)` and serves on the DIY loop with 2 worker processes and a soft limit of 64,000 each (what the submission is), and passes the challenge's
+# 42 checks there. Then the same fallback for a step after the setup, on the last of 3 rings (a test hook asks the kernel for a buffer ring of 0
+# entries, which it refuses with EINVAL; and likewise a table of 0 files): the line names the step and 22, the rings built before are given back
+# (no ring left in the process), and it serves.
+check_rings_fall_back_to_epoll() {
+  local name=lab-check-rings log out step
+  CHECK_APP_EXT_EXTRA=pcntl LAB_SERVER_SECCOMP_UNCONFINED="" start_app_for_check "$name" 18177 0 APP_RING=1 APP_RINGS=3 || { docker rm -f "$name" >/dev/null 2>&1; return 1; }
+  log="$(docker logs "$name" 2>&1)"
+  docker rm -f "$name" >/dev/null 2>&1
+  grep -qx 'loop: epoll (io_uring refused: setup 1)' <<<"$log" && grep -q '^workers: 2 ' <<<"$log" && grep -qx 'soft connection limit: 64000 per process' <<<"$log" \
+    || { echo "under the default seccomp filter the boot lines are not the fallback's: ${log//$'\n'/ | }"; return 1; }
+  out="$(bash "$LAB/challenge-test.sh" --image 8.5 --ext pcntl --ext sockets --ext event --env APP_RING=1 --env APP_RINGS=3 2>&1)" || { echo "the challenge's suite did not pass on the fallback: $(tail -n 5 <<<"$out" | tr '\n' ' ')"; return 1; }
+  grep -qx 'passed=42 failed=0' <<<"$out" || { echo "not 42 of 42 on the fallback: $(tail -n 3 <<<"$out" | tr '\n' ' ')"; return 1; }
+  for step in buffer_ring files; do
+    CHECK_APP_EXT_EXTRA=pcntl LAB_SERVER_SECCOMP_UNCONFINED=1 start_app_for_check "$name" 18177 0 APP_RING=1 APP_RINGS=3 URING_FAIL_STEP=$step || { docker rm -f "$name" >/dev/null 2>&1; return 1; }
+    log="$(docker logs "$name" 2>&1)"
+    out="ring descriptors: $(docker exec "$name" sh -c 'ls -l /proc/1/fd | grep -c anon_inode:.io_uring.' || true)"
+    docker rm -f "$name" >/dev/null 2>&1
+    grep -qx "loop: epoll (io_uring refused: $step 22)" <<<"$log" || { echo "a refused $step is not the fallback's line: ${log//$'\n'/ | }"; return 1; }
+    [ "$out" = 'ring descriptors: 0' ] || { echo "the rings built before the refused $step are still open in the supervisor: $out"; return 1; }
+  done
+}
+
+# Several rings in the step lab: a pair of the DIY reference and the app on 2 rings with a smaller `nofile` for that variant only (`--variant-args
+# ring='--server-nofile 32768'`): the runs' JSON say `ring, 2 rings`, `server.nofile` 32768 on the ring and 65535 on the reference, and `server.ring.per_ring`
+# has the two rings' open connections, turns and requests.
+check_rings_in_steplab() {
+  local out rc=0 dir
+  dir="$(mktemp -d)"
+  out="$(bash "$LAB/steplab.sh" --image 8.5 --rate 200 --think-scale 0.1 --seconds 5 --pairs 1 --warmup 20,5 --seccomp-unconfined --ext sockets --ext event \
+    --variant ref= --variant ring=APP_RING=1,APP_RINGS=2,APP_TELEMETRY=1 --variant-args 'ring=--server-nofile 32768' \
+    --expect-loop ref=epoll --expect-loop 'ring=ring, 2 rings' --out "$dir/pair" 2>&1)" || rc=$?
+  [ "$rc" = 0 ] && [ "$(jq -r '.server.loop' "$dir/pair/ring-1.json")" = 'ring, 2 rings' ] && [ "$(jq -r '.server.nofile' "$dir/pair/ring-1.json")" = 32768 ] \
+    && [ "$(jq -r '.server.nofile' "$dir/pair/ref-1.json")" = 65535 ] \
+    && jq -e '(.server.ring.per_ring | length == 2) and ((.server.ring.per_ring | map(.requests) | add) > 0)' "$dir/pair/ring-1.json" >/dev/null \
+    || { echo "the pair's JSON do not show 2 rings and the variant's nofile (exit $rc): ${out//$'\n'/ | }"; rm -rf "$dir"; return 1; }
+  rm -rf "$dir"
+}
+
 CHECKS=(
   check_seed_files_exist
   check_seed_has_posts
@@ -3705,6 +3809,11 @@ CHECKS=(
   check_ring_answers_like_diy
   check_ring_loop_line_in_runs
   check_ring_stress_posts
+  check_rings_refusals
+  check_rings_soft_limit_across_rings
+  check_rings_loop_follows_the_active_ring
+  check_rings_fall_back_to_epoll
+  check_rings_in_steplab
   check_score
   check_score_unit
   check_score_server_setup_checks

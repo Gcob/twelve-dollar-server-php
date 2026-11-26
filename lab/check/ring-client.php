@@ -13,6 +13,10 @@
 //                                         fresh connection that is answered
 //   php ring-client.php <port> many       300 connections that each send 3 requests at once (for a server started with 2 receive buffers
 //                                         and 1 send slot): every answer is there, in order
+//   php ring-client.php <port> follow <idle> <requests>
+//                                         <idle> connections are opened and left idle (for a server whose first ring's table they fill, so the
+//                                         last of them is on the second ring), then <requests> requests, one at a time, go over the last one: each
+//                                         answer is the right post's. The connections stay open 3 s more, so the server's last statistics lines show
 //   php ring-client.php <port> compare <other port>
 //                                         the same raw requests (valid, refused, malformed, HTTP/1.0, Connection: close, pipelined behind a
 //                                         close, an oversized head) to this server and to the DIY server on the other port: the same bytes
@@ -251,6 +255,30 @@ function cmd_many(int $port): void
     say('300 connections with 3 requests each, answered in order', $failure);
 }
 
+function cmd_follow(int $port, int $idle, int $requests): void
+{
+    $connections = [];
+    for ($c = 0; $c < $idle; $c++) {
+        $connections[] = connect_to($port);
+        // Why a pause: the ring that fills its table stops accepting at its next turn; a burst already in the backlog is taken whole by the kernel
+        // in one go, and the ones past the table are dropped (the margin of 16 descriptors covers a few connections at a time, not a burst).
+        usleep(5000);
+    }
+    usleep(500000);
+    $fp = end($connections);
+    $failure = null;
+    for ($r = 0; $r < $requests && $failure === null; $r++) {
+        $id = 1 + $r % 1000;
+        write_all($fp, get("/posts/$id"));
+        $answer = read_responses($fp, 1)[0];
+        if (post_id_of($answer) !== $id) {
+            $failure = "request $r got " . json_encode(substr($answer['body'], 0, 60));
+        }
+    }
+    say("$requests requests, one at a time, over the last of $idle connections, each answered with its own post", $failure);
+    sleep(3);
+}
+
 /** What a server sends back for raw bytes: everything it sends until it is quiet for 150 ms or ends the connection. @return array{string, bool} */
 function raw_exchange(int $port, string $bytes): array
 {
@@ -339,8 +367,8 @@ function cmd_compare(int $port, int $other): void
 $failed = false;
 $port = (int) ($argv[1] ?? 0);
 $command = $argv[2] ?? '';
-if ($port < 1 || !function_exists('cmd_' . $command) || ($command === 'compare' && (int) ($argv[3] ?? 0) < 1)) {
-    fwrite(STDERR, "usage: php ring-client.php <port> split|pipeline|big|midclose|many|compare <other port>\n");
+if ($port < 1 || !function_exists('cmd_' . $command) || ($command === 'compare' && (int) ($argv[3] ?? 0) < 1) || ($command === 'follow' && (int) ($argv[4] ?? 0) < 1)) {
+    fwrite(STDERR, "usage: php ring-client.php <port> split|pipeline|big|midclose|many|follow <idle> <requests>|compare <other port>\n");
     exit(2);
 }
 try {

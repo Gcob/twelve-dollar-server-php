@@ -114,4 +114,5 @@ int setsockopt(int fd, int level, int optname, const void *optval, uint32_t optl
 int bind(int fd, const void *addr, uint32_t addrlen);
 int listen(int fd, int backlog);
 int getrlimit(int resource, rlimit_t *rlim);
+int close(int fd);
 int *__errno_location(void);

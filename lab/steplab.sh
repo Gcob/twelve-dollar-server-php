@@ -22,7 +22,8 @@
 # --server-variant <name>=<file> runs another server file (the same name in both flags: both apply); --variant-args <name>=<arguments>
 # adds arguments to that variant's lab/realistic.sh call, split on spaces, after the common ones (so a later --image or --ext of
 # the variant wins or adds: `--variant-args other='--image 8.3-apt --ext swoole --php-ini servers/x/php.ini'`; a path of --php-ini
-# is under lab/, relative to the current folder or absolute). The first variant given is the
+# is under lab/, relative to the current folder or absolute; `--variant-args ring='--server-nofile 32768'` sets the `nofile` limit of that
+# variant's server only, which sizes the tables of the app on rings: 32,768 makes 60,000 idle connections span two). The first variant given is the
 # reference. The default warm-up is a tenth of the rate for 60 s (the baseline's).
 #
 # --seccomp-unconfined starts the server container of every run without Docker's default seccomp filter, which refuses io_uring: it applies to

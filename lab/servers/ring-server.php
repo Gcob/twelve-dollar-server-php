@@ -1,10 +1,10 @@
 <?php
-// The challenge app's event loop on an io_uring ring driven through PHP's FFI (no C is compiled, no liburing: raw syscalls). It is the
+// The challenge app's event loop on io_uring rings driven through PHP's FFI (no C is compiled, no liburing: raw syscalls). It is the
 // ring of lab/servers/uring-noop.php (5a's spike, which stays as it is: its results cite it) with the DIY server's HTTP/1.1 parser and
 // answers (lab/servers/diy-connection.php) in place of the spike's `/noop` echo, and with what an app needs to be correct under
 // pressure: splits, pipelining, short sends, responses longer than a send slot, a send pool that runs full, a receive pool that runs dry.
-// lab/app/server.php boots it with APP_RING=1 (one process, one ring); lab/servers/bake-ring.php boots it on the bake-off's handler so
-// that lab/conformance.sh runs on it. Nothing here is the submission's.
+// lab/app/server.php boots it with APP_RING=1 (one process, APP_RINGS rings, one by default); lab/servers/bake-ring.php boots it on the
+// bake-off's handler so that lab/conformance.sh runs on it. Nothing here is the submission's.
 //
 // The memory-ordering design that makes plain FFI reads and writes safe:
 // - No SQPOLL. IORING_SETUP_SINGLE_ISSUER and IORING_SETUP_DEFER_TASKRUN: the kernel posts completions and takes submissions only inside
@@ -16,10 +16,16 @@
 //   turn: counted as `flushes`. Nothing newer than kernel 6.8 (the bench's) is used: no min_wait_usec, no batching knob.
 // - Connections are direct descriptors: multishot accept into a sparse table of fixed files (IORING_FILE_INDEX_ALLOC), as large as
 //   RLIMIT_NOFILE allows (the kernel refuses a bigger one with EMFILE, and the lab's limit is 65,535), so a connection takes no file
-//   descriptor of the process. Receive is multishot from a provided buffer ring (a pool shared by all connections, nothing held per idle
+//   descriptor of the process. A table is per ring: APP_RINGS rings (1 to 4) in the one process hold that many tables of connections. Receive is multishot from a provided buffer ring (a pool shared by all connections, nothing held per idle
 //   connection), send is one SEND of the response copied into a pooled slot, and a server-side close is a shutdown linked to the close
 //   of the descriptor (the multishot receive keeps the socket alive until the shutdown ends it).
 // - SQEs are written in place in the ring's mapped memory, field by field; CQEs are read once per turn: one FFI::string, one unpack().
+// - Several rings (RingLoop): all of them accept from the one listening socket, each pausing its accept when its own table is nearly full.
+//   The loop blocks on the ring that had completions in its last turn (never always the first: connections fill the first ring and the
+//   traffic that comes after lands on the next), and in the same turn enters every other ring that has work (its IORING_SQ_TASKRUN flag
+//   is set: only an io_uring_enter of its own runs its deferred work) or SQEs queued (only its own enter submits them).
+// - At boot every ring is built before the server listens. A step the kernel refuses (setup, mapping, the table, the buffer ring) is a
+//   RingRefused with the step and the errno: the caller falls back to the DIY loop (lab/app/server.php) and says so.
 //
 // What the loop does about the cases a stress run of `GET /noop` never shows:
 // - A request split over several receives is kept (`partial`) and assembled before it is parsed. Pipelined requests are answered in
@@ -37,7 +43,9 @@
 //
 // Port: PORT (default 8080), host: HOST (an IPv4 address). Test knobs, unset by default: URING_RECV_BUFFERS (a power of two, 2 to 32768; default
 // 4096 buffers of 2048 bytes) and URING_SEND_SLOTS (1 to 8192; default 2048 slots of 8 KiB), to make a pool run dry or full with a few
-// connections. Docker's default seccomp filter refuses io_uring (EPERM): the lab's scripts take --seccomp-unconfined for this server.
+// connections; URING_TABLE_SIZE (32 to 65535: a table smaller than RLIMIT_NOFILE gives), to fill a ring's table with a few connections and make
+// the next ring take the rest; URING_FAIL_STEP (files or buffer_ring: that step of the boot of the last ring is asked for something the kernel
+// refuses, to see the fallback to the DIY loop of lab/app/server.php). Docker's default seccomp filter refuses io_uring (EPERM): the lab's scripts take --seccomp-unconfined for this server.
 
 if (!extension_loaded('FFI')) {
     fwrite(STDERR, "ring-server: FFI is not loaded\n");
@@ -47,6 +55,21 @@ if (!in_array(php_uname('m'), ['x86_64', 'aarch64'], true)) {
     // The io_uring syscalls are 425 to 427 on both; the sockets' constants below are the same on both.
     fwrite(STDERR, 'ring-server: only x86_64 and aarch64 are known, this is ' . php_uname('m') . "\n");
     exit(1);
+}
+
+/** A step of the ring's boot that the kernel refused (Docker's seccomp filter, a kernel without io_uring, a limit): the step's name and the errno. */
+final class RingRefused extends RuntimeException
+{
+    public function __construct(public readonly string $step, public readonly int $errnoValue, string $detail = '')
+    {
+        parent::__construct("$step $errnoValue" . ($detail === '' ? '' : " ($detail)"));
+    }
+}
+
+/** What the rings share: the connections open on all of them, which the soft limit counts. */
+final class RingTotals
+{
+    public int $open = 0;
 }
 
 final class AppRing
@@ -104,6 +127,7 @@ final class AppRing
     private const T_SHUTDOWN = 4;
     private const T_CANCEL = 5;
 
+    private const SQ_TASKRUN = 1 << 2;
     private const SQ_ENTRIES = 4096;
     private const CQ_ENTRIES = 32768;
     private const BUF_SIZE = 2048;
@@ -154,6 +178,7 @@ final class AppRing
     private readonly FFI\CData $params;
     private readonly FFI\CData $sqHeadP;
     private readonly FFI\CData $sqTailP;
+    private readonly FFI\CData $sqFlagsP;
     private readonly FFI\CData $cqHeadP;
     private readonly FFI\CData $cqTailP;
     private readonly FFI\CData $cqes0;
@@ -168,8 +193,12 @@ final class AppRing
     private readonly int $sqMask;
     private readonly int $cqEntries;
     private readonly int $bufAddr;
-    private readonly int $listenFd;
     private readonly int $acceptLimit;
+    private readonly ?string $failStep;
+    private int $listenFd = -1;
+    /** @var list<array{int, int}> the mappings this ring made (address, bytes), unmapped by release() */
+    private array $maps = [];
+    private int $fdToClose = -1;
     /** @var list<FFI\CData> */
     private array $slotPtr = [];
     /** @var list<int> */
@@ -212,31 +241,42 @@ final class AppRing
     private int $bodyLength = 0;
     private bool $closeAfter = false;
 
-    // The previous stats line's counters.
-    /** @var array<string, int> */
-    private array $statsLast = [];
-
     /**
      * @param FFI $ffi the declarations of ring-server.h
-     * @param FFI $ffiAddr an FFI whose mmap() returns the address as an integer (see map())
-     * @param array{recv_buffers?: int, send_slots?: int, soft_limit?: ?int} $options pool sizes (a power of two of receive buffers), and the
-     *        soft connection limit: a response built while more connections than this are open says `Connection: close` and ends its connection
+     * @param FFI $ffiAddr an FFI whose mmap() and munmap() take and return addresses as integers (see map())
+     * @param RingTotals $totals the open connections of every ring, shared by them
+     * @param array{recv_buffers?: int, send_slots?: int, table_size?: int, soft_limit?: ?int, fail_step?: ?string} $options pool sizes (a power of
+     *        two of receive buffers, the table of direct descriptors that RLIMIT_NOFILE does not already make smaller), the soft connection limit (a response built while more connections than this are open, on all the rings, says
+     *        `Connection: close` and ends its connection), and a test hook: the step ('files' or 'buffer_ring') to ask the kernel for something
+     *        it refuses
+     * @throws RingRefused when the kernel refuses a step of the boot (every resource taken until then is given back)
      */
-    public function __construct(private readonly FFI $ffi, private readonly FFI $ffiAddr, int $listenFd, private readonly string $name, array $options = [])
+    public function __construct(private readonly FFI $ffi, private readonly FFI $ffiAddr, private readonly string $name, private readonly RingTotals $totals, array $options = [])
     {
-        $this->listenFd = $listenFd;
         $this->recvBuffers = $options['recv_buffers'] ?? 4096;
         $this->sendSlots = $options['send_slots'] ?? 2048;
         $this->softLimit = $options['soft_limit'] ?? null;
         $this->errnoP = $ffi->__errno_location();
+        $this->failStep = $options['fail_step'] ?? null;
         $rl = $ffi->new('rlimit_t');
         if ($ffi->getrlimit(7, FFI::addr($rl)) !== 0) {
             throw new RuntimeException('getrlimit(RLIMIT_NOFILE) failed');
         }
-        $this->tableSize = min($rl->cur, self::MAX_TABLE);
+        $this->tableSize = min($rl->cur, self::MAX_TABLE, $options['table_size'] ?? self::MAX_TABLE);
         $this->gens = array_fill(0, $this->tableSize, 0);
         $this->acceptLimit = $this->tableSize - self::TABLE_MARGIN;
+        try {
+            $this->build();
+        } catch (RingRefused $e) {
+            $this->release();
+            throw $e;
+        }
+    }
 
+    /** Everything that asks the kernel for something: the ring, its mappings, the table of direct descriptors, the buffer ring, the pools. */
+    private function build(): void
+    {
+        $ffi = $this->ffi;
         $params = $ffi->new('params_t');
         $params->flags = self::SETUP_CQSIZE | self::SETUP_SUBMIT_ALL | self::SETUP_TASKRUN_FLAG | self::SETUP_SINGLE_ISSUER
             | self::SETUP_DEFER_TASKRUN | self::SETUP_NO_SQARRAY;
@@ -244,11 +284,13 @@ final class AppRing
         $this->params = $params;
         $fd = $ffi->syscall(self::SYS_SETUP, self::SQ_ENTRIES, FFI::addr($params));
         if ($fd < 0) {
-            throw new RuntimeException("[$name] io_uring_setup failed, errno " . $this->errno() . ' (1 is the seccomp filter: run the container with --seccomp-unconfined)');
+            // 1 is Docker's default seccomp filter (run the container with --seccomp-unconfined), 38 and 95 a kernel without io_uring.
+            throw new RingRefused('setup', $this->errno());
         }
+        $this->fdToClose = $fd;
         $this->ringFd = $fd;
         if (!($params->features & 1)) {
-            throw new RuntimeException("[$name] the kernel does not map both rings at once (IORING_FEAT_SINGLE_MMAP)");
+            throw new RingRefused('single_mmap', 95, 'the kernel does not map both rings at once');
         }
 
         // The submission and completion rings are one mapping.
@@ -256,6 +298,7 @@ final class AppRing
         $ring = $this->map($ringBytes, 0x01 | 0x8000, $fd, 0);
         $this->sqHeadP = $ffi->cast('uint32_t*', $ring + $params->sq_off->head);
         $this->sqTailP = $ffi->cast('uint32_t*', $ring + $params->sq_off->tail);
+        $this->sqFlagsP = $ffi->cast('uint32_t*', $ring + $params->sq_off->flags);
         $this->sqMask = $params->sq_entries - 1;
         $this->cqHeadP = $ffi->cast('uint32_t*', $ring + $params->cq_off->head);
         $this->cqTailP = $ffi->cast('uint32_t*', $ring + $params->cq_off->tail);
@@ -265,10 +308,11 @@ final class AppRing
 
         // The table of direct descriptors.
         $register = $ffi->new('rsrc_register_t');
-        $register->nr = $this->tableSize;
+        // Why 0 entries for the test hook: the kernel answers EINVAL, a real refusal of this step.
+        $register->nr = $this->failStep === 'files' ? 0 : $this->tableSize;
         $register->flags = self::RSRC_REGISTER_SPARSE;
         if ($ffi->syscall(self::SYS_REGISTER, $fd, self::REGISTER_FILES2, FFI::addr($register), FFI::sizeof($register)) < 0) {
-            throw new RuntimeException("[$name] registering a sparse table of {$this->tableSize} files failed, errno " . $this->errno());
+            throw new RingRefused('files', $this->errno(), "a sparse table of {$this->tableSize} files");
         }
 
         // The receive buffers and their ring.
@@ -282,10 +326,11 @@ final class AppRing
         $this->bufTailP = $ffi->cast('uint16_t*', $bufRingMem + 14);
         $reg = $ffi->new('buf_reg_t');
         $reg->ring_addr = $bufRingMem;
-        $reg->ring_entries = $this->recvBuffers;
+        // Why 0 entries for the test hook: the kernel answers EINVAL, a real refusal of this step.
+        $reg->ring_entries = $this->failStep === 'buffer_ring' ? 0 : $this->recvBuffers;
         $reg->bgid = 0;
         if ($ffi->syscall(self::SYS_REGISTER, $fd, self::REGISTER_PBUF_RING, FFI::addr($reg), 1) < 0) {
-            throw new RuntimeException("[$name] registering the buffer ring failed, errno " . $this->errno());
+            throw new RingRefused('buffer_ring', $this->errno());
         }
         for ($bid = 0; $bid < $this->recvBuffers; $bid++) {
             $this->putBuffer($bid);
@@ -314,16 +359,45 @@ final class AppRing
         return $this->errnoP[0];
     }
 
+    /** Gives the kernel's resources back: the ring's mappings, then the ring (and with it its table and its buffer ring). */
+    public function release(): void
+    {
+        foreach ($this->maps as [$address, $bytes]) {
+            $this->ffiAddr->munmap($address, $bytes);
+        }
+        $this->maps = [];
+        if ($this->fdToClose >= 0) {
+            $this->ffi->close($this->fdToClose);
+            $this->fdToClose = -1;
+        }
+    }
+
+    /** True when the kernel has work waiting for an io_uring_enter of ours (read from the submission queue's flags). */
+    public function hasWork(): bool
+    {
+        return ($this->sqFlagsP[0] & self::SQ_TASKRUN) !== 0;
+    }
+
+    /** True when SQEs were queued and no enter has submitted them yet. */
+    public function hasQueued(): bool
+    {
+        return $this->sqTail !== $this->sqHeadSeen;
+    }
+
     /**
-     * An anonymous or ring mapping, as an integer address; fails loudly (MAP_FAILED is -1).
+     * An anonymous or ring mapping, as an integer address; fails loudly (MAP_FAILED is -1). The mappings of the boot are kept to be given
+     * back if a later step of the boot is refused ($boot); the one-off mappings of long responses are the loop's to unmap.
      * Why an integer: FFI::cast('uintptr_t', $pointer) reads 0 for a pointer mmap() returned, and arithmetic on one pointer cast to
      * several types changes the earlier ones, so every pointer here is made with cast('<type>*', <integer address>).
      */
-    private function map(int $bytes, int $flags, int $fd, int $offset): int
+    private function map(int $bytes, int $flags, int $fd, int $offset, bool $boot = true): int
     {
         $address = $this->ffiAddr->mmap(null, $bytes, 3, $flags, $fd, $offset);
         if ($address === -1) {
-            throw new RuntimeException("[{$this->name}] mmap of $bytes bytes failed, errno " . $this->errno());
+            throw new RingRefused('mmap', $this->errno(), "$bytes bytes");
+        }
+        if ($boot) {
+            $this->maps[] = [$address, $bytes];
         }
         return $address;
     }
@@ -405,7 +479,14 @@ final class AppRing
         $s->file_index = $fileIndex;
     }
 
-    public function armAccept(): void
+    /** Arms this ring's multishot accept on the listening socket (all the rings accept from the same one). */
+    public function armAccept(int $listenFd): void
+    {
+        $this->listenFd = $listenFd;
+        $this->armAcceptAgain();
+    }
+
+    private function armAcceptAgain(): void
     {
         // personality, addr3 and pad2 are never written: they stay zero.
         $this->prep(self::OP_ACCEPT, 0, self::ACCEPT_MULTISHOT, $this->listenFd, 0, 0, 0, self::O_NONBLOCK, self::T_ACCEPT, 0, self::FILE_INDEX_ALLOC);
@@ -424,9 +505,10 @@ final class AppRing
         $this->gens[$idx] = $gen;
         unset($this->partial[$idx], $this->inflight[$idx], $this->pend[$idx], $this->closing[$idx], $this->stalled[$idx]);
         $this->open--;
+        $this->totals->open--;
         if ($this->acceptPaused && $this->open < $this->acceptLimit - self::TABLE_MARGIN) {
             $this->acceptPaused = false;
-            $this->armAccept();
+            $this->armAcceptAgain();
         }
         if ($shutdown) {
             $this->prep(self::OP_SHUTDOWN, self::SQE_FIXED_FILE | self::SQE_IO_LINK, 0, $idx, 0, 0, self::SHUT_RDWR, 0,
@@ -495,44 +577,18 @@ final class AppRing
         return true;
     }
 
-    /** The server's loop: one ring, one enter per turn, forever. With $telemetry a `ring:` line is printed each second. */
-    public function run(bool $telemetry): never
+    /** What this ring counted since the process started, by the name the `ring:` line gives it. */
+    public function counters(): array
     {
-        $next = time() + 1;
-        $count = 0;
-        while (true) {
-            $got = $this->turn(1000000000);
-            if ($telemetry && (!$got || (++$count & 63) === 0) && time() >= $next) {
-                $next = time() + 1;
-                if (($line = $this->statsLine()) !== null) {
-                    echo $line, "\n";
-                }
-            }
-        }
-    }
-
-    /**
-     * One `ring:` line: what the loop did since the last one (`open` and `slots_in_use` are the values now). Requests per turn is the
-     * number the ring's cost per request depends on. Null when nothing happened.
-     */
-    public function statsLine(): ?string
-    {
-        $now = ['turns' => $this->turns, 'flushes' => $this->flushes, 'cqes' => $this->cqes, 'requests' => $this->requests, 'accepted' => $this->accepted,
+        return ['turns' => $this->turns, 'flushes' => $this->flushes, 'cqes' => $this->cqes, 'requests' => $this->requests, 'accepted' => $this->accepted,
             'accept_pauses' => $this->acceptPauses, 'short_sends' => $this->shortSends, 'big_sends' => $this->bigSends, 'send_waits' => $this->sendWaits,
             'recv_dry' => $this->recvDry, 'stalls' => $this->stalls, 'limit_closes' => $this->limitCloses];
-        $d = [];
-        foreach ($now as $k => $v) {
-            $d[$k] = $v - ($this->statsLast[$k] ?? 0);
-        }
-        $this->statsLast = $now;
-        if ($d['turns'] === 0 && $d['accepted'] === 0) {
-            return null;
-        }
-        $busy = $d['requests'] > 0 ? $d['turns'] : 0;
-        return sprintf('ring: turns=%d requests=%d cqes=%d flushes=%d accepted=%d open=%d accept_pauses=%d short_sends=%d big_sends=%d send_waits=%d recv_dry=%d stalls=%d limit_closes=%d slots_in_use=%d requests_per_turn=%s cqes_per_turn=%s',
-            $d['turns'], $d['requests'], $d['cqes'], $d['flushes'], $d['accepted'], $this->open, $d['accept_pauses'], $d['short_sends'], $d['big_sends'],
-            $d['send_waits'], $d['recv_dry'], $d['stalls'], $d['limit_closes'], $this->sendSlots - $this->freeCount,
-            $busy > 0 ? sprintf('%.2f', $d['requests'] / $busy) : 'n/a', $d['turns'] > 0 ? sprintf('%.2f', $d['cqes'] / $d['turns']) : 'n/a');
+    }
+
+    /** Send slots in use now (a value, not a count). */
+    public function slotsInUse(): int
+    {
+        return $this->sendSlots - $this->freeCount;
     }
 
     private function onAccept(int $res, int $flags): void
@@ -540,6 +596,7 @@ final class AppRing
         if ($res >= 0) {
             $this->accepted++;
             $this->open++;
+            $this->totals->open++;
             $this->armRecv($res);
             // Why a limit below the table's size: an accept that finds the table full has already taken the connection off the listening
             // queue, and the kernel drops it (the client sees the connection closed). So the accept is cancelled while there is still room,
@@ -564,7 +621,7 @@ final class AppRing
             return;
         }
         if (!($flags & self::CQE_F_MORE) && !$this->acceptPaused) {
-            $this->armAccept();
+            $this->armAcceptAgain();
         }
     }
 
@@ -716,7 +773,7 @@ final class AppRing
         $len = strlen($data);
         if ($len > self::SLOT_SIZE) {
             $bytes = intdiv($len + self::PAGE - 1, self::PAGE) * self::PAGE;
-            $addr = $this->map($bytes, 0x02 | 0x20, -1, 0);
+            $addr = $this->map($bytes, 0x02 | 0x20, -1, 0, false);
             FFI::memcpy($this->ffi->cast('uint8_t*', $addr), $data, $len);
             $slot = $this->sendSlots + $this->bigSeq++;
             $this->bigMaps[$slot] = [$addr, $bytes];
@@ -791,7 +848,7 @@ final class AppRing
                 fwrite(STDERR, 'ring-server: the handler failed: ' . get_class($e) . ': ' . $e->getMessage() . "\n");
                 [$status, $payload] = [500, self::INTERNAL_ERROR];
             }
-            if ($this->softLimit !== null && $this->open > $this->softLimit) {
+            if ($this->softLimit !== null && $this->totals->open > $this->softLimit) {
                 $out .= self::HEAD[$status] . strlen($payload) . "\r\nConnection: close\r\n\r\n" . $payload;
                 $this->limitCloses += (int) !$this->closeAfter;
                 $this->closing[$idx] = true;
@@ -867,6 +924,141 @@ final class AppRing
     }
 }
 
+/**
+ * The rings of one process and the loop that serves them. One ring: one io_uring_enter per turn, waiting up to a second (so the statistics
+ * line comes out when the server is idle). Several: the wait is on the ring that had completions in the last turn, short, and in the same
+ * turn every other ring is entered when its IORING_SQ_TASKRUN flag says the kernel has work for it, or when it has SQEs queued: no ring's
+ * work waits on an idle ring beyond that short wait. Why the wait is short: a ring's deferred work (a connection arriving, a receive that
+ * completed) runs only inside an io_uring_enter of that ring, so what happens on another ring while the loop sleeps on one is seen when
+ * its wait ends.
+ */
+final class RingLoop
+{
+    private const WAIT_NS = 500000;
+    private const IDLE_WAIT_NS = 1000000000;
+
+    /** @var list<array<string, int>> each ring's counters at the previous `ring:` line */
+    private array $last = [];
+
+    /** @param list<AppRing> $rings */
+    public function __construct(public readonly FFI $ffi, public readonly FFI $ffiAddr, private readonly array $rings, private readonly RingTotals $totals)
+    {
+    }
+
+    public function count(): int
+    {
+        return count($this->rings);
+    }
+
+    /** The `loop:` line's text, from the number of rings (`ring, 1 ring`, `ring, 3 rings`). */
+    public function loopLine(): string
+    {
+        $n = count($this->rings);
+        return "ring, $n ring" . ($n > 1 ? 's' : '');
+    }
+
+    /** The pools of a ring, for the boot line (every ring has the same ones). */
+    public function describe(): string
+    {
+        return $this->rings[0]->describe();
+    }
+
+    public function armAccept(int $listenFd): void
+    {
+        foreach ($this->rings as $ring) {
+            $ring->armAccept($listenFd);
+        }
+    }
+
+    public function release(): void
+    {
+        foreach ($this->rings as $ring) {
+            $ring->release();
+        }
+    }
+
+    /** Serves forever. With $telemetry a `ring:` line is printed each second. */
+    public function run(bool $telemetry): never
+    {
+        $rings = $this->rings;
+        $n = count($rings);
+        $active = 0;
+        $next = time() + 1;
+        $count = 0;
+        while (true) {
+            $got = $activeGot = $rings[$active]->turn($n === 1 ? self::IDLE_WAIT_NS : self::WAIT_NS);
+            if ($n > 1) {
+                $moved = -1;
+                for ($i = 0; $i < $n; $i++) {
+                    if ($i === $active || !($rings[$i]->hasWork() || $rings[$i]->hasQueued())) {
+                        continue;
+                    }
+                    // Why a loop: a turn that handled completions queued more SQEs, which only the next enter of that ring submits.
+                    do {
+                        $more = $rings[$i]->turn(0);
+                        if ($more) {
+                            $moved = $i;
+                        }
+                    } while ($more);
+                }
+                if ($moved >= 0) {
+                    $got = true;
+                    // The ring to block on next: the one that had completions; the same one when it still does.
+                    if (!$activeGot) {
+                        $active = $moved;
+                    }
+                }
+            }
+            if ($telemetry && (!$got || (++$count & 63) === 0) && time() >= $next) {
+                $next = time() + 1;
+                if (($line = $this->statsLine()) !== null) {
+                    echo $line, "\n";
+                }
+            }
+        }
+    }
+
+    /**
+     * One `ring:` line: what the loop did since the last one, all rings added (`open` and `slots_in_use` are the values now). Requests per turn is
+     * the number the ring's cost per request depends on. With several rings each one's open connections, turns and requests per turn follow
+     * (`ring0_open=`...). Null when nothing happened.
+     */
+    public function statsLine(): ?string
+    {
+        $d = [];
+        $perRing = [];
+        foreach ($this->rings as $i => $ring) {
+            $now = $ring->counters();
+            foreach ($now as $k => $v) {
+                $diff = $v - ($this->last[$i][$k] ?? 0);
+                $perRing[$i][$k] = $diff;
+                $d[$k] = ($d[$k] ?? 0) + $diff;
+            }
+            $this->last[$i] = $now;
+        }
+        if ($d['turns'] === 0 && $d['accepted'] === 0) {
+            return null;
+        }
+        $slots = 0;
+        foreach ($this->rings as $ring) {
+            $slots += $ring->slotsInUse();
+        }
+        $busy = $d['requests'] > 0 ? $d['turns'] : 0;
+        $line = sprintf('ring: turns=%d requests=%d cqes=%d flushes=%d accepted=%d open=%d accept_pauses=%d short_sends=%d big_sends=%d send_waits=%d recv_dry=%d stalls=%d limit_closes=%d slots_in_use=%d requests_per_turn=%s cqes_per_turn=%s',
+            $d['turns'], $d['requests'], $d['cqes'], $d['flushes'], $d['accepted'], $this->totals->open, $d['accept_pauses'], $d['short_sends'], $d['big_sends'],
+            $d['send_waits'], $d['recv_dry'], $d['stalls'], $d['limit_closes'], $slots,
+            $busy > 0 ? sprintf('%.2f', $d['requests'] / $busy) : 'n/a', $d['turns'] > 0 ? sprintf('%.2f', $d['cqes'] / $d['turns']) : 'n/a');
+        if (count($this->rings) > 1) {
+            foreach ($this->rings as $i => $ring) {
+                $r = $perRing[$i];
+                $line .= sprintf(' ring%d_open=%d ring%d_turns=%d ring%d_requests=%d ring%d_requests_per_turn=%s', $i, $ring->open, $i, $r['turns'], $i, $r['requests'], $i,
+                    $r['requests'] > 0 && $r['turns'] > 0 ? sprintf('%.2f', $r['requests'] / $r['turns']) : 'n/a');
+            }
+        }
+        return $line;
+    }
+}
+
 /** The listening socket as a plain descriptor (the ring accepts from it): non-blocking, TCP_NODELAY (inherited by what it accepts). */
 function ring_listen(FFI $ffi, string $address, int $port, int $backlog): int
 {
@@ -911,22 +1103,30 @@ function ring_env_int(string $name, int $default, int $min, int $max): int
 }
 
 /**
- * Boots the loop on the global handler_handle() and runs it: never returns. Prints the boot lines the lab's scripts read: `listening on`,
- * `loop: ring, 1 ring`, `ring-settings:` (the pools) and `socket:`. $afterListening is called once the ring is up, to print what the caller adds
- * (the app's soft limit and variants); the boot lines the harnesses wait on come last.
+ * Builds the rings: the whole of the boot that asks the kernel for something (setup with its flags, the table of direct descriptors, the buffer
+ * ring, for every ring). Nothing listens yet. A step the kernel refuses throws RingRefused, with every ring built so far given back.
+ * Test hook URING_FAIL_STEP=files|buffer_ring: that step asks the kernel for something it refuses, on the last ring (the ones before it
+ * were built, so the give-back is exercised).
  *
- * @param ?int $softLimit see AppRing's `soft_limit`
- * @param ?Closure(): void $afterListening called between the listening line and the loop line
+ * @param ?int $softLimit see AppRing's `soft_limit`; it counts the open connections of all the rings together
+ * @throws RingRefused
  */
-function ring_serve(string $host, int $port, ?int $softLimit, bool $telemetry, ?Closure $afterListening = null): never
+function ring_open(int $count, ?int $softLimit): RingLoop
 {
-    $backlog = 4096;
     $recvBuffers = ring_env_int('URING_RECV_BUFFERS', 4096, 2, 32768);
     if (($recvBuffers & ($recvBuffers - 1)) !== 0) {
         fwrite(STDERR, "ring-server: URING_RECV_BUFFERS must be a power of two, got $recvBuffers\n");
         exit(1);
     }
     $sendSlots = ring_env_int('URING_SEND_SLOTS', 2048, 1, 8192);
+    $tableSize = ring_env_int('URING_TABLE_SIZE', 65535, 32, 65535);
+    $failStep = getenv('URING_FAIL_STEP');
+    if ($failStep === false || $failStep === '') {
+        $failStep = null;
+    } elseif (!in_array($failStep, ['files', 'buffer_ring'], true)) {
+        fwrite(STDERR, "ring-server: URING_FAIL_STEP must be files or buffer_ring, got '$failStep'\n");
+        exit(1);
+    }
     $ffi = FFI::cdef(file_get_contents(__DIR__ . '/ring-server.h'), 'libc.so.6');
     $ffiAddr = FFI::cdef("intptr_t mmap(void *addr, size_t length, int prot, int flags, int fd, long offset);\nint munmap(intptr_t addr, size_t length);", 'libc.so.6');
     foreach (['sqe_t' => 64, 'params_t' => 120, 'rsrc_register_t' => 32, 'buf_reg_t' => 40, 'buf_t' => 16, 'getevents_arg_t' => 24, 'timespec_t' => 16] as $type => $size) {
@@ -935,20 +1135,54 @@ function ring_serve(string $host, int $port, ?int $softLimit, bool $telemetry, ?
             exit(1);
         }
     }
-    $listenFd = ring_listen($ffi, $host, $port, $backlog);
+    $totals = new RingTotals();
+    $rings = [];
     try {
-        $ring = new AppRing($ffi, $ffiAddr, $listenFd, 'ring0', ['recv_buffers' => $recvBuffers, 'send_slots' => $sendSlots, 'soft_limit' => $softLimit]);
+        for ($i = 0; $i < $count; $i++) {
+            $rings[] = new AppRing($ffi, $ffiAddr, 'ring' . $i, $totals, ['recv_buffers' => $recvBuffers, 'send_slots' => $sendSlots, 'table_size' => $tableSize,
+                'soft_limit' => $softLimit, 'fail_step' => $i === $count - 1 ? $failStep : null]);
+        }
+    } catch (RingRefused $e) {
+        foreach ($rings as $built) {
+            $built->release();
+        }
+        throw $e;
     } catch (RuntimeException $e) {
         fwrite(STDERR, 'ring-server: ' . $e->getMessage() . "\n");
         exit(1);
     }
-    $ring->armAccept();
+    return new RingLoop($ffi, $ffiAddr, $rings, $totals);
+}
+
+/** ring_open() for a caller with no other loop to fall back to: a refusal ends the process with its message. */
+function ring_open_or_exit(int $count, ?int $softLimit): RingLoop
+{
+    try {
+        return ring_open($count, $softLimit);
+    } catch (RingRefused $e) {
+        fwrite(STDERR, "ring-server: io_uring refused: {$e->getMessage()} (errno 1 is Docker's seccomp filter: run the container with --seccomp-unconfined)\n");
+        exit(1);
+    }
+}
+
+/**
+ * Listens and runs the rings on the global handler_handle(): never returns. Prints the boot lines the lab's scripts read: `listening on`,
+ * `loop: ring, <n> ring(s)`, `ring-settings:` (the pools) and `socket:`. $afterListening is called once the rings are up, to print what the
+ * caller adds (the app's soft limit and variants); the boot lines the harnesses wait on come last.
+ *
+ * @param ?Closure(): void $afterListening called between the listening line and the loop line
+ */
+function ring_serve(RingLoop $loop, string $host, int $port, bool $telemetry, ?Closure $afterListening = null): never
+{
+    $backlog = 4096;
+    $listenFd = ring_listen($loop->ffi, $host, $port, $backlog);
+    $loop->armAccept($listenFd);
     echo "listening on $host:$port\n";
     if ($afterListening !== null) {
         $afterListening();
     }
-    echo "loop: ring, 1 ring\n";
-    echo 'ring-settings: ' . $ring->describe() . "\n";
+    echo 'loop: ' . $loop->loopLine() . "\n";
+    echo 'ring-settings: ' . $loop->describe() . "\n";
     echo "socket: backlog=$backlog tcp_nodelay=1\n";
-    $ring->run($telemetry);
+    $loop->run($telemetry);
 }

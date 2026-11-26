@@ -20,10 +20,15 @@
 // boot with `APP_LOOP must be one of nolock, changelist, poll`, and
 // APP_DRIVER=pdo|ffi (off by default; ffi reads only and boots only with APP_DRIVER_BENCH=1, for the micro bench: lab/app/sqlite-ffi.php), and
 // APP_RING=1 (off by default): the app is served by our own io_uring loop in PHP through FFI instead of ext-event's (lab/servers/ring-server.php),
-// one process and one ring. It needs no `event` extension, runs only where Docker's seccomp filter is lifted (`--seccomp-unconfined`), prints
-// `loop: ring, 1 ring`, and with APP_TELEMETRY=1 a `ring:` line a second. It replaces S1-b's processes and the loop's own switches, so it is
-// refused at boot with APP_WORKERS of 2 or more, APP_GROUP_COMMIT=1, APP_CHECKPOINTER, APP_PROFILE and APP_LOOP. APP_SOFT_CONN_LIMIT works as
-// on the DIY loop.
+// one process and APP_RINGS rings (1 to 4, default 1; each ring's table of connections is as large as the process's open-file limit, 65,535 at
+// most, so three rings hold about 196,000 connections with a handful of file descriptors). It runs only where Docker's seccomp filter is
+// lifted (`--seccomp-unconfined`) and the kernel has io_uring, prints `loop: ring, 1 ring` (`ring, 3 rings`), and with APP_TELEMETRY=1 a `ring:`
+// line a second. It replaces S1-b's processes and the loop's own switches, so it is refused at boot with APP_WORKERS of 2 or more,
+// APP_GROUP_COMMIT=1, APP_CHECKPOINTER, APP_PROFILE and APP_LOOP. APP_SOFT_CONN_LIMIT counts the connections of all the rings together.
+// When the kernel refuses a step of the ring's boot (EPERM under Docker's default filter, ENOSYS, EINVAL, EMFILE) the server prints
+// `loop: epoll (io_uring refused: <step> <errno>)` and runs the DIY loop as S1-b does with APP_WORKERS=2 (what phase 7 ships: two processes,
+// a soft limit of 64,000 each, or APP_SOFT_CONN_LIMIT when it is lower): it needs `--ext pcntl --ext event` then, and never switches later.
+// APP_RINGS is refused without APP_RING=1.
 //
 // It starts with the extensions loaded in this order: `--ext sockets --ext event`. It listens only once the database is open.
 // lab/challenge-test.sh starts it on a fresh copy of the seed.
@@ -37,7 +42,12 @@ if ($useRing !== '' && $useRing !== '0' && $useRing !== '1') {
     exit(1);
 }
 $useRing = $useRing === '1';
+$ringFallback = null;
 if (!$useRing) {
+    if ((string) getenv('APP_RINGS') !== '') {
+        fwrite(STDERR, "server: APP_RINGS needs APP_RING=1\n");
+        exit(1);
+    }
     require __DIR__ . '/../servers/diy-server.php';
     require __DIR__ . '/../servers/diy-telemetry.php';
     require __DIR__ . '/../servers/diy-profile.php';
@@ -83,19 +93,39 @@ if ($useRing) {
         exit(1);
     }
     require __DIR__ . '/../servers/ring-server.php';
-    app_boot($path, $secret, $variants);
-    ring_serve($host, $port, $softLimit, getenv('APP_TELEMETRY') === '1', static function () use ($softLimit, $variants): void {
-        if ($softLimit !== null) {
-            echo "soft connection limit: $softLimit\n";
-        }
-        if ($variants !== app_variants([])) {
-            echo 'app variants: feed_sql=' . $variants['feed_sql'] . ' fetch=' . $variants['fetch'] . ' json=' . $variants['json'] . ' pragmas=' . $variants['pragmas'] . ' locking=' . $variants['locking']
-                . ' group_commit=off checkpointer=off' . "\n";
-        }
-        if (($driverLine = app_driver_line($variants)) !== null) {
-            echo "$driverLine\n";
-        }
-    });
+    $ringCount = ring_env_int('APP_RINGS', 1, 1, 4);
+    // Why the whole init before anything else: a refusal must decide the loop before the database is opened and before a socket listens.
+    // Why the try around nothing but the init: a refusal after the server runs is a crash, never a silent switch of loop.
+    $ringLoop = null;
+    try {
+        $ringLoop = ring_open($ringCount, $softLimit);
+    } catch (RingRefused $e) {
+        $ringFallback = 'io_uring refused: ' . $e->step . ' ' . $e->errnoValue;
+    }
+    if ($ringLoop !== null) {
+        app_boot($path, $secret, $variants);
+        ring_serve($ringLoop, $host, $port, getenv('APP_TELEMETRY') === '1', static function () use ($softLimit, $variants): void {
+            if ($softLimit !== null) {
+                echo "soft connection limit: $softLimit\n";
+            }
+            if ($variants !== app_variants([])) {
+                echo 'app variants: feed_sql=' . $variants['feed_sql'] . ' fetch=' . $variants['fetch'] . ' json=' . $variants['json'] . ' pragmas=' . $variants['pragmas'] . ' locking=' . $variants['locking']
+                    . ' group_commit=off checkpointer=off' . "\n";
+            }
+            if (($driverLine = app_driver_line($variants)) !== null) {
+                echo "$driverLine\n";
+            }
+        });
+    }
+    if (!extension_loaded('pcntl') || !extension_loaded('event') || !function_exists('posix_kill')) {
+        fwrite(STDERR, "server: $ringFallback, and the epoll loop it falls back to needs ext-pcntl, ext-posix and ext-event (start with --ext sockets --ext event --ext pcntl)\n");
+        exit(1);
+    }
+    require __DIR__ . '/../servers/diy-server.php';
+    require __DIR__ . '/../servers/diy-telemetry.php';
+    require __DIR__ . '/../servers/diy-profile.php';
+    $workers = 2;
+    $softLimit = min($softLimit ?? 64000, 64000);
 }
 $loopPreset = getenv('APP_LOOP');
 if ($loopPreset === false || $loopPreset === '') {
@@ -130,7 +160,7 @@ if ($workers >= 2) {
             $server->run();
             exit(0);
         },
-        static function (array $pids, string $loop, string $socket) use ($host, $port, $softLimit, $variants, $workers): void {
+        static function (array $pids, string $loop, string $socket) use ($host, $port, $softLimit, $variants, $workers, $ringFallback): void {
             echo "workers: $workers (pids " . implode(' ', $pids) . ")\n";
             echo "listening on $host:$port\n";
             if ($softLimit !== null) {
@@ -143,7 +173,7 @@ if ($workers >= 2) {
             if (($driverLine = app_driver_line($variants)) !== null) {
                 echo "$driverLine\n";
             }
-            echo "loop: $loop\n";
+            echo "loop: $loop" . ($ringFallback === null ? '' : " ($ringFallback)") . "\n";
             echo "$socket\n";
         }
     ));

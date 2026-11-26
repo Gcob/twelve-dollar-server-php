@@ -11,12 +11,17 @@
 #                         [--server <php file under lab/ or submissions/>] [--ext <name>]... [--env K=V]... [--label <text>]
 #                         [--warmup <req/s>,<seconds>] [--vu-cap <n>] [--ramp <s>] [--out <path>] [--port <n>]
 #                         [--local-ips <range>] [--lag-gate <s>] [--k6-memory <MiB>] [--calibrate-vus <a>,<b>] [--calibrate-seconds <s>]
-#                         [--profile <collapsed stacks file>] [--seccomp-unconfined]
+#                         [--profile <collapsed stacks file>] [--seccomp-unconfined] [--server-nofile <n>]
 #
+# --server-nofile <n> replaces the server container's `nofile` limit (65,535 in the lab) for this run: the app on rings (`APP_RING=1`) sizes each
+# ring's table of connections by it, so `--server-nofile 32768` makes the first 60,000 idle connections span two rings.
 # --seccomp-unconfined starts the server container without Docker's default seccomp filter, which refuses io_uring (the server of the 8.5-uring
-# image, lab/servers/swoole-co.php, and the app on a ring, `--env APP_RING=1`, need it). The JSON's `server.loop` is the `loop: ...` line the server
-# printed at boot (null when it printed none); `server.ring` is what its `ring:` lines (APP_RING=1 with the telemetry on) counted over the seconds that served
-# requests: turns, requests, requests per turn, short and big sends, send waits, dry receives, stalls (null for any other server).
+# image, lab/servers/swoole-co.php, and the app on a ring, `--env APP_RING=1`, need it).
+# The JSON's `server.loop` is the `loop: ...` line the server printed at boot (null when it printed none) and `server.nofile` its open-file
+# limit; `server.ring` is what its `ring:` lines (APP_RING=1 with the telemetry on) counted over the seconds that served requests: turns, requests,
+# requests per turn, short and big sends, send waits, dry receives, stalls, and with several rings `per_ring` (each ring's open connections at the
+# end, turns, requests and requests per turn); `server.ring.loaded` counts the same over the steady seconds, those that served 1,000 requests or more
+# and took at most 500 new connections (the plateau without the seconds of the idle connections opening and of the warm-up). Null for any other server.
 #
 # The numbers of the journey: 2.17 requests per loop (1 + 1 + 0.15 + 0.02), 20.5 s of mean think time per loop (5 + 5.5 + 10), so one
 # VU offers 2.17 / (20.5 * scale) req/s, and a steady load is 9.45 users per req/s (20.5 / 2.17). Users are always mapped from the
@@ -105,7 +110,7 @@ usage: lab/realistic.sh --image <variant> (--staircase <from>,<step>,<to>,<s> | 
                         [--server <php file under lab/ or submissions/>] [--php-ini <php.ini under lab/>] [--ext <name>]... [--env K=V]... [--label <text>]
                         [--warmup <rate>,<s>] [--vu-cap <n>] [--ramp <s>] [--out <path>] [--port <n>] [--local-ips <range>] [--lag-gate <s>] [--k6-memory <MiB>]
                         [--calibrate-vus <a>,<b>] [--calibrate-seconds <s>] [--idle <n>] [--cold] [--no-series]
-                        [--profile <collapsed stacks file>] [--seccomp-unconfined]
+                        [--profile <collapsed stacks file>] [--seccomp-unconfined] [--server-nofile <n>]
 rates are in req/s, <s> is the seconds of one plateau; --think-scale is the share of the bench's think time (default 1)
 EOF
   exit 2
@@ -151,6 +156,10 @@ while [ "$#" -gt 0 ]; do
     --calibrate-seconds) calibrate_seconds="$2" ;;
     --idle) idle="$2" ;;
     --profile) profile_out="$2" ;;
+    --server-nofile)
+      [[ "$2" =~ ^[1-9][0-9]*$ ]] || { echo "--server-nofile must be a whole number above 0, got '$2'" >&2; usage; }
+      export LAB_SERVER_NOFILE="$2"
+      ;;
     *) echo "unknown option: $1" >&2; usage ;;
   esac
   shift 2
@@ -337,6 +346,8 @@ server_fds="$(probe fds "$server_id" | lines_to_json | jq '.fds.open')"
 # Why disable SC2034: sampler_start (series.sh) reads server_pid.
 # shellcheck disable=SC2034
 server_pid="$(docker inspect -f '{{.State.Pid}}' "$SERVER")"
+# The open-file limit the server runs under, read from outside (the probe sees every process): the app on rings sizes its tables by it.
+server_nofile="$(docker exec "$PROBE" awk '/^Max open files/ {print $4}' "/proc/$server_pid/limits")"
 
 # The VM's state before the load (the server has booted and its copy of the seed is written; nothing else of the run has started): load, CPU
 # busy and steal over 5 s, then the disk. Read from the probe container, which sees the VM's /proc and the same container layers the server's copy
@@ -716,12 +727,25 @@ if [ "$telemetry_value" = 1 ]; then
   sleep 1.2
   # The ring server's `ring:` lines (APP_RING=1, lab/servers/ring-server.php): the seconds that served requests, added up. Null for any other server.
   ring_counts="$(docker logs "$SERVER" 2>&1 | sed -n 's/^ring: //p' | jq -Rnc '
+    # What a set of seconds of `ring:` lines counted: the totals, and with several rings (ring0_open=, ring0_turns=, ring0_requests=) each ring.
+    def sum($lines; $key): $lines | map(.[$key]) | add;
+    def counted($lines):
+      ([$lines[0] | keys[] | select(test("^ring[0-9]+_requests$")) | capture("^ring(?<n>[0-9]+)_").n | tonumber] | sort) as $ids
+      | sum($lines; "turns") as $turns | sum($lines; "requests") as $requests
+      | {seconds: ($lines | length), turns: $turns, requests: $requests, requests_per_turn: ($requests / $turns * 100 | round / 100),
+         short_sends: sum($lines; "short_sends"), big_sends: sum($lines; "big_sends"), send_waits: sum($lines; "send_waits"),
+         recv_dry: sum($lines; "recv_dry"), stalls: sum($lines; "stalls"), limit_closes: sum($lines; "limit_closes")}
+        + (if ($ids | length) == 0 then {} else {per_ring: ($ids | map(. as $i
+            | sum($lines; "ring\($i)_turns") as $t | sum($lines; "ring\($i)_requests") as $r
+            | {ring: $i, open_at_end: ($lines | last | .["ring\($i)_open"]), turns: $t, requests: $r,
+               requests_per_turn: (if $t > 0 and $r > 0 then ($r / $t * 100 | round / 100) else null end)}))} end);
     [inputs | split(" ") | map(split("=") | select(length == 2) | {(.[0]): (.[1] | tonumber? // .)}) | add | select(.requests > 0)] as $busy
     | if ($busy | length) == 0 then null
-      else ($busy | map(.turns) | add) as $turns | ($busy | map(.requests) | add) as $requests
-        | {busy_seconds: ($busy | length), turns: $turns, requests: $requests, requests_per_turn: ($requests / $turns * 100 | round / 100),
-           short_sends: ($busy | map(.short_sends) | add), big_sends: ($busy | map(.big_sends) | add), send_waits: ($busy | map(.send_waits) | add),
-           recv_dry: ($busy | map(.recv_dry) | add), stalls: ($busy | map(.stalls) | add), limit_closes: ($busy | map(.limit_closes) | add)} end')"
+      else counted($busy) + {busy_seconds: ($busy | length)}
+        # Why also the steady seconds (1,000 requests or more and at most 500 new connections): the seconds of the idle connections opening
+        # (each one is an accept, a receive and a send of its own, one request a turn at most) and of the warm-up would pull the requests per
+        # turn of the plateau down.
+        + {loaded: ([$busy[] | select(.requests >= 1000 and .accepted <= 500)] as $loaded | if ($loaded | length) == 0 then null else counted($loaded) end)} end')"
   conn_counts="$(docker logs "$SERVER" 2>&1 | sed -n 's/^telemetry //p' | jq -Rnc '
     [inputs | fromjson?] as $l
     | [$l[] | .connections // empty] as $c
@@ -751,7 +775,7 @@ jq -n \
   --arg variant "$image" --arg image_id "$(docker image inspect -f '{{.Id}}' "$LAB_IMAGE:$image")" --arg php_version "$php_version" \
   --arg server_file "${server_in#/lab/}" --arg flags "${LAB_PHP_FLAGS[*]}" --argjson port "$port" --arg label "$label" \
   --argjson ext "$(json_array "${LAB_EXT[@]}")" --argjson env "$(json_array "${LAB_ENV[@]+"${LAB_ENV[@]}"}")" \
-  --arg socket_line "$socket_line" --arg loop_line "$loop_line" --argjson server_fds "$server_fds" --argjson other_containers "$other_json" \
+  --arg socket_line "$socket_line" --arg loop_line "$loop_line" --argjson server_fds "$server_fds" --arg server_nofile "$server_nofile" --argjson other_containers "$other_json" \
   --argjson host_before "$host_before" --argjson host_plateau "$host_plateau" --argjson host_fsync "$host_fsync" \
   --argjson think_scale "$think_scale" --argjson per_vu_rate "$per_vu_rate" --argjson users_per_rps "$USERS_PER_RPS" \
   --argjson ramp "$ramp" --argjson plateau "$plateau" --argjson vu_cap "$vu_cap" --arg warmup "$warmup" \
@@ -777,7 +801,7 @@ jq -n \
           + (if $host_plateau == null then {plateau_reason: "no step reached its plateau, or the probe container could not read /proc/loadavg or /proc/stat during it"} else {} end)
           + (if $host_fsync == null then {fsync_reason: "the probe container could not write and fdatasync its file"} else {} end)),
     server: {variant: $variant, image_id: $image_id, php_version: $php_version, file: $server_file, port: $port, php_flags: $flags,
-             ext: $ext, env: $env, fds_open_at_boot: $server_fds,
+             ext: $ext, env: $env, fds_open_at_boot: $server_fds, nofile: ($server_nofile | tonumber? // $server_nofile),
              socket: (if $socket_line == "" then null else $socket_line end), loop: (if $loop_line == "" then null else $loop_line end), ring: $ring_counts},
     load: {think_scale: $think_scale, per_vu_rate_rps: $per_vu_rate, users_per_rps: $users_per_rps, ramp_s: $ramp, plateau_s: $plateau,
            vus: $steps_vus, vu_cap: $vu_cap, vu_cap_bound_by: $vu_cap_bound_by, warmup: (if $warmup == "" then null else $warmup end),
@@ -829,7 +853,9 @@ fi
 jq -r '"k6 connection errors: \(.k6_connection_errors)" + (if (.k6_error_codes | length) > 0 then " (k6 error codes: \(.k6_error_codes | to_entries | map("\(.key) x \(.value)") | join(", ")))" else "" end)' "$out"
 jq -r '.cold | "database copy in the page cache when the server opened it (fincore): \(.resident_bytes) of \(.size_bytes) bytes, \(.resident_share * 100 | round) %, --cold \(if .requested then "on" else "off" end)"' "$out"
 jq -r '.server_connections | "server connections: soft limit \(.soft_limit // "off"), " + (if .telemetry == null then "no telemetry" else "\(.telemetry.close_responses) Connection: close responses, \(.telemetry.accept_pauses) accept pauses, \(.telemetry.open_peak) open at most" + (if .telemetry.processes == null then "" else " (\(.telemetry.open_peak_note), \(.telemetry.processes) processes)" end) end) + ", file descriptors peak \(.fds_peak // .fds_peak_note)"' "$out"
-jq -r '.server.ring | select(. != null) | "ring: \(.requests) requests in \(.turns) turns over \(.busy_seconds) busy seconds, \(.requests_per_turn) requests per turn, \(.short_sends) short sends, \(.big_sends) big sends, \(.send_waits) send waits, \(.recv_dry) dry receives, \(.stalls) stalls"' "$out"
+jq -r '.server.ring | select(. != null) | def per_ring: if .per_ring == null then "" else " (" + (.per_ring | map("ring \(.ring): \(.requests) requests in \(.turns) turns, \(.requests_per_turn // "n/a") per turn") | join("; ")) + ")" end;
+  "ring: \(.requests) requests in \(.turns) turns over \(.busy_seconds) busy seconds, \(.requests_per_turn) requests per turn, \(.short_sends) short sends, \(.big_sends) big sends, \(.send_waits) send waits, \(.recv_dry) dry receives, \(.stalls) stalls\(per_ring)",
+  (.loaded | select(. != null) | "ring, steady seconds (\(.seconds)): \(.requests) requests in \(.turns) turns, \(.requests_per_turn) requests per turn\(per_ring)")' "$out"
 jq -r 'select(.idle != null) | .idle | "idle connections: \(.requested) requested, \(.held_at_start) held at the start and \(.held_at_end) at the end, \(.closed_by_server_at_end) closed by the server; the server counted \(.server_established_at_start) and \(.server_established_at_end) established, \(.server_fds_open_with_idle) file descriptors open with them",
   "idle client memory: \(.client.memory_current_mib_at_end) MiB memory.current at the end (peak \(.client.memory_peak_mib), anon \(.client.anon_mib), kernel \(.client.kernel_mib), socket buffers \(.client.socket_buffers_mib)), the process RSS \(.client.rss_mib) MiB after opening them, opened in \(.seconds_to_open) s from \(.source_addresses | length) source addresses"' "$out"
 jq -r '.host | def n: if . == null then "not read" else tostring end; "host: load1 \(.before.load1 | n) before the warm-up and \(.plateau.load1 | n) on the plateau (load5 \(.before.load5 | n) and \(.plateau.load5 | n)), CPU busy \(.before.cpu_busy_pct | n) % and \(.plateau.cpu_busy_pct | n) %, steal \(.before.steal_pct | n) % and \(.plateau.steal_pct | n) %, fsync \(.fsync_ms | n) ms, \(.other_containers) other containers"' "$out"
