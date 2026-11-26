@@ -25,7 +25,10 @@ AWS sessions (scopes 6 and 9): they wait for you, and nothing local waits on the
 
 Phase 8 judges each lever by its µs per request against phase 7's submission, in the step lab's pairs (D51). Your
 containers are stopped since 15:20, so the Mac's VM is quiet now. But the Mac is arm64: S1-b cost 8.6 % there and
-14.8 % on the Xeon, and the ring's gain is in the same place (the kernel's share and the second process).
+14.8 % on the Xeon, and the ring's gain is in the same place (the kernel's share and the second process). **New since
+the plan (scope 5, 18:15):** at the real shape on the Mac, the ring and phase 7's server cost the same (three smoke
+pairs: −1.0, +0.1, −0.3 µs/req, about 32.5 µs/req each). So the Mac can't tell them apart: if the ring wins, it wins on
+x86.
 
 **Question:** where do the pairs run?
 
@@ -40,10 +43,10 @@ containers are stopped since 15:20, so the Mac's VM is quiet now. But the Mac is
   **For:** no extra session, no cost. **Against:** the levers are decided on arm64, which may understate the ring's
   gain, and a lever that only wins on x86 could be dropped.
 
-**Confidence:** A 80 % · B 20 %
+**Confidence:** A 85 % · B 15 %
 
 **Recommendation:** A, because the ring's gain is in the kernel and the second process, which cost almost twice as much
-on the Xeon as on the M3, and the session is cheap.
+on the Xeon as on the M3, the Mac already shows the two at par, and the session is cheap.
 
 **Flips if:** you'd rather keep AWS to the one score session, and the Mac can stay quiet for an afternoon.
 
