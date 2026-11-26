@@ -14,7 +14,9 @@
 #                         [--profile <collapsed stacks file>] [--seccomp-unconfined]
 #
 # --seccomp-unconfined starts the server container without Docker's default seccomp filter, which refuses io_uring (the server of the 8.5-uring
-# image, lab/servers/swoole-co.php, needs it). The JSON's `server.loop` is the `loop: ...` line the server printed at boot (null when it printed none).
+# image, lab/servers/swoole-co.php, and the app on a ring, `--env APP_RING=1`, need it). The JSON's `server.loop` is the `loop: ...` line the server
+# printed at boot (null when it printed none); `server.ring` is what its `ring:` lines (APP_RING=1 with the telemetry on) counted over the seconds that served
+# requests: turns, requests, requests per turn, short and big sends, send waits, dry receives, stalls (null for any other server).
 #
 # The numbers of the journey: 2.17 requests per loop (1 + 1 + 0.15 + 0.02), 20.5 s of mean think time per loop (5 + 5.5 + 10), so one
 # VU offers 2.17 / (20.5 * scale) req/s, and a steady load is 9.45 users per req/s (20.5 / 2.17). Users are always mapped from the
@@ -709,8 +711,17 @@ done
 telemetry_value=""
 for kv in "${LAB_ENV[@]+"${LAB_ENV[@]}"}"; do [[ "$kv" != APP_TELEMETRY=* ]] || telemetry_value="${kv#APP_TELEMETRY=}"; done
 conn_counts=null
+ring_counts=null
 if [ "$telemetry_value" = 1 ]; then
   sleep 1.2
+  # The ring server's `ring:` lines (APP_RING=1, lab/servers/ring-server.php): the seconds that served requests, added up. Null for any other server.
+  ring_counts="$(docker logs "$SERVER" 2>&1 | sed -n 's/^ring: //p' | jq -Rnc '
+    [inputs | split(" ") | map(split("=") | select(length == 2) | {(.[0]): (.[1] | tonumber? // .)}) | add | select(.requests > 0)] as $busy
+    | if ($busy | length) == 0 then null
+      else ($busy | map(.turns) | add) as $turns | ($busy | map(.requests) | add) as $requests
+        | {busy_seconds: ($busy | length), turns: $turns, requests: $requests, requests_per_turn: ($requests / $turns * 100 | round / 100),
+           short_sends: ($busy | map(.short_sends) | add), big_sends: ($busy | map(.big_sends) | add), send_waits: ($busy | map(.send_waits) | add),
+           recv_dry: ($busy | map(.recv_dry) | add), stalls: ($busy | map(.stalls) | add), limit_closes: ($busy | map(.limit_closes) | add)} end')"
   conn_counts="$(docker logs "$SERVER" 2>&1 | sed -n 's/^telemetry //p' | jq -Rnc '
     [inputs | fromjson?] as $l
     | [$l[] | .connections // empty] as $c
@@ -747,7 +758,7 @@ jq -n \
   --argjson steps_vus "$(jq -nc '$ARGS.positional | map(tonumber)' --args "${steps_vus[@]}")" \
   --arg k6_image "$LAB_K6_IMAGE" --arg k6_version "$k6_version" --arg local_ips "$local_ips" --argjson k6_budget "$k6_budget_mib" \
   --argjson lag_gate "$lag_gate" --argjson before "$cpu_before" --argjson after "$cpu_after" --argjson idle "$idle_json" --argjson cold "$cold_json" \
-  --argjson conn_counts "$conn_counts" --arg soft_limit "$soft_conn_limit" --arg vu_cap_bound_by "$vu_cap_bound_by" \
+  --argjson conn_counts "$conn_counts" --argjson ring_counts "$ring_counts" --arg soft_limit "$soft_conn_limit" --arg vu_cap_bound_by "$vu_cap_bound_by" \
   --slurpfile runs_file "$tmp/runs.json" --argjson calibration "$calibration_json" --argjson profile "$profile_json" --argjson per_second_probes "$([ -n "$series" ] && echo true || echo false)" --arg invalid "$invalid_all" '
   def mib: . / 1048576 * 100 | round / 100;
   ($after.time.us - $before.time.us) as $window_us
@@ -767,7 +778,7 @@ jq -n \
           + (if $host_fsync == null then {fsync_reason: "the probe container could not write and fdatasync its file"} else {} end)),
     server: {variant: $variant, image_id: $image_id, php_version: $php_version, file: $server_file, port: $port, php_flags: $flags,
              ext: $ext, env: $env, fds_open_at_boot: $server_fds,
-             socket: (if $socket_line == "" then null else $socket_line end), loop: (if $loop_line == "" then null else $loop_line end)},
+             socket: (if $socket_line == "" then null else $socket_line end), loop: (if $loop_line == "" then null else $loop_line end), ring: $ring_counts},
     load: {think_scale: $think_scale, per_vu_rate_rps: $per_vu_rate, users_per_rps: $users_per_rps, ramp_s: $ramp, plateau_s: $plateau,
            vus: $steps_vus, vu_cap: $vu_cap, vu_cap_bound_by: $vu_cap_bound_by, warmup: (if $warmup == "" then null else $warmup end),
            pass_rule: "p95 < 500 ms, p99 < 1000 ms, errors < 1 %, achieved >= 97 % of offered"},
@@ -818,6 +829,7 @@ fi
 jq -r '"k6 connection errors: \(.k6_connection_errors)" + (if (.k6_error_codes | length) > 0 then " (k6 error codes: \(.k6_error_codes | to_entries | map("\(.key) x \(.value)") | join(", ")))" else "" end)' "$out"
 jq -r '.cold | "database copy in the page cache when the server opened it (fincore): \(.resident_bytes) of \(.size_bytes) bytes, \(.resident_share * 100 | round) %, --cold \(if .requested then "on" else "off" end)"' "$out"
 jq -r '.server_connections | "server connections: soft limit \(.soft_limit // "off"), " + (if .telemetry == null then "no telemetry" else "\(.telemetry.close_responses) Connection: close responses, \(.telemetry.accept_pauses) accept pauses, \(.telemetry.open_peak) open at most" + (if .telemetry.processes == null then "" else " (\(.telemetry.open_peak_note), \(.telemetry.processes) processes)" end) end) + ", file descriptors peak \(.fds_peak // .fds_peak_note)"' "$out"
+jq -r '.server.ring | select(. != null) | "ring: \(.requests) requests in \(.turns) turns over \(.busy_seconds) busy seconds, \(.requests_per_turn) requests per turn, \(.short_sends) short sends, \(.big_sends) big sends, \(.send_waits) send waits, \(.recv_dry) dry receives, \(.stalls) stalls"' "$out"
 jq -r 'select(.idle != null) | .idle | "idle connections: \(.requested) requested, \(.held_at_start) held at the start and \(.held_at_end) at the end, \(.closed_by_server_at_end) closed by the server; the server counted \(.server_established_at_start) and \(.server_established_at_end) established, \(.server_fds_open_with_idle) file descriptors open with them",
   "idle client memory: \(.client.memory_current_mib_at_end) MiB memory.current at the end (peak \(.client.memory_peak_mib), anon \(.client.anon_mib), kernel \(.client.kernel_mib), socket buffers \(.client.socket_buffers_mib)), the process RSS \(.client.rss_mib) MiB after opening them, opened in \(.seconds_to_open) s from \(.source_addresses | length) source addresses"' "$out"
 jq -r '.host | def n: if . == null then "not read" else tostring end; "host: load1 \(.before.load1 | n) before the warm-up and \(.plateau.load1 | n) on the plateau (load5 \(.before.load5 | n) and \(.plateau.load5 | n)), CPU busy \(.before.cpu_busy_pct | n) % and \(.plateau.cpu_busy_pct | n) %, steal \(.before.steal_pct | n) % and \(.plateau.steal_pct | n) %, fsync \(.fsync_ms | n) ms, \(.other_containers) other containers"' "$out"

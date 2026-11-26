@@ -3400,6 +3400,182 @@ check_steplab_expect_loop() {
   rm -rf "$dir"
 }
 
+# ring_start <name> <port> [K=V]...: the challenge app on the ring (APP_RING=1, telemetry on so that its `ring:` lines come out), on a fresh copy of the
+# seed, without Docker's seccomp filter (io_uring needs it lifted); waited on until it listens or exits. Prints the failure and returns 1 otherwise.
+ring_start() {
+  local name="$1" port="$2"
+  shift 2
+  LAB_SERVER_SECCOMP_UNCONFINED=1 start_app_for_check "$name" "$port" 0 APP_RING=1 APP_TELEMETRY=1 "$@"
+}
+
+# ring_sum <container> <field>: the sum of a counter over the `ring:` lines the server printed (each holds one second's counts).
+ring_sum() {
+  docker logs "$1" 2>&1 | grep '^ring: ' | grep -o " $2=[0-9]*" | cut -d= -f2 | awk '{s += $1} END {print s + 0}'
+}
+
+# ring_last <container> <field>: the value of a field on the last `ring:` line (for the values that are not counts: `open`, `slots_in_use`).
+ring_last() {
+  docker logs "$1" 2>&1 | grep '^ring: ' | tail -n 1 | grep -o " $2=[0-9]*" | cut -d= -f2
+}
+
+# ring_client <container> <port> <command> [other port]: lab/check/ring-client.php inside the server's container (its output, one line per case).
+ring_client() {
+  docker exec "$1" php -d extension=sockets /lab/check/ring-client.php "$2" "$3" ${4:+"$4"} 2>&1
+}
+
+# ring_client_ok <container> <port> <command> <lines>: runs a command of the client and wants exactly <lines> `ok` lines and no FAIL. Prints why not.
+ring_client_ok() {
+  local out ok
+  out="$(ring_client "$1" "$2" "$3" ${5:+"$5"})" || { echo "ring-client $3 failed: ${out//$'\n'/ | }"; return 1; }
+  ok="$(grep -c '^ok    ' <<<"$out")"
+  [ "$ok" = "$4" ] && ! grep -q '^FAIL' <<<"$out" || { echo "ring-client $3: expected $4 ok lines: ${out//$'\n'/ | }"; return 1; }
+}
+
+# The ring (APP_RING=1) refuses at boot, with a message that says why and exit code 1, what it replaces or cannot serve: several workers, group
+# commit, the checkpointer, the profiler, the loop presets, and a value that is not 0 or 1. Nothing is started before the refusal (no database, no ring).
+check_ring_refusals() {
+  local out v
+  out="$(bash "$LAB/run.sh" 8.5 sh -c '
+    for v in APP_WORKERS=2 APP_GROUP_COMMIT=1 APP_CHECKPOINTER=100 APP_PROFILE=/tmp/p APP_LOOP=poll APP_RING=yes; do
+      echo "== $v"
+      env SQLITE_PATH=/nonexistent JWT_SECRET=x APP_RING=1 "$v" php -d extension=sockets /lab/app/server.php 2>&1
+      echo "exit $?"
+    done' 2>&1)" || { echo "the run failed: ${out//$'\n'/ | }"; return 1; }
+  for v in APP_WORKERS=2 APP_GROUP_COMMIT=1 APP_CHECKPOINTER=100 APP_PROFILE=/tmp/p APP_LOOP=poll; do
+    grep -A2 -x "== $v" <<<"$out" | grep -q "^server: APP_RING=1 cannot be set with ${v%%=*}" || { echo "$v is not refused with a reason: ${out//$'\n'/ | }"; return 1; }
+    grep -A2 -x "== $v" <<<"$out" | grep -qx 'exit 1' || { echo "$v does not exit with 1: ${out//$'\n'/ | }"; return 1; }
+  done
+  grep -A2 -x '== APP_RING=yes' <<<"$out" | grep -q "^server: APP_RING must be 1 or 0, got 'yes'" || { echo "APP_RING=yes is not refused: ${out//$'\n'/ | }"; return 1; }
+}
+
+# The app on the ring: its boot lines (`loop: ring, 1 ring`, the pools, the socket line), a ring in the process's descriptors and almost nothing else
+# after 300 connections held together (the connections are the ring's direct descriptors), the `ring:` line with its requests per turn, and the app's
+# own answers (the 404 of a route that is not the bake-off's, a 401).
+check_ring_boot() {
+  local name=lab-check-ring log out
+  ring_start "$name" 18177 || { docker rm -f "$name" >/dev/null 2>&1; return 1; }
+  log="$(docker logs "$name" 2>&1)"
+  grep -qx 'loop: ring, 1 ring' <<<"$log" || { docker rm -f "$name" >/dev/null 2>&1; echo "the loop line is not 'loop: ring, 1 ring': ${log//$'\n'/ | }"; return 1; }
+  grep -q '^ring-settings: table=[0-9]* sq=4096 cq=32768 recv_buffers=4096x2048 send_slots=2048x8192$' <<<"$log" || { docker rm -f "$name" >/dev/null 2>&1; echo "the settings line is missing: ${log//$'\n'/ | }"; return 1; }
+  grep -qx 'socket: backlog=4096 tcp_nodelay=1' <<<"$log" || { docker rm -f "$name" >/dev/null 2>&1; echo "the socket line is missing: ${log//$'\n'/ | }"; return 1; }
+  out="$(docker exec "$name" php -r '
+    $c = []; for ($i = 0; $i < 300; $i++) { $c[] = stream_socket_client("tcp://127.0.0.1:18177"); }
+    foreach ($c as $fp) { fwrite($fp, "GET /nope HTTP/1.1\r\n\r\n"); }
+    foreach ($c as $fp) { $first = fgets($fp); if ($first !== "HTTP/1.1 404 Not Found\r\n") { echo "bad answer: $first"; } }
+    echo "descriptors: " . count(scandir("/proc/self/fd")) . "\n";
+    echo "ring descriptors: " . (int) shell_exec("ls -l /proc/1/fd | grep -c anon_inode:.io_uring.") . "\n";
+    echo "server descriptors: " . (int) shell_exec("ls /proc/1/fd | wc -l") . "\n";
+    $r = stream_socket_client("tcp://127.0.0.1:18177"); fwrite($r, "POST /posts HTTP/1.1\r\nContent-Length: 2\r\n\r\n{}"); echo "post: " . trim(fgets($r)) . "\n";')"
+  sleep 2.5
+  log="$(docker logs "$name" 2>&1)"
+  docker rm -f "$name" >/dev/null 2>&1
+  grep -qx 'ring descriptors: 1' <<<"$out" || { echo "the server holds no io_uring ring (or more than one): ${out//$'\n'/ | }"; return 1; }
+  grep -q '^bad answer' <<<"$out" && { echo "an unknown route is not a 404: ${out//$'\n'/ | }"; return 1; }
+  [ "$(sed -n 's/^server descriptors: //p' <<<"$out")" -lt 20 ] || { echo "the server process holds 20 descriptors or more with 300 connections open: ${out//$'\n'/ | }"; return 1; }
+  grep -qx 'post: HTTP/1.1 401 Unauthorized' <<<"$out" || { echo "a POST without a token is not a 401: ${out//$'\n'/ | }"; return 1; }
+  grep -q '^ring: turns=[0-9]* requests=[0-9]* .* requests_per_turn=[0-9.]* ' <<<"$log" || { echo "the ring: line is missing: ${log//$'\n'/ | }"; return 1; }
+}
+
+# A request cut in two at every byte boundary of its first 64 bytes (a GET, and a POST with a body) is answered as the whole request is, and not before
+# its second part comes; 16 requests in one packet, and a mix of statuses, are answered in order. The server's counters agree with the 1,000-odd
+# requests made.
+check_ring_splits_and_pipelines() {
+  local name=lab-check-ring out
+  ring_start "$name" 18177 || { docker rm -f "$name" >/dev/null 2>&1; return 1; }
+  out="$(ring_client_ok "$name" 18177 split 2)" || { docker rm -f "$name" >/dev/null 2>&1; echo "$out"; return 1; }
+  out="$(ring_client_ok "$name" 18177 pipeline 2)" || { docker rm -f "$name" >/dev/null 2>&1; echo "$out"; return 1; }
+  docker rm -f "$name" >/dev/null 2>&1
+}
+
+# The feed made larger than a send slot (20 posts of 500 two-byte characters, over 20 KB) comes whole, then 8 of them pipelined and read in pieces of
+# 1,000 bytes, then 300 of them (6 MB, more than the server keeps waiting for one connection) read slowly: all in order, all the same bytes. A client that
+# leaves with 1,000 feeds unread frees what it held (no send slot or connection left in use) and the next client is answered.
+check_ring_oversize_responses() {
+  local name=lab-check-ring out
+  ring_start "$name" 18177 || { docker rm -f "$name" >/dev/null 2>&1; return 1; }
+  out="$(ring_client_ok "$name" 18177 big 3)" || { docker rm -f "$name" >/dev/null 2>&1; echo "$out"; return 1; }
+  out="$(ring_client_ok "$name" 18177 midclose 1)" || { docker rm -f "$name" >/dev/null 2>&1; echo "$out"; return 1; }
+  sleep 2.5
+  out="big_sends=$(ring_sum "$name" big_sends) short_sends=$(ring_sum "$name" short_sends) stalls=$(ring_sum "$name" stalls) slots=$(ring_last "$name" slots_in_use) open=$(ring_last "$name" open)"
+  docker rm -f "$name" >/dev/null 2>&1
+  [[ "$out" =~ big_sends=([0-9]+)\ short_sends=([0-9]+)\ stalls=([0-9]+)\ slots=([0-9]+)\ open=([0-9]+) ]] || { echo "the ring: lines are missing: $out"; return 1; }
+  [ "${BASH_REMATCH[1]}" -gt 6 ] || { echo "the oversize responses did not take the sized mappings (big_sends): $out"; return 1; }
+  [ "${BASH_REMATCH[2]}" -gt 0 ] || { echo "no send was short, so the resubmission was not exercised (short_sends): $out"; return 1; }
+  [ "${BASH_REMATCH[3]}" -gt 0 ] || { echo "no connection reached the write limit, so the stall was not exercised (stalls): $out"; return 1; }
+  [ "${BASH_REMATCH[4]}" = 0 ] && [ "${BASH_REMATCH[5]}" = 0 ] || { echo "a slot or a connection is still in use after every client left: $out"; return 1; }
+}
+
+# A server with 2 receive buffers and 1 send slot, and 300 connections that each send 3 requests at once: the receive pool runs dry (the kernel ends
+# receives with ENOBUFS) and the loop re-arms them, the send pool is full and connections wait for a slot, and every answer still comes, in order.
+check_ring_pools_run_dry() {
+  local name=lab-check-ring out
+  ring_start "$name" 18177 URING_RECV_BUFFERS=2 URING_SEND_SLOTS=1 || { docker rm -f "$name" >/dev/null 2>&1; return 1; }
+  out="$(ring_client_ok "$name" 18177 many 1)" || { docker rm -f "$name" >/dev/null 2>&1; echo "$out"; return 1; }
+  sleep 2.5
+  out="recv_dry=$(ring_sum "$name" recv_dry) send_waits=$(ring_sum "$name" send_waits) slots=$(ring_last "$name" slots_in_use)"
+  docker rm -f "$name" >/dev/null 2>&1
+  [[ "$out" =~ recv_dry=([0-9]+)\ send_waits=([0-9]+)\ slots=([0-9]+) ]] || { echo "the ring: lines are missing: $out"; return 1; }
+  [ "${BASH_REMATCH[1]}" -gt 0 ] || { echo "the receive pool never ran dry: $out"; return 1; }
+  [ "${BASH_REMATCH[2]}" -gt 0 ] || { echo "no connection waited for a send slot: $out"; return 1; }
+  [ "${BASH_REMATCH[3]}" = 0 ] || { echo "a send slot is still in use after every client left: $out"; return 1; }
+}
+
+# The soft connection limit on the ring, as on the DIY loop (check_soft_limit_closes_the_third_connection): with a limit of 2, three keep-alive
+# connections opened one after the other: the first two answer as always and stay open, the third answers with Connection: close and is ended.
+check_ring_soft_limit() {
+  local name=lab-check-ring seq
+  ring_start "$name" 18177 APP_SOFT_CONN_LIMIT=2 || { docker rm -f "$name" >/dev/null 2>&1; return 1; }
+  seq="$(docker exec "$name" php /lab/check/conn-client.php 18177 seq 3 --keep)"
+  docker rm -f "$name" >/dev/null 2>&1
+  jq -e '.answered == 3 and .errors == [] and .connections == [{close_header: false, server_closed: false}, {close_header: false, server_closed: false}, {close_header: true, server_closed: true}]' <<<"$seq" >/dev/null \
+    || { echo "expected the first two kept and the third closed with the header: $seq"; return 1; }
+}
+
+# What the ring answers is what the DIY loop answers, byte for byte: 30 raw requests (valid, refused, malformed, HTTP/1.0, Connection: close,
+# pipelined behind a close, a head over 8 KiB) to both servers, each on a fresh copy of the seed: the same bytes back, the same connections closed.
+check_ring_answers_like_diy() {
+  local ring=lab-check-ring diy=lab-check-ring-diy out
+  start_app_for_check "$diy" 18178 0 || { docker rm -f "$diy" >/dev/null 2>&1; return 1; }
+  ring_start "$ring" 18177 || { docker rm -f "$ring" "$diy" >/dev/null 2>&1; return 1; }
+  out="$(ring_client_ok "$ring" 18177 compare 1 18178)" || { docker rm -f "$ring" "$diy" >/dev/null 2>&1; echo "$out"; return 1; }
+  docker rm -f "$ring" "$diy" >/dev/null 2>&1
+}
+
+# The ring in the step lab, a pair with the DIY loop's reference and `--seccomp-unconfined` on both sides: the runs' JSON say `epoll` and `ring, 1 ring`
+# (`server.loop`), `server.ring` holds what the ring counted (the step lab turns the telemetry off unless the variant sets it), `--expect-loop` lets the right lines through, and a wrong one for the ring (`epoll`, what a
+# ring that fell back to the DIY loop would print) stops the comparison with exit 1 and the line it got.
+check_ring_loop_line_in_runs() {
+  local out rc=0 dir
+  dir="$(mktemp -d)"
+  out="$(bash "$LAB/steplab.sh" --image 8.5 --rate 200 --think-scale 0.1 --seconds 5 --pairs 1 --warmup 20,5 --seccomp-unconfined --ext sockets --ext event \
+    --variant ref= --variant ring=APP_RING=1,APP_TELEMETRY=1 --expect-loop ref=epoll --expect-loop 'ring=ring, 1 ring' --out "$dir/right" 2>&1)" || rc=$?
+  [ "$rc" = 0 ] && [ "$(jq -r '.server.loop' "$dir/right/ref-1.json")" = epoll ] && [ "$(jq -r '.server.loop' "$dir/right/ring-1.json")" = 'ring, 1 ring' ] \
+    && jq -e '.server.ring.requests > 0 and .server.ring.turns > 0 and .server.ring.requests_per_turn > 0' "$dir/right/ring-1.json" >/dev/null \
+    || { rm -rf "$dir"; echo "the right loop lines did not pass, or are not in the JSON (exit $rc): ${out//$'\n'/ | }"; return 1; }
+  rc=0
+  out="$(bash "$LAB/steplab.sh" --image 8.5 --rate 200 --think-scale 0.1 --seconds 5 --pairs 1 --warmup 20,5 --seccomp-unconfined --ext sockets --ext event \
+    --variant ref= --variant ring=APP_RING=1,APP_TELEMETRY=1 --expect-loop ref=epoll --expect-loop ring=epoll --out "$dir/wrong" 2>&1)" || rc=$?
+  rm -rf "$dir"
+  [ "$rc" = 1 ] && grep -q "the server's loop line is 'ring, 1 ring', which does not contain 'epoll'" <<<"$out" || { echo "a wrong loop line for the ring did not stop the run (exit $rc): ${out//$'\n'/ | }"; return 1; }
+}
+
+# lab/stress.sh --path /posts/{id} on the app on the ring: random posts of the seed, one request at a time and pipelined, each response the one of its
+# request, in order, 0 lost; and against a server that answers the wrong post it finds the mismatches (exit 1) and removes its containers.
+check_ring_stress_posts() {
+  local out rc=0 left
+  out="$(bash "$LAB/stress.sh" --image 8.5 --server "$LAB/app/server.php" --ext sockets --seccomp-unconfined --app --env APP_RING=1 --env APP_TELEMETRY=1 --path '/posts/{id}' \
+    --connections 100 --requests 20000 --procs 2 --pipelines 1,16 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "lab/stress.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
+  [ "$(grep -c '^ok    pipeline=.*"matched":20000,"mismatches":0,"lost":0' <<<"$out")" = 2 ] || { echo "not two clean runs of 20,000: ${out//$'\n'/ | }"; return 1; }
+  grep -q '^last busy second of the server: turns=[0-9]* requests=[0-9]* .*requests_per_turn=[0-9.]*' <<<"$out" || { echo "the server's statistics line is missing: ${out//$'\n'/ | }"; return 1; }
+  rc=0
+  out="$(bash "$LAB/stress.sh" --image 8.5 --server "$LAB/check/fixtures/wrong-post.php" --path '/posts/{id}' --connections 10 --requests 500 --procs 1 --pipelines 1 2>&1)" || rc=$?
+  [ "$rc" = 1 ] || { echo "against the wrong-post server lab/stress.sh exited $rc, expected 1: ${out//$'\n'/ | }"; return 1; }
+  grep -q '^FAIL  pipeline=1: .*"mismatches":[1-9]' <<<"$out" || { echo "no mismatch reported against the wrong-post server: ${out//$'\n'/ | }"; return 1; }
+  left="$(docker ps -a --format '{{.Names}}' | grep '^lab-stress-' || true)"
+  [ -z "$left" ] || { echo "containers left behind: ${left//$'\n'/ }"; return 1; }
+}
+
 CHECKS=(
   check_seed_files_exist
   check_seed_has_posts
@@ -3520,6 +3696,15 @@ CHECKS=(
   check_sqlite_tuned
   check_swoole_co
   check_steplab_expect_loop
+  check_ring_refusals
+  check_ring_boot
+  check_ring_splits_and_pipelines
+  check_ring_oversize_responses
+  check_ring_pools_run_dry
+  check_ring_soft_limit
+  check_ring_answers_like_diy
+  check_ring_loop_line_in_runs
+  check_ring_stress_posts
   check_score
   check_score_unit
   check_score_server_setup_checks

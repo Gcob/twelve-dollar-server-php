@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
-# Stress test of a server that echoes request ids (lab/servers/uring-noop.php): lab/conformance/stress.php sends requests that each carry
-# a unique id (`GET /noop?id=<n>`) over many connections and checks that every response echoes the id of its request, byte for byte, in
-# order on its connection. Starts the server the way lab/conformance.sh does, runs the client in a second container on the same host
-# network (the load CPUs), once per pipeline setting.
+# Stress test of a server whose responses say which request they answer: lab/conformance/stress.php sends requests that each carry an
+# id over many connections and checks that every response is the one of its request, in order on its connection. Starts the server the way
+# lab/conformance.sh does, runs the client in a second container on the same host network (the load CPUs), once per pipeline setting.
 #
 #   bash lab/stress.sh --image 8.5 --server lab/servers/uring-noop.php --ext sockets --seccomp-unconfined
 #                      [--env K=V]... [--connections 1000] [--requests 2000000] [--procs 4] [--pipelines 1,16] [--port 18110]
+#                      [--path '/noop?id={id}'] [--app]
+#
+# --path is the request's target, `{id}` standing for the id. `/noop?id={id}` (the default) is for lab/servers/uring-noop.php, which echoes
+# the id (`{"status":"ok","id":<n>}`, unique ids, byte for byte). `/posts/{id}` is for the challenge app (or the bake-off's handler): the ids are
+# random posts of the seed (1 to 500,000) and each response must be a 200 whose post has that id. --app starts the server as the challenge
+# app, on a fresh copy of the seed with SQLITE_PATH and JWT_SECRET (lab_start_app), like lab/challenge-test.sh does.
 #
 # One line per pipeline setting, `ok    pipeline=<n>: <totals>` or `FAIL  pipeline=<n>: <totals>`; then the last `ring:` line the server
 # printed (its turns, requests and requests per turn). Exit 0 when every setting finds 0 mismatches and 0 lost, 1 when one does not or
@@ -21,15 +26,16 @@ CLIENT=lab-stress-client
 
 usage() {
   echo "usage: lab/stress.sh --image <variant> --server <php file under lab/ or submissions/> [--ext <name>]... [--env K=V]... [--seccomp-unconfined]" >&2
-  echo "                     [--connections <n>] [--requests <n>] [--procs <n>] [--pipelines 1,16] [--port <n>]" >&2
+  echo "                     [--connections <n>] [--requests <n>] [--procs <n>] [--pipelines 1,16] [--port <n>] [--path <template with {id}>] [--app]" >&2
   exit 2
 }
 fail() { echo "stress: $*" >&2; exit 1; }
 
-image="" server_file="" port=18110 connections=1000 requests=2000000 procs=4 pipelines=1,16
+image="" server_file="" port=18110 connections=1000 requests=2000000 procs=4 pipelines=1,16 path='/noop?id={id}' app=""
 LAB_EXT=() LAB_ENV=()
 while [ "$#" -gt 0 ]; do
   if [ "$1" = --seccomp-unconfined ]; then export LAB_SERVER_SECCOMP_UNCONFINED=1; shift; continue; fi
+  if [ "$1" = --app ]; then app=1; shift; continue; fi
   [ "$#" -ge 2 ] || { echo "missing value for $1" >&2; usage; }
   case "$1" in
     --image) image="$2" ;;
@@ -41,6 +47,7 @@ while [ "$#" -gt 0 ]; do
     --requests) requests="$2" ;;
     --procs) procs="$2" ;;
     --pipelines) pipelines="$2" ;;
+    --path) path="$2" ;;
     *) echo "unknown option: $1" >&2; usage ;;
   esac
   shift 2
@@ -50,6 +57,7 @@ for n in port connections requests procs; do
   [[ "${!n}" =~ ^[1-9][0-9]*$ ]] || { echo "--$n must be a whole number above 0, got '${!n}'" >&2; usage; }
 done
 [[ "$pipelines" =~ ^[1-9][0-9]*(,[1-9][0-9]*)*$ ]] || { echo "--pipelines must be whole numbers separated by commas, got '$pipelines'" >&2; usage; }
+[[ "$path" == *'{id}'* ]] || { echo "--path must hold {id}, got '$path'" >&2; usage; }
 [ "${#LAB_EXT[@]}" -gt 0 ] || LAB_EXT=(sockets)
 
 lab_require_variant "$image" || exit 1
@@ -79,7 +87,14 @@ if poll; then
 fi
 
 lab_build_php_flags
-lab_start_server "$SERVER" "$image" "$port" "$server_in"
+if [ -n "$app" ]; then
+  # Why disable SC2034: lab_start_app (lib.sh) reads LAB_COLD.
+  # shellcheck disable=SC2034
+  LAB_COLD=0
+  lab_start_app "$SERVER" "$image" "$port" "$server_in"
+else
+  lab_start_server "$SERVER" "$image" "$port" "$server_in"
+fi
 
 # The server copies the seed (250 MB) before it listens: up to 30 s, and it must still be running while we wait.
 ready=""
@@ -99,7 +114,7 @@ IFS=, read -r -a settings <<<"$pipelines"
 for p in "${settings[@]}"; do
   out=0
   result="$(docker exec "$CLIENT" php -d memory_limit=-1 /lab/conformance/stress.php "$port" --connections "$connections" --requests "$requests" \
-    --procs "$procs" --pipeline "$p")" || out=$?
+    --procs "$procs" --pipeline "$p" --path "$path")" || out=$?
   if [ "$out" = 0 ]; then
     echo "ok    pipeline=$p: $result"
   else

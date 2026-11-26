@@ -1324,6 +1324,30 @@ bash lab/conns.sh --image 8.5 --server lab/servers/uring-noop.php --ext sockets 
   cancels its accept 16 descriptors before the end of the table and arms it again once connections close; a ring that is not entered keeps
   its queued SQEs (its first accept included); `FFI::cast('uintptr_t', $pointer)` reads 0, so pointers are made from integer addresses.
 
+### The app on a ring (`APP_RING=1`, `lab/servers/ring-server.php`)
+
+`APP_RING=1 lab/app/server.php` serves the challenge app from our own io_uring loop in PHP through FFI: one process, one ring, the spike's
+design (raw syscalls, no liburing, no SQPOLL, direct descriptors, multishot accept and receive, one `io_uring_enter` per turn, nothing newer than kernel
+6.8) with the DIY server's parser and answers copied in (`parse`, `parseHead`, the `Connection: close` of the soft limit, the 400 and the 500), so what it
+answers is what `DiyConnection` answers (`check_ring_answers_like_diy` sends 30 raw requests to both: same bytes, same connections closed). With `APP_RING`
+unset the app runs as it always did (the DIY files are not even loaded when it is set, so it needs no `event` extension). Start it like any app:
+`bash lab/challenge-test.sh --image 8.5 --seccomp-unconfined --ext sockets --env APP_RING=1`.
+
+- **Refused at boot** (a message, exit 1): `APP_WORKERS` of 2 or more (the ring replaces the processes), `APP_GROUP_COMMIT=1`, `APP_CHECKPOINTER`,
+  `APP_PROFILE`, `APP_LOOP`, and an `APP_RING` that is not 0 or 1. `APP_SOFT_CONN_LIMIT` works as on the DIY loop.
+- **Boot lines:** `loop: ring, 1 ring` (what `lab/steplab.sh --expect-loop` and the run's `server.loop` read), `ring-settings: ...` (the pools), `socket: ...`.
+  With `APP_TELEMETRY=1` a `ring:` line a second: turns, requests, CQEs, flushes, accepted, open, `short_sends`, `big_sends`, `send_waits`, `recv_dry`, `stalls`,
+  `limit_closes`, `slots_in_use`, `requests_per_turn`, `cqes_per_turn`. No `telemetry` JSON line: the DIY loop's timers are not on the ring.
+- **What it does under pressure:** a request split over receives is assembled; pipelined requests are answered in order; a short send is resubmitted from
+  where it stopped; a response over a send slot (8 KiB) goes from a mapping sized for it; a full send pool makes the connection wait; a receive pool that runs
+  dry (`ENOBUFS`) is armed again next turn, a pool's worth of connections at a time; a connection with 1 MiB of responses unsent stops being parsed until they
+  drain. The test knobs `URING_RECV_BUFFERS` (a power of two) and `URING_SEND_SLOTS` make a pool run dry or full with a few connections.
+- **The tests:** `check_ring_refusals`, `check_ring_boot`, `check_ring_splits_and_pipelines`, `check_ring_oversize_responses`, `check_ring_pools_run_dry`,
+  `check_ring_soft_limit`, `check_ring_answers_like_diy`, `check_ring_stress_posts` (client: `lab/check/ring-client.php`).
+- **`lab/stress.sh --app --path '/posts/{id}'`:** random posts of the seed (1 to 500,000), each response a 200 whose `"id"` is the request's, in order on its
+  connection, one at a time and pipelined. `--app` starts the server as the app on a fresh seed copy. `/noop?id={id}` (the default) is the spike's echo.
+- **`lab/servers/bake-ring.php`** is the ring on the bake-off's handler, so `lab/conformance.sh --server lab/servers/bake-ring.php --ext sockets --seccomp-unconfined` runs.
+
 ## Connection test
 
 `lab/conns.sh` measures how many idle keep-alive connections one server process holds, and what each one costs in memory:

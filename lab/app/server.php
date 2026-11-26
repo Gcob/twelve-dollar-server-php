@@ -18,15 +18,30 @@
 // APP_LOOP=nolock|changelist|poll (off by default, accepted with any of the above, workers included): the event loop's libevent base is built
 // from that preset (diy_loop_presets() in lab/servers/diy-server.php) and the `loop:` boot line says which; any other value stops the server at
 // boot with `APP_LOOP must be one of nolock, changelist, poll`, and
-// APP_DRIVER=pdo|ffi (off by default; ffi reads only and boots only with APP_DRIVER_BENCH=1, for the micro bench: lab/app/sqlite-ffi.php).
+// APP_DRIVER=pdo|ffi (off by default; ffi reads only and boots only with APP_DRIVER_BENCH=1, for the micro bench: lab/app/sqlite-ffi.php), and
+// APP_RING=1 (off by default): the app is served by our own io_uring loop in PHP through FFI instead of ext-event's (lab/servers/ring-server.php),
+// one process and one ring. It needs no `event` extension, runs only where Docker's seccomp filter is lifted (`--seccomp-unconfined`), prints
+// `loop: ring, 1 ring`, and with APP_TELEMETRY=1 a `ring:` line a second. It replaces S1-b's processes and the loop's own switches, so it is
+// refused at boot with APP_WORKERS of 2 or more, APP_GROUP_COMMIT=1, APP_CHECKPOINTER, APP_PROFILE and APP_LOOP. APP_SOFT_CONN_LIMIT works as
+// on the DIY loop.
 //
 // It starts with the extensions loaded in this order: `--ext sockets --ext event`. It listens only once the database is open.
 // lab/challenge-test.sh starts it on a fresh copy of the seed.
 
 require __DIR__ . '/app.php';
-require __DIR__ . '/../servers/diy-server.php';
-require __DIR__ . '/../servers/diy-telemetry.php';
-require __DIR__ . '/../servers/diy-profile.php';
+
+// Read before the DIY loop's files are loaded: they need ext-event, which the ring does not.
+$useRing = (string) getenv('APP_RING');
+if ($useRing !== '' && $useRing !== '0' && $useRing !== '1') {
+    fwrite(STDERR, "server: APP_RING must be 1 or 0, got '$useRing'\n");
+    exit(1);
+}
+$useRing = $useRing === '1';
+if (!$useRing) {
+    require __DIR__ . '/../servers/diy-server.php';
+    require __DIR__ . '/../servers/diy-telemetry.php';
+    require __DIR__ . '/../servers/diy-profile.php';
+}
 
 $path = (string) getenv('SQLITE_PATH');
 $secret = (string) getenv('JWT_SECRET');
@@ -53,6 +68,34 @@ if ($softLimitValue !== false && $softLimitValue !== '') {
         exit(1);
     }
     $softLimit = (int) $softLimitValue;
+}
+if ($useRing) {
+    $refused = match (true) {
+        $workers >= 2 => "APP_WORKERS=$workers: the ring replaces the processes",
+        $variants['group_commit'] => 'APP_GROUP_COMMIT=1: the ring answers each request as it parses it, it has no group commit',
+        $variants['checkpointer'] > 0 => 'APP_CHECKPOINTER: it is a second process on the database',
+        (string) getenv('APP_PROFILE') !== '' => 'APP_PROFILE: the profiler hooks the ext-event loop',
+        (string) getenv('APP_LOOP') !== '' => 'APP_LOOP: it sets the libevent base, and the ring has none',
+        default => null,
+    };
+    if ($refused !== null) {
+        fwrite(STDERR, "server: APP_RING=1 cannot be set with $refused\n");
+        exit(1);
+    }
+    require __DIR__ . '/../servers/ring-server.php';
+    app_boot($path, $secret, $variants);
+    ring_serve($host, $port, $softLimit, getenv('APP_TELEMETRY') === '1', static function () use ($softLimit, $variants): void {
+        if ($softLimit !== null) {
+            echo "soft connection limit: $softLimit\n";
+        }
+        if ($variants !== app_variants([])) {
+            echo 'app variants: feed_sql=' . $variants['feed_sql'] . ' fetch=' . $variants['fetch'] . ' json=' . $variants['json'] . ' pragmas=' . $variants['pragmas'] . ' locking=' . $variants['locking']
+                . ' group_commit=off checkpointer=off' . "\n";
+        }
+        if (($driverLine = app_driver_line($variants)) !== null) {
+            echo "$driverLine\n";
+        }
+    });
 }
 $loopPreset = getenv('APP_LOOP');
 if ($loopPreset === false || $loopPreset === '') {
