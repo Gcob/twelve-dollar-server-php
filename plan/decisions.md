@@ -588,6 +588,47 @@
   with a load box that doesn't bind (two load boxes, or one with more cores), and names the ceiling of both servers
   then: one AWS session for two answers. Phase 8 starts from "at least 135,000" (Q23, Jacob, 2026-11-26).
 
+- **D108:** phase 8 compares every lever with phase 7's submission as it is on `main` (`1f6b163`: S1-b's 2
+  processes, the soft limit at 64,000 each, `mmap` off), run by `lab/steplab.sh --server-variant` like D83's parity,
+  not with `lab/app`'s skeleton: the question is what beats what we ship (project manager, phase 8, 2026-11-26,
+  [details/phase-8.md](details/phase-8.md)).
+
+- **D109:** phase 8's order and stops, cheapest first (D60): the single-post plan is read, not timed (closed if
+  Ubuntu's SQLite re-prepares nothing and both plans match); ext-mrloop is audited, not run; Swoole's `uring_socket`
+  gets one pair; the tuned SQLite its feed micro first, a pair only if the micro saves the floor's share; the ring one
+  pair, then 2 more if it beats the floor, and its batching knob one pair; the winners together one pair (project
+  manager, phase 8, 2026-11-26).
+
+- **D110:** Swoole's screen runs our own app handlers on `Swoole\Coroutine\Http\Server` (the server `uring_socket`
+  moves; both Swoole entries use the reactor server), one process, with liburing 2.8 or later built from its pinned
+  source (Ubuntu 24.04 ships 2.5) and Swoole 6.2.6 rebuilt with `--enable-uring_socket` (project manager, phase 8,
+  2026-11-26).
+
+- **D111:** the tuned SQLite is the newest amalgamation, pinned, built `-O2 -march=native` with sqlite.org's
+  single-threaded options (`THREADSAFE=0` and the others listed in phase 8's details), then PGO trained on a database
+  the build generates with the challenge's schema, never the seed; `pdo_sqlite` links against it under its own
+  prefix. `-march=native` is legal because `install.sh` compiles on the box that runs it (project manager, phase 8,
+  2026-11-26).
+
+- **D112:** the ring runs in one process (no S1-b), on 3 rings of direct descriptors (a ring's table is capped by
+  `RLIMIT_NOFILE`: 3 × 64,000 = 192,000), `Connection: close` past that soft limit, built on 5a's spike (raw
+  syscalls, `SINGLE_ISSUER` and `DEFER_TASKRUN`, no `SQPOLL`) unless Q25 says liburing-ffi. If `io_uring_setup` is
+  refused at boot, the server says why and runs the epoll loop (project manager, phase 8, 2026-11-26).
+
+- **D113:** phase 8's pairs run where Q24 says; its option A is one AWS `c5.2xlarge` running the lab as 5b's x86
+  session did (7,500 req/s, `s = 0.02`, 60,000 idle), a fresh 5-pair A/A of the reference first (project manager,
+  phase 8, 2026-11-26).
+
+- **D114:** phase 8's score session: two `c5.large` server boxes shaped as D89 and D91, one per submission, each
+  installed on a clean box; the load per Q26; a fixed-load pair at 101,000 users for each server, then probes from
+  135,000 in 5 % steps, one probe halfway back, holds stepping down 2.5 %. Two more walls than D95: the
+  packets-a-second allowance only when a failing run grew it, the kernel's TCP memory when a failing run logged it.
+  If nothing wins, phase 7's server runs alone, for D107's ceiling (project manager, phase 8, 2026-11-26).
+
+- **D115:** the winning levers go into `submissions/php-Gcob/` as a clean copy with no switch (D79), the ring with its
+  epoll fallback; no parity pair (the score session measures the submission itself); `lab/submission-test.sh` on
+  io_uring and `--ci` on the fallback, so both paths are tested (project manager, phase 8, 2026-11-26).
+
 ## History
 
 Nothing yet.

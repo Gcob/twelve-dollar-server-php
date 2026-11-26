@@ -1,15 +1,13 @@
 # $12 server challenge in PHP
 
-**Status:** 🏁 Phase 7 delivered (the score on x86, [details/phase-7.md](details/phase-7.md)): **135,000 users held 5 minutes** on AWS, our run; branch `phase-7-claude`, both final reviews OK, merged (`5fa7385`) · approved on 2026-11-21 · snapshot 2026-11-21-0920 ·
-**Round:** 7
-**Since your last read:** Q23 answered A (D107): phase 8 names the ceiling; the phase 7 AWS policy is deleted (2026-11-26). Phase 7 is delivered. The challenge's own `bench/load.js`, unchanged, against
-`submissions/php-Gcob/` installed the bench's way on an AWS `c5.large` with one core and 2 GB, k6 on a separate
-16-vCPU box: **135,000 users held for 5 minutes** (p95 171 ms, p99 328 ms, 0 errors, 14,122 req/s, the service at 84 %
-of its core, 881 MiB). 142,000 failed: once on EC2's connection table, twice with k6's load box over its line and the
-service at 90 % (D104 to D106): the ceiling is likely the CPU, not separated from k6. Our number, not the bench's; the
-bench estimate, apart, is about 86,000 (D106). Three bugs found by the real boxes, two by the blind review, all fixed
-with a test. Lab suite 133/133. Merged on your go (`5fa7385`). Delivery and retro in [runs/phase-7/run.md](runs/phase-7/run.md)
-("Delivery").
+**Status:** 🟡 Phase 8 planned (the ring, [details/phase-8.md](details/phase-8.md)): 3 questions for you, then the plan review and your approval · phase 7 delivered and merged (`5fa7385`), 135,000 held ·
+**Round:** 8
+**Since your last read:** phase 8's plan is written: 10 scopes, D108 to D115, the predictions. The levers are judged by
+their µs per request on x86, against phase 7's submission, cheapest first: the single-post plan read (no timing if
+SQLite re-prepares nothing), ext-mrloop audited, Swoole's `uring_socket` one pair, a SQLite built with PGO, then our
+own ring through FFI (one process, 3 rings, an epoll fallback). Why µs and not the AWS score: phase 7's box hit the
+kernel's TCP memory and EC2's packet allowance near 142,000, while the bench's box hits its CPU near 86,000 (D106).
+Then one AWS score session names both servers' ceilings (D107).
 **Project:** this repo, `plan/` · **Submission:** `submissions/php-Gcob/` (D80) · **Jira:** none
 
 ## 👉 Your turn
@@ -17,7 +15,102 @@ with a test. Lab suite 133/133. Merged on your go (`5fa7385`). Delivery and retr
 > **Answer freely:** a letter or `ok`, your own choice (`other: …`), `?` if it's unclear, or
 > `badly framed: …` if an option is missing or the question doesn't hold.
 
-Nothing waits on you. Phase 8 is next: it starts with its plan, from "at least 135,000" (D107).
+Three questions on phase 8's plan ([details/phase-8.md](details/phase-8.md)). The plan review runs after your answers.
+
+### Q24/26 [run, measure] : where do phase 8's pairs run, on an AWS x86 lab box or on the Mac?
+
+Phase 8 judges each lever by its µs per request against phase 7's submission, in the step lab's pairs (D51). The Mac's
+Docker VM runs your 23 containers, so it isn't quiet (D15). And the Mac is arm64: S1-b cost 8.6 % there and 14.8 % on
+the Xeon, and the ring's gain is in the same place (the kernel's share and the second process).
+
+**Question:** where do the pairs run?
+
+- **A.** One AWS `c5.2xlarge`, the lab as 5b's x86 session ran it (server on one vCPU, k6 on the others), 7,500
+  req/s, a fresh A/A first, then the pairs (D113).
+  **Aims at:** x86 numbers, the CPU family of the bench, and your Mac left alone.
+  **For:** the decision is made where it counts; the tooling exists (5a, 5b); 2 to 3 hours, under 2 USD. **Against:**
+  your go and a policy, one more AWS session before the score's.
+- **B.** The Mac's quiet VM: your containers stopped for 3 to 4 hours, the pairs there, then one x86 pair per winner
+  at the start of the score session.
+  **Aims at:** no AWS until the score.
+  **For:** no extra session, no cost. **Against:** your containers down; arm64 may understate the ring's gain, and a
+  lever that only wins on x86 could be dropped on the Mac.
+
+**Confidence:** A 80 % · B 20 %
+
+**Recommendation:** A, because the ring's gain is in the kernel and the second process, which cost almost twice as much
+on the Xeon as on the M3, and the session is cheap.
+
+**Flips if:** you'd rather keep AWS to the one score session, and can spare the Mac for an afternoon.
+
+**Meanwhile:** scopes 1 to 5 build and check on the Mac either way; nothing waits on this before scope 6.
+
+**Answer:**
+
+### Q25/26 [run, ring] : the ring on 5a's own syscalls, or on liburing-ffi as D76 names it?
+
+D76 says "an io_uring loop in pure PHP through FFI to `liburing-ffi.so.2`". 5a's spike did it without liburing: raw
+`io_uring_setup` and `io_uring_enter` through FFI, the submissions written field by field in the ring's memory (14
+fields for about 90 ns), with the memory-ordering design you asked about (notes.md 2026-11-22 18:25). It passed: 0
+mismatches in 2,000,000 requests, 80,000 connections on two rings. liburing-ffi would make each prepare one FFI call
+(about 35 ns of crossing plus its arguments), and the submit and the barriers would be liburing's C.
+
+**Question:** which base does the ring build on?
+
+- **A.** The spike's own syscalls (D112), liburing-ffi left out.
+  **Aims at:** the code that already passed its stress test, no new library to install.
+  **For:** measured; nothing added to `install.sh`; same speed as far as the micro bench can tell. **Against:** we
+  keep our own copy of liburing's helpers (about 200 lines), and D76's wording changes.
+- **B.** liburing-ffi: liburing built from its pinned source in `install.sh` (Ubuntu's 2.5 package may not ship
+  `liburing-ffi.so.2`), the prepares and the submit through it.
+  **Aims at:** D76 as written, liburing's own C for the ordering.
+  **For:** less ring code of ours; the barriers in C. **Against:** a rewrite of a tested loop, one more build in
+  `install.sh`, an FFI call per prepare.
+- **C.** A, plus a micro bench of liburing-ffi's prepare and submit against the field writes; B only if it's faster.
+  **Aims at:** the choice measured.
+  **For:** settles it with a number. **Against:** half a scope for a margin the spike's micro already puts under 1 %.
+
+**Confidence:** A 70 % · C 20 % · B 10 %
+
+**Recommendation:** A, because the spike is measured and stress-tested, and with `SINGLE_ISSUER` and `DEFER_TASKRUN`
+the kernel touches the queues only inside our own call, so liburing's barriers buy nothing here.
+
+**Flips if:** you want "built on liburing" to be part of the story, or the ring's own code to stay as small as possible.
+
+**Meanwhile:** scope 4 codes A until you answer; B would only change scope 4.
+
+**Answer:**
+
+### Q26/26 [run, score] : the score session's load, two load boxes or one bigger box?
+
+In phase 7, one `m5.4xlarge` (16 vCPUs) held 135,000 k6 users in 43 GiB, and its garbage collector spiked all 16
+vCPUs for a few seconds about every 35 s, enough to void the three runs at 142,000 (D104, D105). D107 asks for a load
+that doesn't bind. Both options split the users in two k6 halves of about 70,000 (where phase 7's box had 4 to 7
+spiked seconds in 120, under the void line), each running the unchanged `load.js`; a run passes when both halves pass,
+which is stricter than one k6 (its p95 can't be over both halves' p95).
+
+**Question:** which load?
+
+- **A.** One `m5.8xlarge` (32 vCPUs, 128 GiB) running two k6 containers, each on its own 16 vCPUs and 2 source
+  addresses.
+  **Aims at:** the simplest driver: both halves started on one box, no SSH between load boxes.
+  **For:** one load box to set up; same price as two `m5.4xlarge` (about 1.7 USD an hour). **Against:** both halves
+  share one network card and one host.
+- **B.** Two `m5.4xlarge`, one k6 each, the driver on the first starting the second over SSH.
+  **Aims at:** the bench's shape ("several 16-core load generators").
+  **For:** two network cards; closest to the bench. **Against:** a second box to set up and keep in step (the
+  plateau is the seconds both report their target), more driver code.
+
+**Confidence:** A 60 % · B 40 %
+
+**Recommendation:** A, because the void came from k6's CPU, not the network (14,000 requests a second of a few KB each is under 1
+Gbit/s), and one box keeps the driver simple.
+
+**Flips if:** you want the load to look like the bench's generators, whatever the extra setup.
+
+**Meanwhile:** scope 8 builds A's driver until you answer; B adds the SSH start.
+
+**Answer:**
 
 ---
 
@@ -53,8 +146,26 @@ step's choice backed by a measurement.
 | 8 | Ring (D76, D84) | First a screen of off-the-shelf io_uring (Swoole's `uring_socket`, an audit of ext-mrloop); then, unless one wins, an io_uring loop in pure PHP through FFI to `liburing-ffi`; a SQLite built with PGO, the single-post plan checked | Each lever's µs/req against phase 7's; a new score if they win |
 | 9 | Submit          | The PR to the challenge repo                                | CI green                                                |
 
-**Decisions:** 107 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
+**Decisions:** 115 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
 is a prediction we re-measure, not an answer.
+
+### Phase 8 scopes (planned, waiting on your answers and the review)
+
+Detail, seams, cases and the predictions in [details/phase-8.md](details/phase-8.md). One commit each, on branch
+`phase-8-claude` (D14). Scopes 6 and 9 are AWS sessions: each needs your go. Scope 7 is skipped if nothing wins.
+
+| #  | Commit                                                                  | Done when (short)                                                        |
+|----|-------------------------------------------------------------------------|--------------------------------------------------------------------------|
+| 1  | `feat(lab): the single-post plan, read`                                  | the re-prepare count and both plans read; `closed` or `timing needed`    |
+| 2  | `feat(lab): a SQLite built from the amalgamation, tuned, with PGO`       | an image whose `pdo_sqlite` runs it, trained on a generated database, 42/42 |
+| 3  | `feat(lab): off-the-shelf io_uring, Swoole built and ext-mrloop audited` | our app on Swoole's coroutine server over io_uring 42/42; the audit's verdict |
+| 4  | `feat(app): the app on an io_uring ring through FFI`                     | `APP_RING=1` 42/42, conformance, stress 0 mismatches on `/posts/{id}`    |
+| 5  | `feat(app): three rings, a close past their capacity, the fallback`      | 150,000 connections in one process under 100 fds; the epoll fallback 42/42 |
+| 6  | `docs(lab): phase 8's levers on x86, measured`                           | each lever's µs/req against phase 7's submission, chosen or not (needs your go) |
+| 7  | `feat(submission): php-Gcob on the ring` (or the levers that won)        | the clean copy, 42/42 on io_uring and on the fallback (`--ci`)           |
+| 8  | `feat(lab): the score search on two load generators and two servers`     | two k6 halves, the fixed-load pair, the new walls, smoked on the Mac     |
+| 9  | `docs(lab): the score on x86, phase 7 against phase 8, and their ceilings` | each server's highest hold and its wall (needs your go)                |
+| 10 | `docs(submission): the new score, labelled`                              | the README's results paragraph updated                                   |
 
 ### Phase 7 scopes (merged)
 
@@ -183,5 +294,6 @@ You don't need to read this part: it's the index of the execution details, in `d
 - [Phase 5b](details/phase-5b.md): the step lab's second run: scopes, seams, cases and the predictions.
 - [Phase 6](details/phase-6.md): the submission: scopes, seams, cases and the predictions.
 - [Phase 7](details/phase-7.md): the score on x86: scopes, seams, cases and the predictions.
+- [Phase 8](details/phase-8.md): the ring: scopes, seams, cases and the predictions.
 - [Phase 2's run](runs/phase-2/run.md), [phase 3's](runs/phase-3/run.md), [phase 4's](runs/phase-4/run.md), [phase 5a's](runs/phase-5a/run.md), [phase 5b's](runs/phase-5b/run.md), [phase 6's](runs/phase-6/run.md) and [phase 7's](runs/phase-7/run.md): progress, reviews and retro, with
   their `state/`.
