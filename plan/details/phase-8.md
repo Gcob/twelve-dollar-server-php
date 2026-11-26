@@ -47,7 +47,7 @@ In [decisions.md](../decisions.md), settled by the project manager (Jacob's choi
      `p.id = ?` and `p.id = +?`, the lever closes with no run. Else it gets a micro bench, then one pair.
   2. **ext-mrloop** is audited, not run: a screen only if the audit finds a reason (a question to Jacob then).
   3. **Swoole's `uring_socket`** gets one pair against the reference; it stops there unless it beats the floor.
-     (Closed earlier, on memory: D122.)
+     (Closed earlier, on scope 3's real-shape smoke: D122.)
   4. **The tuned SQLite** gets the feed micro bench first; a pair only if the micro's saving, times the feed's share
      of a request's cost, reaches the floor: the micro must save at least (floor ÷ the reference's µs/req) ÷ the
      feed's share.
