@@ -1,0 +1,31 @@
+# php-lab:8.5-sqlite: the 8.5 image (same PHP, same configure flags, pcntl, sockets and PECL event) whose pdo_sqlite runs on a SQLite built from
+# sqlite.org's amalgamation, tuned and profile-guided (install-sqlite-tuned.sh), under /opt/sqlite-tuned. Ubuntu's libsqlite3 stays where it
+# is. No Swoole, no profiler, no Workerman-only extras it does not need: the submission runs on it.
+# Build through lab/build.sh, never by hand: the build context is a copy of lab/images/ with the challenge's schema.sql and the submission's
+# app.php added (the training reads them), and the PHP version and its sha256 come from lab_source_release 8.5 in lab/lib.sh.
+# The layers follow the profile-guided order: the instrumented library, PHP against it, the training and the optimised library.
+FROM ubuntu:24.04@sha256:9c7f200c07e3d4a03e7249d2c16bf66a51120fb876aa2242cf31451412543289
+
+ARG PHP_VERSION
+ARG PHP_SHA256
+ARG SQLITE_TRAIN_LOOPS=
+
+# 1. The library with -fprofile-generate.
+COPY install-sqlite-tuned.sh /tmp/install-sqlite-tuned.sh
+RUN bash /tmp/install-sqlite-tuned.sh generate
+
+# 2. PHP built once against it (the extras after, as in Dockerfile.src).
+COPY install-php-src.sh /tmp/install.sh
+RUN PHP_VERSION="$PHP_VERSION" PHP_SHA256="$PHP_SHA256" WITH_SWOOLE=0 SQLITE_PREFIX=/opt/sqlite-tuned bash /tmp/install.sh \
+    && rm /tmp/install.sh
+COPY install-extras.sh workerman-nocache.patch /tmp/
+RUN PHP_VERSION="$PHP_VERSION" PHP_SHA256="$PHP_SHA256" WITH_EVENT=1 bash /tmp/install-extras.sh \
+    && rm /tmp/install-extras.sh /tmp/workerman-nocache.patch
+
+# 3 and 4. The training with that PHP, then the library again with the profile, over the first: PHP is not rebuilt.
+COPY sqlite-train.php schema.sql app.php /tmp/
+RUN SQLITE_TRAIN_LOOPS="$SQLITE_TRAIN_LOOPS" bash /tmp/install-sqlite-tuned.sh use \
+    && rm /tmp/install-sqlite-tuned.sh
+
+COPY php-info /usr/local/bin/php-info
+RUN chmod +x /usr/local/bin/php-info

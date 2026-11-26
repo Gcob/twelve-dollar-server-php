@@ -4,7 +4,8 @@
 #   bash lab/check.sh
 #
 # To add a check: write a function `check_<name>` that returns 0 or prints a reason on stdout and returns 1,
-# then add its name to CHECKS.
+# then add its name to CHECKS. A check that has nothing to run (an image that is not built) prints `skip: <why>` and returns 0: the line
+# reads `skip`, not `ok`.
 set -uo pipefail
 
 LAB="$(cd "$(dirname "$0")" && pwd)"
@@ -2422,6 +2423,44 @@ check_post_plan() {
   [ "$seed_rc" = 1 ] || { echo "a missing seed should exit 1, got $seed_rc"; return 1; }
 }
 
+# php-lab:8.5-sqlite runs on the SQLite built by lab/images/install-sqlite-tuned.sh: the version that script pins, the single-thread options
+# it sets, and php's `ldd` pointing at /opt/sqlite-tuned; the instrumented (-fprofile-generate) library is gone, Ubuntu's libsqlite3.so.0
+# is still its package's and still usable (php on LD_LIBRARY_PATH reads Ubuntu's version). The training refuses to run nothing: the image
+# is built only when the count it prints is above 0, so the check runs the trainer on a small database with 0 loops, which must fail.
+# Skips when the image is not built (lab/build.sh 8.5-sqlite).
+check_sqlite_tuned() {
+  local want out opt system_dir system_version schema app rc=0
+  docker image inspect "$LAB_IMAGE:8.5-sqlite" >/dev/null 2>&1 || { echo "skip: image $LAB_IMAGE:8.5-sqlite is not built (run lab/build.sh 8.5-sqlite)"; return 0; }
+  want="$(sed -n 's/^SQLITE_VERSION=//p' "$LAB/images/install-sqlite-tuned.sh")"
+  [ -n "$want" ] || { echo "no SQLITE_VERSION in lab/images/install-sqlite-tuned.sh"; return 1; }
+  out="$(bash "$LAB/run.sh" 8.5-sqlite php -r '
+    $db = new PDO("sqlite::memory:");
+    echo "version: ", $db->query("select sqlite_version()")->fetchColumn(), "\n";
+    echo "options: ", implode(" ", $db->query("pragma compile_options")->fetchAll(PDO::FETCH_COLUMN)), "\n";' 2>&1)" || { echo "php failed: $out"; return 1; }
+  grep -qx "version: $want" <<<"$out" || { echo "the image's SQLite is not $want: ${out//$'\n'/ | }"; return 1; }
+  for opt in THREADSAFE=0 DEFAULT_MEMSTATUS=0 DQS=0 LIKE_DOESNT_MATCH_BLOBS MAX_EXPR_DEPTH=0 OMIT_DEPRECATED OMIT_PROGRESS_CALLBACK OMIT_SHARED_CACHE USE_ALLOCA; do
+    grep -q -E "^options: (.* )?$opt( |$)" <<<"$out" || { echo "compile option $opt is missing: ${out//$'\n'/ | }"; return 1; }
+  done
+  out="$(bash "$LAB/run.sh" 8.5-sqlite sh -c 'ldd "$(command -v php)" | grep sqlite; nm -D /opt/sqlite-tuned/lib/libsqlite3.so.0 | grep -c gcov; dpkg --verify libsqlite3-0 | grep -c "libsqlite3[.]so"; dpkg -L libsqlite3-0 | grep "libsqlite3.so.0$"' 2>&1)" || true
+  grep -q -E '^[[:space:]]*libsqlite3\.so\.0 => /opt/sqlite-tuned/lib/libsqlite3\.so\.0 ' <<<"$out" || { echo "php does not load /opt/sqlite-tuned/lib/libsqlite3.so.0: ${out//$'\n'/ | }"; return 1; }
+  [ "$(sed -n '2p' <<<"$out")" = 0 ] || { echo "the library still holds profiling code (__gcov symbols): the -fprofile-use build did not replace it: ${out//$'\n'/ | }"; return 1; }
+  # Why: the base image has no /usr/share/doc, so `dpkg --verify` lists those files as missing; only the library's own line matters.
+  [ "$(sed -n '3p' <<<"$out")" = 0 ] || { echo "Ubuntu's libsqlite3.so.0 does not match its package: ${out//$'\n'/ | }"; return 1; }
+  system_dir="$(dirname "$(tail -n 1 <<<"$out")")"
+  system_version="$(bash "$LAB/run.sh" 8.5-sqlite env "LD_LIBRARY_PATH=$system_dir" php -r 'echo (new PDO("sqlite::memory:"))->query("select sqlite_version()")->fetchColumn();' 2>&1)"
+  [ "$system_version" = 3.45.1 ] || { echo "Ubuntu's library no longer answers 3.45.1 when it is put first: $system_version"; return 1; }
+  schema="$(cd -P "$REPO/reference/twelve-dollar-server-challenge" 2>/dev/null && pwd)/schema.sql"
+  app="$REPO/submissions/php-Gcob/app.php"
+  [ -f "$schema" ] && [ -f "$app" ] || { echo "the challenge's schema.sql or the submission's app.php is missing"; return 1; }
+  out="$(docker run --rm -v "$LAB:/lab:ro" -v "$schema:/schema.sql:ro" -v "$app:/app.php:ro" "$LAB_IMAGE:8.5-sqlite" sh -c '
+    php /lab/images/sqlite-train.php generate /schema.sql /tmp/t.db --scale 0.002 >/dev/null || exit 9
+    php /lab/images/sqlite-train.php run /app.php /tmp/t.db --loops 200 || exit 8
+    php /lab/images/sqlite-train.php run /app.php /tmp/t.db --loops 0' 2>&1)" || rc=$?
+  [ "$rc" = 1 ] || { echo "the trainer with 0 loops should exit 1, got $rc: ${out//$'\n'/ | }"; return 1; }
+  grep -q -E '^training: [1-9][0-9]* statements ' <<<"$out" || { echo "the trainer ran no statement with 200 loops: ${out//$'\n'/ | }"; return 1; }
+  grep -q 'the training ran no statement' <<<"$out" || { echo "the 0-loop failure has no reason: ${out//$'\n'/ | }"; return 1; }
+}
+
 # The bash scripts of the lab, one repo-relative path per line: every `*.sh` and every file whose first line is a bash or sh
 # shebang, except the fixtures (they hold deliberate warnings) and the seed data.
 lab_bash_scripts() {
@@ -3394,6 +3433,7 @@ CHECKS=(
   check_syscalls_live
   check_syscalls_cleans_up_after_failure
   check_post_plan
+  check_sqlite_tuned
   check_score
   check_score_unit
   check_score_server_setup_checks
@@ -3420,7 +3460,11 @@ CHECKS=(
 failed=0
 for check in "${CHECKS[@]}"; do
   if reason="$("$check")"; then
-    echo "ok    $check"
+    # A check that prints `skip: <why>` and returns 0 had nothing to run (a missing image): it is shown as `skip`, not as `ok`.
+    case "$reason" in
+      "skip: "*) echo "skip  $check: ${reason#skip: }" ;;
+      *) echo "ok    $check" ;;
+    esac
   else
     echo "FAIL  $check: $reason"
     failed=1

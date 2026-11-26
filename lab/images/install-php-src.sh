@@ -4,9 +4,13 @@
 # The extension is not enabled globally; the server loads it with `-d extension=swoole`, like on the apt image.
 #
 #   PHP_VERSION=8.4.28 PHP_SHA256=<sha256 of php-8.4.28.tar.xz> WITH_SWOOLE=1 bash install-php-src.sh
+#
+# SQLITE_PREFIX (default empty): where a SQLite built by install-sqlite-tuned.sh lives. When it is set, pdo_sqlite is built against that
+# library (its sqlite3.pc comes first for pkg-config) and php records the folder as its RUNPATH, so that it finds the library at run time
+# without LD_LIBRARY_PATH. Every other flag is the same, so the image differs from the plain one by its SQLite and nothing else.
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
-: "${PHP_VERSION:?}" "${PHP_SHA256:?}" "${WITH_SWOOLE:=1}"
+: "${PHP_VERSION:?}" "${PHP_SHA256:?}" "${WITH_SWOOLE:=1}" "${SQLITE_PREFIX:=}"
 
 # At most 8 compiler jobs, so a build leaves the Mac usable even when Docker's VM has 12 CPUs.
 JOBS="$(nproc)"
@@ -29,7 +33,7 @@ apt-get install -y --no-install-recommends \
 #   --with-config-file-scan-dir where the OPcache ini below goes
 #   --disable-cgi, --disable-fpm  CLI only: the servers under test are started with `php file.php`
 #   --enable-opcache            OPcache with its JIT (a flag up to 8.4; always built from 8.5, where it is ignored)
-#   --with-pdo-sqlite           pdo_sqlite against the system libsqlite3, the one the apt image uses
+#   --with-pdo-sqlite           pdo_sqlite against the system libsqlite3, the one the apt image uses (or $SQLITE_PREFIX's, see above)
 #   --enable-mbstring           mbstring (needs libonig)
 #   --with-sodium               sodium (needs libsodium)
 #   --with-ffi                  ffi (needs libffi)
@@ -49,6 +53,10 @@ FLAGS=(
   --enable-ctype
   --with-iconv
 )
+if [ -n "$SQLITE_PREFIX" ]; then
+  export PKG_CONFIG_PATH="$SQLITE_PREFIX/lib/pkgconfig"
+  FLAGS+=("LDFLAGS=-Wl,-rpath,$SQLITE_PREFIX/lib")
+fi
 echo "PHP $PHP_VERSION configure flags: ${FLAGS[*]}"
 # Why: php -i leaves CFLAGS out of its "Configure Command" line, so the full list is kept here for lab/check.sh.
 mkdir -p /usr/local/etc/php/conf.d
@@ -61,6 +69,9 @@ echo "$PHP_SHA256  php.tar.xz" | sha256sum -c -
 tar -xJf php.tar.xz
 cd "php-$PHP_VERSION"
 ./configure "${FLAGS[@]}"
+# What configure found of SQLite: the one the build is going to link, and the options it was built with.
+echo "pkg-config sqlite3: $(pkg-config --modversion sqlite3) $(pkg-config --cflags --libs sqlite3)"
+grep -E "^(#define|/\* #undef) [A-Z0-9_]*SQLITE" main/php_config.h || true
 make -j"$JOBS"
 make install
 

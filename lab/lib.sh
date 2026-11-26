@@ -9,8 +9,9 @@ LAB_IMAGE=php-lab
 LAB_VARIANTS=(8.3-apt 8.3 8.4 8.5 8.6)
 LAB_SOURCE_VARIANTS=(8.3 8.4 8.5 8.6)
 # Images built on top of another one (lab/images/Dockerfile.<variant>): `lab/build.sh <variant>` builds them (after their base), `all` and
-# the micro benches' default list leave them out.
-LAB_DERIVED_VARIANTS=(8.3-apt-tzimpel)
+# the micro benches' default list leave them out. 8.5-sqlite is not on top of 8.5 but beside it, and is left out for the same reason: it is
+# 8.5 with a SQLite of its own, built from the amalgamation with profile-guided optimisation (lab/images/install-sqlite-tuned.sh).
+LAB_DERIVED_VARIANTS=(8.3-apt-tzimpel 8.5-sqlite)
 
 # lab_source_release <variant>: prints "<php version> <sha256 of its .tar.xz> <WITH_SWOOLE> <WITH_EVENT> <WITH_EXCIMER>".
 # The sha256 values are the ones php.net publishes (https://www.php.net/releases/?json&version=<branch>), read on

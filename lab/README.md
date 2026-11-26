@@ -60,6 +60,7 @@ bash lab/run.sh 8.4 php-info
 | `8.5` | 8.5.13 | 6.2.6 | same |
 | `8.6` | 8.6.0 | not built | same, `WITH_SWOOLE=0`: Swoole 6.2.6 does not compile on 8.6 (`results/swoole-on-php-8.6.md`) |
 | `8.3-apt-tzimpel` | 8.3.6 | 6.2.6 plus the `php-swoole-tzimpel` entry's memory patch, as a second extension in `/opt/swoole-tzimpel/swoole.so` | `FROM php-lab:8.3-apt` (`Dockerfile.8.3-apt-tzimpel`, `install-swoole-tzimpel.sh`); `bash lab/build.sh 8.3-apt-tzimpel` after `8.3-apt`, left out of `all` |
+| `8.5-sqlite` | 8.5.13 | not built | `Dockerfile.8.5-sqlite`: 8.5's flags, pcntl, sockets and event, on a SQLite built from sqlite.org's amalgamation (see below); `bash lab/build.sh 8.5-sqlite`, left out of `all` |
 
 The source builds share one Dockerfile and the same configure flags (CLI only, `pdo_sqlite` on the system libsqlite3,
 `mbstring`, `sodium`, `ffi`, `ctype`, `iconv`, OPcache with its JIT, `CFLAGS=-O2`; the reason for each is in
@@ -67,6 +68,16 @@ The source builds share one Dockerfile and the same configure flags (CLI only, `
 variant are in `lab/lib.sh`; the build stops if the tarball does not match. `8.3` next to `8.3-apt` is a control:
 same PHP branch, Ubuntu's build flags against ours.
 The times in `results/build-times.md` are one build after the other (`8.6` is shorter: no Swoole to compile).
+
+`8.5-sqlite` is `8.5` with another SQLite and nothing else: `pdo_sqlite` links `/opt/sqlite-tuned/lib/libsqlite3.so.0` (RUNPATH), a SQLite
+3.54.1 built by `images/install-sqlite-tuned.sh` (`-O2 -march=native`, the options sqlite.org recommends for a single-threaded app,
+`THREADSAFE=0` among them) and profile-guided. Ubuntu's `libsqlite3.so.0` (3.45.1) stays where it is. The profile-guided order: the library with
+`-fprofile-generate`, PHP built once against it, `images/sqlite-train.php` (a generated database at the seed's sizes, then the app's own
+statements in the bench's mix: 30,000 loops, about 70,000 statements), the library again with `-fprofile-use` over the first. The build stops when
+the training ran no statement (`LAB_SQLITE_TRAIN_LOOPS=0 bash lab/build.sh 8.5-sqlite` shows it). `lab/build.sh` hands the build a copy of
+`images/` with the challenge's `schema.sql` and the submission's `app.php` added; the seed never enters the image. `-march=native` makes the image
+specific to the machine that built it: one built on the Mac (arm64) is only for the Mac, and the x86 session rebuilds it on its own box.
+`check_sqlite_tuned` checks the version, the options, php's `ldd` and Ubuntu's library (it skips when the image is not built).
 
 An unknown variant exits non-zero and lists the known ones. `lab/run.sh` runs a command in the image with 1 CPU, 2 GiB,
 no swap, 65535 file descriptors, on the host network, pinned to CPU 2; `lab/` is mounted at `/lab` (read-only, except
