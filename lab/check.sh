@@ -2400,6 +2400,28 @@ check_syscalls_cleans_up_after_failure() {
   [ -z "$(lab_containers_left)" ] || { echo "left behind: $(lab_containers_left)"; return 1; }
 }
 
+# lab/post-plan.sh on the seed reports what it read and ends on a verdict line (whichever it is: the script reports, it does not
+# judge). The fixture, a schema change halfway through the executions, must move the re-prepare counter and make the verdict `timing
+# needed`: a fixture that left the counter at 0 would prove nothing about the closed verdict. A missing seed is an error.
+check_post_plan() {
+  local out rc=0 last fixture seed_rc=0
+  out="$(bash "$LAB/post-plan.sh" --image 8.5 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "lab/post-plan.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
+  last="$(tail -n 1 <<<"$out")"
+  grep -q -E '^post-plan: (closed|timing needed \(.+\))$' <<<"$last" || { echo "the last line is not a verdict: $last"; return 1; }
+  grep -q -E '^sqlite: 3\.[0-9]+\.[0-9]+' <<<"$out" || { echo "no SQLite version: ${out//$'\n'/ | }"; return 1; }
+  grep -q -E '^ENABLE_STAT4: (yes|no)$' <<<"$out" || { echo "no ENABLE_STAT4 line: ${out//$'\n'/ | }"; return 1; }
+  [ "$(grep -c -E '^  SQLITE_STMTSTATUS_REPREPARE: [0-9]+$' <<<"$out")" = 2 ] || { echo "expected 2 re-prepare counts: ${out//$'\n'/ | }"; return 1; }
+  [ "$(grep -c -E '^    SEARCH ' <<<"$out")" -ge 6 ] || { echo "expected the EXPLAIN QUERY PLAN of both forms: ${out//$'\n'/ | }"; return 1; }
+  rc=0
+  fixture="$(bash "$LAB/post-plan.sh" --image 8.5 --force-reprepare 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "the fixture: lab/post-plan.sh exited $rc: ${fixture//$'\n'/ | }"; return 1; }
+  grep -q -E '^  SQLITE_STMTSTATUS_REPREPARE: [1-9][0-9]*$' <<<"$fixture" || { echo "the schema change did not move the re-prepare counter: ${fixture//$'\n'/ | }"; return 1; }
+  [ "$(tail -n 1 <<<"$fixture" | cut -c1-26)" = "post-plan: timing needed (" ] || { echo "the fixture's verdict is not 'timing needed': $(tail -n 1 <<<"$fixture")"; return 1; }
+  bash "$LAB/post-plan.sh" --image 8.5 --seed "$LAB/data/missing-feed.db" >/dev/null 2>&1 || seed_rc=$?
+  [ "$seed_rc" = 1 ] || { echo "a missing seed should exit 1, got $seed_rc"; return 1; }
+}
+
 # The bash scripts of the lab, one repo-relative path per line: every `*.sh` and every file whose first line is a bash or sh
 # shebang, except the fixtures (they hold deliberate warnings) and the seed data.
 lab_bash_scripts() {
@@ -3371,6 +3393,7 @@ CHECKS=(
   check_stages_live
   check_syscalls_live
   check_syscalls_cleans_up_after_failure
+  check_post_plan
   check_score
   check_score_unit
   check_score_server_setup_checks
