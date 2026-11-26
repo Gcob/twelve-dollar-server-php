@@ -666,6 +666,13 @@
   before scope 6 (plan review delta, settled by the project manager with the reviewer's pick, phase 8, 2026-11-26,
   [PLAN-2026-11-26-1530-delta](reviews/PLAN-2026-11-26-1530-delta.md) item 1).
 
+- **D122:** Swoole's `uring_socket` lever closes on memory, before any µs pair: its coroutine HTTP server holds a
+  coroutine and its C stack per connection, about 157 KB (128 KiB stacks) to 310 KB (the default 2 MiB) of anonymous
+  memory per idle connection, and was killed by the OOM killer near 12,000 connections in the lab's 2 GiB. The bench's
+  71,000+ users can't fit, whatever its µs a request (D60's fail fast). Scope 3 measures it with `lab/conns.sh` and
+  records it next to the mrloop audit; scope 3's smoke pair ran at 3,000 idle, not 60,000; scope 6 runs no Swoole
+  pair (project manager, phase 8, 2026-11-26, from scope 3's developer).
+
 ## History
 
 Nothing yet.

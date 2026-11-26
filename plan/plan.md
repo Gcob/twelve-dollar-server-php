@@ -208,7 +208,7 @@ step's choice backed by a measurement.
 | 8 | Ring (D76, D84) | First a screen of off-the-shelf io_uring (Swoole's `uring_socket`, an audit of ext-mrloop); then, unless one wins, an io_uring loop in pure PHP through FFI (on 5a's own syscalls, Q25, D112); a SQLite built with PGO, the single-post plan checked | Each lever's µs/req against phase 7's; a new score if they win |
 | 9 | Submit          | The PR to the challenge repo                                | CI green                                                |
 
-**Decisions:** 121 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
+**Decisions:** 122 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
 is a prediction we re-measure, not an answer.
 
 ### Phase 8 scopes (running: 1 to 5 local; 6 and 9 need your go)
