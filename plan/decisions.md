@@ -640,7 +640,7 @@
 - **D116:** the ring's pairs run with the server's `nofile` at 32,768, so the lab's 60,000 idle span 2 of the 3
   shipped rings, as the bench's sizes would: one ring alone would price the ring without its multi-ring loop, against
   S1-b's 2 processes (plan review, settled by the project manager with the reviewer's pick, phase 8, 2026-11-26,
-  [PLAN-2026-11-26-1523](reviews/PLAN-2026-11-26-1523.md) item 2).
+  [PLAN-2026-11-26-1523](reviews/PLAN-2026-11-26-1523.md) item 2). `lab/realistic.sh` gains `--server-nofile` for it.
 
 - **D117:** every server prints one `loop:` boot line; `lab/realistic.sh` records it in the run's JSON,
   `lab/steplab.sh --expect-loop` refuses a variant with the wrong one, `lab/submission-test.sh` prints it, and every
@@ -658,6 +658,13 @@
 - **D120:** the ring's batching knob (`min_wait_usec`, kernel 6.12 and up) is out: the bench runs 6.8, where the call
   likely fails after setup succeeded, past the fallback, and the knob was predicted within the floor at the lab's rate
   (plan review, item 1; project manager, phase 8, 2026-11-26).
+
+- **D121:** the multi-ring loop blocks on the ring that had completions in the last turn and enters each other ring
+  when its `IORING_SQ_TASKRUN` flag is set or it has SQEs queued (as the spike), not on ring 0: with D116's shape ring 0 holds the lab's idle connections (opened before
+  k6), and blocking on it would batch ring 1's traffic more than the bench would, reading the ring cheaper than it
+  runs. Scope 5's smoke compares each ring's requests per turn with the one-ring smoke; over 1.5 times is a question
+  before scope 6 (plan review delta, settled by the project manager with the reviewer's pick, phase 8, 2026-11-26,
+  [PLAN-2026-11-26-1530-delta](reviews/PLAN-2026-11-26-1530-delta.md) item 1).
 
 ## History
 

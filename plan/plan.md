@@ -1,6 +1,6 @@
 # $12 server challenge in PHP
 
-**Status:** 🟡 Phase 8 planned (the ring, [details/phase-8.md](details/phase-8.md)): plan review NOT_OK settled (D116 to D120), its delta next; the local scopes start on your standing go once the review is OK; Q24, Q26, Q27, Q28 wait for you (AWS), Q25 taken by default · phase 7 delivered and merged (`5fa7385`), 135,000 held ·
+**Status:** ✅ Phase 8 approved for its local scopes (1 to 5) on Jacob's standing go of 2026-11-26 15:10 ("Yes, local work only"), plan review OK after 2 deltas and a last full pass · snapshot 2026-11-26-1537 · running: scope 1 · the AWS scopes (6, 9) wait for Q24, Q26, Q27, Q28 and his go
 **Round:** 8
 **Since your last read:** phase 8's plan is written: 10 scopes, D108 to D115, the predictions. The levers are judged by
 their µs per request on x86, against phase 7's submission, cheapest first: the single-post plan read (no timing if
@@ -205,13 +205,13 @@ step's choice backed by a measurement.
 | 5 | Step lab        | Each step S1 to S9, its variants measured, in the profile's order (5a, 5b: D50) | Each step has a chosen variant and its numbers          |
 | 6 | Submission      | The chosen variants together                                | `test/run.sh` passes 42/42                              |
 | 7 | Score           | `bench/load.js` ramps, x86 calibration                      | More than 71,000 held for 5 minutes                     |
-| 8 | Ring (D76, D84) | First a screen of off-the-shelf io_uring (Swoole's `uring_socket`, an audit of ext-mrloop); then, unless one wins, an io_uring loop in pure PHP through FFI to `liburing-ffi`; a SQLite built with PGO, the single-post plan checked | Each lever's µs/req against phase 7's; a new score if they win |
+| 8 | Ring (D76, D84) | First a screen of off-the-shelf io_uring (Swoole's `uring_socket`, an audit of ext-mrloop); then, unless one wins, an io_uring loop in pure PHP through FFI (on 5a's own syscalls, Q25, D112); a SQLite built with PGO, the single-post plan checked | Each lever's µs/req against phase 7's; a new score if they win |
 | 9 | Submit          | The PR to the challenge repo                                | CI green                                                |
 
-**Decisions:** 120 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
+**Decisions:** 121 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
 is a prediction we re-measure, not an answer.
 
-### Phase 8 scopes (planned, waiting on your answers and the review)
+### Phase 8 scopes (running: 1 to 5 local; 6 and 9 need your go)
 
 Detail, seams, cases and the predictions in [details/phase-8.md](details/phase-8.md). One commit each, on branch
 `phase-8-claude` (D14). Scopes 6 and 9 are AWS sessions: each needs your go. Scope 7 is skipped if nothing wins.
@@ -224,7 +224,7 @@ Detail, seams, cases and the predictions in [details/phase-8.md](details/phase-8
 | 4  | `feat(app): the app on an io_uring ring through FFI`                     | `APP_RING=1` 42/42, conformance, stress 0 mismatches on `/posts/{id}`    |
 | 5  | `feat(app): three rings, a close past their capacity, the fallback`      | 150,000 connections in one process under 100 fds; the epoll fallback 42/42 |
 | 6  | `docs(lab): phase 8's levers on x86, measured`                           | each lever's µs/req against phase 7's submission, chosen or not (needs your go) |
-| 7  | `feat(submission): php-Gcob on the ring` (or the levers that won)        | the clean copy, 42/42 on io_uring and on the fallback (`--ci`)           |
+| 7  | `feat(submission): php-Gcob on the ring` (or the levers that won)        | the clean copy, 42/42 on io_uring, `--ci` with and without the filter; stress, conformance, 150,000 held |
 | 8  | `feat(lab): the score search on two load generators and two servers`     | two k6 halves, the fixed-load pair, the new walls, smoked on the Mac     |
 | 9  | `docs(lab): the score on x86, phase 7 against phase 8, and their ceilings` | each server's highest hold and its wall (needs your go)                |
 | 10 | `docs(submission): the new score, labelled`                              | the README's results paragraph updated                                   |
