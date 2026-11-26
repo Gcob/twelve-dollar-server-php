@@ -896,3 +896,14 @@ dropped, the phrases replaced by "(names left out)"), and pushed `phase-4-claude
 **Verdict:** ✅ verified at 20:23: the 23 container names return nothing on `origin/main`, `origin/phase-4-claude`
 and `origin/phase-3-claude`, apart from 2 generic service words in the audit note. GitHub may keep the old commits
 reachable by SHA until its support purges them: Jacob's call.
+
+### 2026-11-26 15:10 · 👀 Observation: phase 8 runs on its own recommendations while Jacob is away
+
+**Context:** Jacob left after starting the phase 8 project manager. Asked whether it should go ahead on its
+recommended answers while he's away, he answered "Yes, local work only".
+
+**What happened:** the planning session relayed it to the project manager: each phase 8 question takes its
+recommendation, marked "taken by default", and the local scopes run once the plan review is OK. AWS, a question under
+about 65 % or hard to undo, a merge, and `gh` all wait for Jacob.
+
+**Verdict:** ⏳ the answers taken by default are listed at the top of `run.md` for Jacob to review when he's back.
