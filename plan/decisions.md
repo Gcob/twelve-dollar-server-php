@@ -595,9 +595,10 @@
 
 - **D109:** phase 8's order and stops, cheapest first (D60): the single-post plan is read, not timed (closed if
   Ubuntu's SQLite re-prepares nothing and both plans match); ext-mrloop is audited, not run; Swoole's `uring_socket`
-  gets one pair; the tuned SQLite its feed micro first, a pair only if the micro saves the floor's share; the ring one
-  pair, then 2 more if it beats the floor, and its batching knob one pair; the winners together one pair (project
-  manager, phase 8, 2026-11-26).
+  gets one pair; the tuned SQLite its feed micro first, a pair only if the micro's saving times the feed's share of a
+  request reaches the floor; the ring one pair, then 2 more if it beats the floor (D116's shape); the winners together
+  one pair (project manager, phase 8, 2026-11-26; step 4's bar corrected after the plan review,
+  [PLAN-2026-11-26-1523](reviews/PLAN-2026-11-26-1523.md) item 9).
 
 - **D110:** Swoole's screen runs our own app handlers on `Swoole\Coroutine\Http\Server` (the server `uring_socket`
   moves; both Swoole entries use the reactor server), one process, with liburing 2.8 or later built from its pinned
@@ -612,22 +613,51 @@
 
 - **D112:** the ring runs in one process (no S1-b), on 3 rings of direct descriptors (a ring's table is capped by
   `RLIMIT_NOFILE`: 3 × 64,000 = 192,000), `Connection: close` past that soft limit, built on 5a's spike (raw
-  syscalls, `SINGLE_ISSUER` and `DEFER_TASKRUN`, no `SQPOLL`) unless Q25 says liburing-ffi. If `io_uring_setup` is
-  refused at boot, the server says why and runs the epoll loop (project manager, phase 8, 2026-11-26).
+  syscalls, `SINGLE_ISSUER` and `DEFER_TASKRUN`, no `SQPOLL`) unless Q25 says liburing-ffi. If any step of the ring's
+  init is refused at boot (setup, the file table, the buffer ring), the server says which and why and runs the epoll
+  loop; every flag it uses exists on the bench's 6.8 (project manager, phase 8, 2026-11-26; the probe widened after
+  the plan review, item 11).
 
 - **D113:** phase 8's pairs run where Q24 says; its option A is one AWS `c5.2xlarge` running the lab as 5b's x86
-  session did (7,500 req/s, `s = 0.02`, 60,000 idle), a fresh 5-pair A/A of the reference first (project manager,
-  phase 8, 2026-11-26).
+  session did (7,500 req/s, `s = 0.02`, 60,000 idle), a fresh 5-pair A/A of the reference first, both sides of every
+  pair without Docker's seccomp filter (the bench has none); the boxes' kernel per Q27 (project manager, phase 8,
+  2026-11-26).
 
 - **D114:** phase 8's score session: two `c5.large` server boxes shaped as D89 and D91, one per submission, each
-  installed on a clean box; the load per Q26; a fixed-load pair at 101,000 users for each server, then probes from
-  135,000 in 5 % steps, one probe halfway back, holds stepping down 2.5 %. Two more walls than D95: the
-  packets-a-second allowance only when a failing run grew it, the kernel's TCP memory when a failing run logged it.
-  If nothing wins, phase 7's server runs alone, for D107's ceiling (project manager, phase 8, 2026-11-26).
+  installed on a clean box; the load per Q26, the kernel per Q27; port 80 by D100's rule (opened only by Jacob, asked
+  at the go); fixed-load probes at 101,000 users, A B B A across the two servers, read per Q28; then phase 8's search
+  first (its number is the one at risk in the time box), then phase 7's: probes from 135,000 in 5 % steps, one probe
+  halfway back, holds stepping down 2.5 %. Two more walls than D95: the packets-a-second allowance only when a
+  failing run grew it, the kernel's TCP memory when a failing run logged it. If nothing wins, phase 7's server runs
+  alone, for D107's ceiling (project manager, phase 8, 2026-11-26, revised after the plan review, items 16 and 19).
 
 - **D115:** the winning levers go into `submissions/php-Gcob/` as a clean copy with no switch (D79), the ring with its
-  epoll fallback; no parity pair (the score session measures the submission itself); `lab/submission-test.sh` on
-  io_uring and `--ci` on the fallback, so both paths are tested (project manager, phase 8, 2026-11-26).
+  epoll fallback; no parity pair (the score session measures the submission itself); `lab/submission-test.sh` gains
+  `--seccomp-unconfined` (io_uring), `--ci` runs with and without the filter (the real CI runs natively, so likely the
+  ring), each run's `loop:` line printed (D117); `check_submission` allows `FFI` in the ring's file only, the SQLite
+  FFI driver still refused (project manager, phase 8, 2026-11-26, revised after the plan review, items 3, 12, 18).
+
+- **D116:** the ring's pairs run with the server's `nofile` at 32,768, so the lab's 60,000 idle span 2 of the 3
+  shipped rings, as the bench's sizes would: one ring alone would price the ring without its multi-ring loop, against
+  S1-b's 2 processes (plan review, settled by the project manager with the reviewer's pick, phase 8, 2026-11-26,
+  [PLAN-2026-11-26-1523](reviews/PLAN-2026-11-26-1523.md) item 2).
+
+- **D117:** every server prints one `loop:` boot line; `lab/realistic.sh` records it in the run's JSON,
+  `lab/steplab.sh --expect-loop` refuses a variant with the wrong one, `lab/submission-test.sh` prints it, and every
+  "on io_uring" proof reads it, so the epoll fallback can never stand in for the ring (plan review, item 3; settled
+  by the project manager with the reviewer's pick, phase 8, 2026-11-26).
+
+- **D118:** scopes 3 and 5 each end with one step-lab pair at the real shape on the Mac (60,000 idle, 7,500 req/s,
+  against the reference, both runs valid), Swoole's server and the ring: harness smokes before any AWS run (D57),
+  never verdicts (plan review, item 4; project manager, phase 8, 2026-11-26).
+
+- **D119:** the submission's ring is proven on its own server file like the lab's: `lab/stress.sh`,
+  `lab/conformance.sh`, `lab/conns.sh` 150,000 held, besides 42/42 (plan review, item 5; project manager, phase 8,
+  2026-11-26).
+
+- **D120:** the ring's batching knob (`min_wait_usec`, kernel 6.12 and up) is out: the bench runs 6.8, where the call
+  likely fails after setup succeeded, past the fallback, and the knob was predicted within the floor at the lab's rate
+  (plan review, item 1; project manager, phase 8, 2026-11-26).
 
 ## History
 

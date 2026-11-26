@@ -8,6 +8,13 @@ score session names the ceiling of phase 7's submission (D107) and, if it change
 doesn't bind. Every number is written with its bench estimate apart (D96, D106). The predictions below were written
 before any run (D5). Then the run stops (D12).
 
+**Plan review:** [PLAN-2026-11-26-1523.md](../reviews/PLAN-2026-11-26-1523.md), NOT_OK (0 🔴, 6 🟠, 14 🟡).
+Settled by the project manager with the reviewer's picks where the choice was the run's: D116 (the ring's pair spans
+2 rings), D117 (the `loop:` line is a gate), D118 (real-shape smokes on the Mac, D57), D119 (the submission's copy
+proven like the lab's), D120 (the batching knob out: it can't ship to 6.8); the 🟡 folded in below. Two choices are
+Jacob's because they shape the AWS sessions: the kernel of the boxes (Q27) and the score session's cross-box pair
+(Q28).
+
 **Where (D14):** code on branch `phase-8-claude`, in its worktree (from `main` at `1f6b163`). `plan/` stays on `main`.
 The factory holds the private side: the AWS scripts and policies (`aws/`), the run logs with ids and addresses, the raw
 diagnostics (`lab/`).
@@ -39,9 +46,11 @@ In [decisions.md](../decisions.md), settled by the project manager (Jacob's choi
      `p.id = ?` and `p.id = +?`, the lever closes with no run. Else it gets a micro bench, then one pair.
   2. **ext-mrloop** is audited, not run: a screen only if the audit finds a reason (a question to Jacob then).
   3. **Swoole's `uring_socket`** gets one pair against the reference; it stops there unless it beats the floor.
-  4. **The tuned SQLite** gets the feed micro bench first; a pair only if the micro saves at least the floor's share
-     of a request (the floor over the reference's µs/req, times the feed's share of the requests' cost).
-  5. **The ring** gets one pair, then 2 more if it beats the floor (3 in all); its batching knob one pair.
+  4. **The tuned SQLite** gets the feed micro bench first; a pair only if the micro's saving, times the feed's share
+     of a request's cost, reaches the floor: the micro must save at least (floor ÷ the reference's µs/req) ÷ the
+     feed's share.
+  5. **The ring** gets one pair, then 2 more if it beats the floor (3 in all), spread over 2 rings (D116). Its
+     batching knob is out (D120).
   6. **The winners together:** one pair, only if two or more win.
 - **D110, Swoole's screen:** our own `lab/app/app.php` handlers on `Swoole\Coroutine\Http\Server` (the server
   `uring_socket` moves; both Swoole entries use the reactor `Swoole\Http\Server`, which it doesn't), one process, in a
@@ -57,7 +66,9 @@ In [decisions.md](../decisions.md), settled by the project manager (Jacob's choi
   mix) on a database it **generates** with the challenge's schema and a seed-like size, never the seed: `install.sh`
   never sees the bench's data, and the build must not depend on it. PHP's `pdo_sqlite` links against that library
   (its own prefix, an rpath, so the system's `libsqlite3` is never replaced). `-march=native` is legal because
-  `install.sh` compiles on the box that runs it (the bench's Xeon 8260 and our 8275CL are both Cascade Lake). The
+  `install.sh` compiles on the box that runs it (the bench's Xeon 8260 and our 8275CL are both Cascade Lake).
+  `pdo_sqlite` is built into the `php` binary (`--with-pdo-sqlite`), so the proof is `ldd` of `php`, and the build
+  prints what PHP's configure detected in the library (an omitted symbol must not drop a feature PDO uses). The
   version change alone is not separated from the flags unless the pair wins (then one more pair: the same version,
   stock flags).
 - **D112, the ring's shape:** one process (no S1-b), built on 5a's spike (`lab/servers/uring-noop.php`: raw syscalls
@@ -65,30 +76,54 @@ In [decisions.md](../decisions.md), settled by the project manager (Jacob's choi
   `SINGLE_ISSUER` and `DEFER_TASKRUN`), unless Q25 says liburing-ffi. Connections are direct descriptors; a ring's
   table is capped by `RLIMIT_NOFILE` (65,535 on the bench), so 3 rings in one process hold 3 × 64,000 = 192,000, with
   `Connection: close` past that soft limit (as S1-d). The app's handlers are called as on the DIY loop; SQLite stays
-  synchronous. At boot, if `io_uring_setup` fails (a kernel or a seccomp filter that refuses it), the server prints
-  why and runs the epoll loop instead: the bench's systemd service allows io_uring (30+ entries run on it), the
-  challenge's CI runner is not known to.
+  synchronous. At boot the server runs the ring's whole init (setup with its flags, the file table, the buffer
+  ring): if any step is refused (a seccomp filter's `EPERM`, `ENOSYS`, `io_uring_disabled`, an older kernel's
+  `EINVAL`), it prints why and runs the epoll loop instead, as S1-b does today. The bench's systemd service allows
+  io_uring (30+ entries run on it). Every flag used exists on the bench's 6.8 (`DEFER_TASKRUN` 6.1, `NO_SQARRAY` 6.6).
 - **D113, where the pairs run:** per Q24. Its option A: one AWS `c5.2xlarge` running the lab as 5b's x86 session did
   (`LAB_CPU_LAYOUT=x86-8`, the server on one vCPU with its sibling idle, k6 on the others), 7,500 req/s, `s = 0.02`,
   60,000 idle, 60 s runs, alternating order, a fresh A/A of the reference first (5 pairs: the 2-process reference has
-  no x86 floor yet), then D109's pairs. The micro benches run on the same box.
+  no x86 floor yet), then D109's pairs. The micro benches run on the same box. Every run of a pair, both sides, runs
+  without Docker's seccomp filter (the bench has none, and the flag is per run). The kernel per Q27.
 - **D114, the score session:** two server boxes shaped as D89 and D91 (`c5.large`, one core, `mem=2G`), one per
   submission, each installed the bench's way on a clean box, so neither install touches the other's `/opt/php-gcob`;
-  the load per Q26. Port 80 open to `0.0.0.0/0` from the start (untracked, D100: Jacob opened it himself in phase 7;
-  the plan asks him again at the go). Each server: the warm-up, then a fixed-load pair at 101,000 users (each server
-  twice, A B B A, 2-minute probes: the µs/req at the bench's shape), then the search: probes from 135,000 in 5 %
-  steps until one fails, one probe halfway back (2.5 %), then 5-minute holds stepping down 2.5 % from the highest
-  pass. The phase 7 server's µs/req at 101,000 is checked against phase 7's session (53.6): within 3 %, the two boxes
-  are read as alike; else the README says the boxes differ by that much. D95's walls, with two more: **network** only
+  the load per Q26, the kernel per Q27. Port 80 by D100's rule (opened to `0.0.0.0/0` when a box's
+  `conntrack_allowance_available` is under 220,000, which the `c5.large` was, 136,801; only Jacob opens it, asked at
+  the go). Both servers warm up, then a fixed-load probe at 101,000 users interleaved A B B A across the two (2-minute
+  probes: the µs/req at the bench's shape, read per Q28), then each server's search, phase 8's first (the new number
+  is the one at risk in the time box): probes from 135,000 in 5 % steps until one fails, one probe halfway back
+  (2.5 %), then 5-minute holds stepping down 2.5 % from the highest pass. The phase 7 server's µs/req at 101,000 is
+  compared with phase 7's session (53.6) and written. D95's walls, with two more: **network** only
   when a run fails with `pps_allowance_exceeded` grown (phase 7 passed with it grown), **TCP memory** when a failing
   run logged `TCP: out of memory`. If nothing wins at the x86 lab session, the session runs phase 7's server alone
   (D107).
 - **D115, the submission:** the winning levers go into `submissions/php-Gcob/` as a clean copy (D79), with no switch:
   the ring (and its epoll fallback), and/or the tuned SQLite built by `install.sh`. No parity pair (D83): the score
   session measures the submission itself against phase 7's. Its proofs: `lab/submission-test.sh` 42/42 on a clean
-  `ubuntu:24.04` with io_uring allowed, and `--ci` 42/42 (Docker's default seccomp filter refuses io_uring there, so
-  the CI emulation runs the fallback: both paths are tested). The README's rules audit covers io_uring and the PGO
-  build.
+  `ubuntu:24.04` with io_uring allowed (a new `--seccomp-unconfined`), and `--ci` 42/42 twice: with Docker's filter (the
+  fallback) and without it (the real CI runs natively on `ubuntu-24.04`, so it likely runs the ring); D117's line
+  says which loop each ran. `check_submission` refuses the word `FFI` today (`lab/check.sh`): it then allows it in the
+  ring's file only, the SQLite FFI driver still refused, with a fixture each way. The README's rules audit covers
+  io_uring and the PGO build.
+- **D116, the ring's pair spans two rings:** at the lab's shape (60,000 idle and about 1,400 VUs) every connection
+  fits in one ring's table, so the pair would price one ring against S1-b's two processes while the submission ships
+  3 rings, 2 active at the bench's sizes. The ring's runs set the server's `nofile` to 32,768 (`LAB_SERVER_NOFILE`,
+  `lab/lib.sh`), so 60,000 idle span 2 rings, with `APP_RINGS=3` as shipped; the `ring:` lines show each ring's open
+  count. The table size is then not the bench's, said in the README.
+- **D117, the loop line is a gate:** every server prints one `loop:` boot line (`ring, 3 rings`, `epoll (io_uring
+  refused: <errno>)`, `swoole-co, uring` ...); `lab/realistic.sh` writes it into the run's JSON, `lab/steplab.sh`
+  refuses a variant whose line isn't the one it expects (`--expect-loop <variant>=<text>`), `lab/submission-test.sh`
+  prints it, and every "on io_uring" Done when reads it. A fallback can never stand in for the ring in a pair or a
+  proof.
+- **D118, real-shape smokes before AWS (D57):** scope 3 ends with one step-lab pair of `swoole-co.php` against the
+  reference and scope 5 with one of the ring (D116's shape) against the reference, on the Mac at 60,000 idle and 7,500
+  req/s, both runs valid. They are smokes of the harness, never verdicts, even with the Mac's VM quiet.
+- **D119, the submission's copy proven like the lab's:** scope 7 also runs, on the submission's own server file,
+  `lab/stress.sh` (0 mismatches, pipelines 1 and 16), `lab/conformance.sh` all `ok` and `lab/conns.sh` 150,000 held:
+  42/42 and k6 never split or pipeline a request, so a port bug would ship unseen.
+- **D120, the batching knob is out:** `URING_MIN_WAIT_US` uses `min_wait_usec`, kernel 6.12 and up; the bench runs 6.8,
+  where the field is reserved and the call likely fails after setup succeeded, past the fallback. Predicted within
+  the floor at 7,500 req/s anyway (D60): not built, not measured.
 
 ## Scopes
 
@@ -96,11 +131,11 @@ In [decisions.md](../decisions.md), settled by the project manager (Jacob's choi
 |-----|-------------------------------------------------------------------------|-----------|
 | 1   | `feat(lab): the single-post plan, read`                                  | `bash lab/post-plan.sh` prints the SQLite version, whether `ENABLE_STAT4` is in its compile options, `SQLITE_STMTSTATUS_REPREPARE` after 10,000 single-post queries through the FFI driver (`lab/app/sqlite-ffi.php`) for `p.id = ?` and for `p.id = +?`, and both `EXPLAIN QUERY PLAN`s, and ends on one line: `closed` or `timing needed`; a fixture with a forced re-prepare makes it say `timing needed`; `lab/check.sh` all `ok` |
 | 2   | `feat(lab): a SQLite built from the amalgamation, tuned, with PGO`       | `lab/images/install-sqlite-tuned.sh` builds D111's library (sha256 pinned) with its training on a generated database; a `php-lab:8.5-sqlite` image whose `pdo_sqlite` prints the new version and `THREADSAFE=0`; `lab/challenge-test.sh --image 8.5-sqlite` 42/42; `bash lab/micro.sh lab/micro/benches/feed.php --images 8.5,8.5-sqlite` prints ns per feed for both (a smoke, not a measurement); the build fails if the training ran no statement; `lab/check.sh` all `ok` |
-| 3   | `feat(lab): off-the-shelf io_uring, Swoole built and ext-mrloop audited` | `php-lab:8.5-uring` (liburing pinned, Swoole 6.2.6 with `--enable-uring_socket`) prints Swoole's io_uring support in `--ri swoole`; `lab/servers/swoole-co.php` (D110) passes `lab/challenge-test.sh` 42/42 on it with `--seccomp-unconfined`, and `strace -c` on a short run shows `io_uring_enter` and no `epoll_wait`; `lab/results/<date>-mrloop-audit/README.md` answers the audit's questions (below) with file and line, and ends on `screen` or `no screen`; `lab/check.sh` all `ok` |
-| 4   | `feat(app): the app on an io_uring ring through FFI`                     | `APP_RING=1` runs `lab/app` on one ring (D112): `lab/challenge-test.sh --seccomp-unconfined` 42/42 twice; `lab/conformance.sh` all `ok` (partial reads, pipelining); `lab/stress.sh` on the app's `GET /posts/<id>` with 0 mismatches and 0 lost over 1,000,000 requests, pipelines 1 and 16; `lab/realistic.sh` and `lab/steplab.sh` take `--seccomp-unconfined` and run it at a small size; `lab/check.sh` all `ok` |
-| 5   | `feat(app): three rings, a close past their capacity, the fallback`      | `APP_RING=1 APP_RINGS=3`: `lab/conns.sh --seccomp-unconfined` holds 150,000 connections in one process with its own fds under 100, each answered; the soft limit's `Connection: close` past it (a small limit in a check: closes counted, 0 errors); with Docker's default seccomp filter the server prints the fallback and passes 42/42 on the epoll loop; `lab/check.sh` all `ok` |
+| 3   | `feat(lab): off-the-shelf io_uring, Swoole built and ext-mrloop audited` | `php-lab:8.5-uring` (liburing pinned, Swoole 6.2.6 with `--enable-uring_socket`) prints Swoole's io_uring support in `--ri swoole`; `lab/servers/swoole-co.php` (D110) passes `lab/challenge-test.sh` 42/42 on it with `--seccomp-unconfined`, its `loop:` line says io_uring (D117), and `strace -c` on a short run shows `io_uring_enter` with under 0.1 `recvfrom`, `sendto` and `accept4` a request; one step-lab pair against the reference at 60,000 idle and 7,500 req/s, both runs valid (D118, a smoke); `lab/results/<date>-mrloop-audit/README.md` answers the audit's questions (below) with file and line, and ends on `screen` or `no screen`; `lab/check.sh` all `ok` |
+| 4   | `feat(app): the app on an io_uring ring through FFI`                     | `APP_RING=1` runs `lab/app` on one ring (D112): `lab/challenge-test.sh --seccomp-unconfined` 42/42 twice; `lab/conformance.sh` all `ok` (partial reads, pipelining); `lab/stress.sh` on the app's `GET /posts/<id>` with 0 mismatches and 0 lost over 1,000,000 requests, pipelines 1 and 16; `lab/realistic.sh` and `lab/steplab.sh` take `--seccomp-unconfined` (both sides of a pair) and run it at a small size; the `loop:` line in the run's JSON and `--expect-loop` refusing a wrong one, with a fixture (D117); `APP_GROUP_COMMIT` refused with `APP_RING`; `lab/check.sh` all `ok` |
+| 5   | `feat(app): three rings, a close past their capacity, the fallback`      | `APP_RING=1 APP_RINGS=3`: `lab/conns.sh --seccomp-unconfined` holds 150,000 connections in one process with its own fds under 100, each answered; the soft limit's `Connection: close` past it (a small limit in a check: closes counted, 0 errors); with Docker's default seccomp filter the server prints the fallback line and passes 42/42 on the epoll loop; one step-lab pair, ring (D116's shape: `nofile` 32,768, 2 rings open) against the reference, 60,000 idle, 7,500 req/s, both valid, `loop:` lines checked (D118, a smoke); `lab/check.sh` all `ok` |
 | 6   | `docs(lab): phase 8's levers on x86, measured`                           | `lab/results/<date>-x86-levers/README.md`: the predictions copied unchanged and committed before the session; the machine; the reference's A/A floor; every pair D109 calls for, with its verdict; the feed micro bench on both SQLites; one line per lever: its µs/req against the reference, chosen or not and why; the bench estimate of each; `summarize.sh` regenerates the tables; the guard passes; `teardown.sh --verify` clean (factory) |
-| 7   | `feat(submission): php-Gcob on the ring` (or the levers that won)        | the winning levers in the clean copy (D115): `bash lab/submission-test.sh` 42/42 on io_uring and `--ci` 42/42 on the fallback; `check_submission` green; the README's rules audit names io_uring and the build; **skipped** if scope 6 chose nothing |
+| 7   | `feat(submission): php-Gcob on the ring` (or the levers that won)        | the winning levers in the clean copy (D115): `bash lab/submission-test.sh --seccomp-unconfined` 42/42 with `loop: ring`, `--ci` 42/42 with and without the filter, each `loop:` line printed; on the submission's server file `lab/stress.sh` 0 mismatches, `lab/conformance.sh` all `ok`, `lab/conns.sh` 150,000 held (D119); `check_submission` green with its new `FFI` rule; the README's rules audit names io_uring and the build; **skipped** if scope 6 chose nothing |
 | 8   | `feat(lab): the score search on two load generators and two servers`     | `lab/score/search.sh` drives Q26's load (two k6 halves, started in the same second, pass when both pass, void per half) and D114's fixed-load pair; `bash lab/score/smoke.sh` runs it small on the Mac (two k6 containers, the local controller); `check_score` gains fixtures for the halves (one fails, one void, the plateau's intersection) and the new walls; `launch.sh --print` (factory) shows two server boxes and the load; `lab/check.sh` all `ok` |
 | 9   | `docs(lab): the score on x86, phase 7 against phase 8, and their ceilings` | `lab/results/<date>-x86-score-2/README.md`: the predictions committed before the launch; both boxes' proofs; the fixed-load pair; every run and decision; each server's highest hold and its wall by D114's rules; the bench estimates; what differs from the bench; `TEARDOWN CLEAN` (factory) |
 | 10  | `docs(submission): the new score, labelled`                              | the README's "Results" paragraph (D103) updated with the session's numbers and link; `check_submission` resolves it; the guard passes |
@@ -131,7 +166,8 @@ reports.
 - **Seams:** new `lab/post-plan.sh` (runs in the lab's image), a PHP script beside it using `lab/app/sqlite-ffi.php`
   (it already binds `libsqlite3` through FFI: `sqlite3_stmt_status` and `sqlite3_compileoption_used` are added to
   its declarations), `lab/check.sh` (`check_post_plan` with its fixture).
-- **What it reads:** `APP_ONE_POST_SELECT` from `lab/app/app.php` as the app prepares it, and the same with `+?`;
+- **What it reads:** `APP_ONE_POST_SELECT` from `submissions/php-Gcob/app.php` (the reference, D108; the lab builds
+  the same SQL in `app_post_sql()`), and the same with `+?`;
   10,000 queries over random existing ids on a copy of the seed; the re-prepare counter after them; the plans.
 - **The fixture:** a statement that SQLite must re-prepare (a schema change between two steps, which expires the
   statement) shows the counter moving, so the check can fail.
@@ -150,7 +186,8 @@ reports.
   printed and the build fails at 0.
 - **Not here:** the submission's `install.sh` (scope 7, if it wins), a pair (scope 6).
 - **Cases:** `pragma compile_options` lists `THREADSAFE=0` and the options of D111; the version is the pinned one;
-  the system's `libsqlite3` is still Ubuntu's (`ldd` of `pdo_sqlite.so` points to the new prefix).
+  the system's `libsqlite3` is still Ubuntu's; `ldd` of the `php` binary points to the new prefix (`pdo_sqlite` is
+  built in); the build prints what PHP's configure detected.
 
 ## Scope 3: off-the-shelf io_uring
 
@@ -176,8 +213,10 @@ reports.
   buffer ring, one send per response from a pooled slot (a response longer than a slot takes a slot sized for it),
   a short send resubmitted from where it stopped, a request split over several receives assembled before parsing,
   pipelined requests answered in order, `Connection: close` honoured, a closed peer freeing its slot, one
-  `io_uring_enter` per turn. The parser and the handlers are the DIY server's (`lab/servers/diy-connection.php`,
-  `lab/app/app.php`), called the same way.
+  `io_uring_enter` per turn. The handlers are the app's (`lab/app/app.php`), called as the DIY server calls them. The
+  parser is copied into the ring's connection class, as the spike did, not shared: `DiyConnection` reads a PHP stream
+  and its `parse()` is private, and `APP_RING` unset must stay byte for byte. `APP_GROUP_COMMIT` (a handler returning
+  a `Closure`) is refused with `APP_RING`.
 - **Telemetry:** with `APP_TELEMETRY=1` the `ring:` line a second (turns, requests, requests per turn, sends short,
   slots in use), as the spike printed.
 - **Cases:** a request split at every byte boundary of its first 64 bytes; 16 pipelined requests in one packet; a
@@ -192,9 +231,10 @@ reports.
 - **Several rings:** each with its own table sized by `RLIMIT_NOFILE`, all accepting from one listening socket; the
   loop waits on one ring and enters the others when their `IORING_SQ_TASKRUN` flag shows work, as the spike's two
   rings did; a turn's cost with 3 rings is read in the smoke (`ring:` lines) so scope 6 knows what a ring costs.
-- **The fallback:** `io_uring_setup` refused (`EPERM` under Docker's default filter, `ENOSYS`, or
-  `io_uring_disabled`): one boot line (`loop: epoll (io_uring refused: <errno>)`), then the DIY loop with S1-b's two
-  processes as today. Never a silent switch mid-run.
+- **The fallback:** any step of the ring's init refused (setup, the file table, the buffer ring; `EPERM` under
+  Docker's default filter, `ENOSYS`, `io_uring_disabled`, `EINVAL` on an older kernel): one boot line (`loop: epoll
+  (io_uring refused: <step> <errno>)`), then the DIY loop with S1-b's two processes as today. Never a silent switch
+  mid-run.
 - **Cases:** 150,000 held across 3 rings; a soft limit of 100 in a check: the 101st response closes; the fallback's
   boot line and its 42/42.
 
@@ -204,13 +244,17 @@ reports.
   policy written; Jacob's go (🔴); `launch.sh --dry-run` clean.
 - **The session (Q24 = A), in order:** launch; the lab set up as 5b's (`aws/bootstrap.sh`, the images built on the
   box: `8.5`, `8.5-sqlite` with its PGO training on that CPU, `8.5-uring`); the reference's A/A (5 pairs); then D109's
-  steps in order, each with its stop: the feed micro on both SQLites, Swoole's pair, the ring's pair (2 more if it beats
-  the floor), the batching knob's pair, the tuned SQLite's pair if the micro calls for it, the winners together;
+  steps in order, each with its stop: the feed micro on both SQLites, Swoole's pair, the ring's pair (D116's shape; 2
+  more if it beats the floor), the tuned SQLite's pair if the micro calls for it, the winners together; every run
+  without the seccomp filter, its `loop:` line checked (D117);
   results copied back (raw files to the factory's `lab/`); `teardown.sh`, then `--verify`.
-- **If Q24 = B:** the same series on the Mac's quiet VM (Jacob stops his containers for it), `--floor-from` its own
-  A/A; then the ring and the tuned SQLite still get one x86 pair each in scope 9's session, before the search.
+- **If Q24 = B:** the same series on the Mac's quiet VM, `--floor-from` its own A/A; arm64 numbers, said so. The
+  score boxes are 1-vCPU `c5.large`s, where the step lab can't run, so the x86 reading is then the score session's
+  per-box µs/req only.
 - **The README:** the predictions, the plan of the runs, the machine, what differed, the tables (`summarize.sh`), the
-  choice per lever with its bench estimate, the predictions judged.
+  choice per lever with its bench estimate, the predictions judged. The bench estimate of a lever scales phase 7's
+  by the pair: `86,800 × the reference's µs/req ÷ the lever's` (the `5.12 million / µs` rule reads the score box's µs
+  at the bench's shape, not the lab's at 7,500 req/s).
 
 ## Scope 7: the submission
 
@@ -234,9 +278,10 @@ reports.
 ## Scope 9: the score session
 
 - **Before the launch:** the predictions copied and committed; Jacob's go and port 80 (🔴); `--dry-run` clean.
-- **The session:** D98's order for each server box, both set up in parallel; the 42 checks on each; then per server:
-  the warm-up, the fixed-load pair, the search (D114); phase 7's server first (the known one), then phase 8's; results
-  copied back; teardown and `--verify`. Stop at 3 h 30 of the boxes' life.
+- **The session:** D98's order for each server box, both set up in parallel; the 42 checks on each, the `loop:` line
+  read; both boxes' CPU model (and Q28's check); both warm-ups, the fixed-load probes A B B A across the two servers,
+  then phase 8's search, then phase 7's (D114); results copied back; teardown and `--verify`. Stop at 3 h 30 of the
+  boxes' life.
 - **The README:** as phase 7's, both servers side by side, each wall named or the reason it isn't.
 
 ## Scope 10: the README's results
@@ -246,7 +291,8 @@ reports.
 
 ## Predictions (D5)
 
-Written by the project manager on 2026-11-26 at 15:10, before any phase 8 run. x86 numbers on AWS `c5.2xlarge` (the
+Written by the project manager on 2026-11-26 at 15:10, before any phase 8 run, and revised at 15:45 after the plan
+review, still before any run: prediction 5's range (5b's 57.75), prediction 8 (the knob is out). x86 numbers on AWS `c5.2xlarge` (the
 lab session, Q24 = A) or `c5.large` (the score), PHP 8.5, the reference phase 7's submission, unless a line says
 otherwise.
 
@@ -257,13 +303,13 @@ otherwise.
 3. **ext-mrloop's audit:** `no screen`: one fd per connection (so the fd wall stays), one maintainer, no PHP 8.5 in
    its CI.
 4. **The ring on the Mac (smokes):** 42/42, stress 0 mismatches, 150,000 connections on 3 rings with under 100 fds.
-5. **The reference's A/A floor on x86** at 7,500 req/s: 1.0 to 3.0 µs/req; the reference at 50 to 56 µs/req.
+5. **The reference's A/A floor on x86** at 7,500 req/s: 1.0 to 3.0 µs/req; the reference at 54 to 60 µs/req (5b's
+   S1-b read 57.75 on the same box type, with telemetry on; the submission has none).
 6. **Swoole's `uring_socket`:** one pair, **+5 to +20 µs/req over the reference** (the Swoole entries cost 10 to 17 %
    more than our server on the Mac; io_uring under 5 % of that back): stops there.
 7. **The ring:** **−6 to −12 µs/req** against the reference (−11 to −22 %), beyond the floor in 3 pairs: S1-b's
    second process gone (+7.44 on the Xeon in 5b) and 1 to 4 µs of syscalls; chosen.
-8. **The batching knob** (`URING_MIN_WAIT_US=100`): within the floor at 7,500 req/s (1 to 1.5 requests a turn):
-   not chosen.
+8. **The batching knob:** out (D120), no prediction.
 9. **The tuned SQLite:** the feed micro 8 to 18 % under Ubuntu's 3.45.1; the pair −1 to −5 µs/req; beyond the floor
    with about 50 % confidence.
 10. **The score session, phase 7's server:** at 101,000 users 52 to 56 µs/req (phase 7: 53.6); its ceiling with a
