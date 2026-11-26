@@ -17,6 +17,11 @@
 //                                         <idle> connections are opened and left idle (for a server whose first ring's table they fill, so the
 //                                         last of them is on the second ring), then <requests> requests, one at a time, go over the last one: each
 //                                         answer is the right post's. The connections stay open 3 s more, so the server's last statistics lines show
+//   php ring-client.php <port> burst <connections>
+//                                         <connections> are opened one right after the other with no pause (the whole burst is in the listen backlog
+//                                         before the server has taken a few), each sends a request, and each answer must come within 1 s and be its
+//                                         own post's: none dropped, none left waiting. The connections stay open 3 s more, so the server's last
+//                                         statistics lines show them
 //   php ring-client.php <port> compare <other port>
 //                                         the same raw requests (valid, refused, malformed, HTTP/1.0, Connection: close, pipelined behind a
 //                                         close, an oversized head) to this server and to the DIY server on the other port: the same bytes
@@ -279,6 +284,37 @@ function cmd_follow(int $port, int $idle, int $requests): void
     sleep(3);
 }
 
+function cmd_burst(int $port, int $count): void
+{
+    $connections = [];
+    for ($c = 0; $c < $count; $c++) {
+        $connections[$c] = connect_to($port);
+    }
+    $sent = [];
+    foreach ($connections as $c => $fp) {
+        stream_set_timeout($fp, 1);
+        write_all($fp, get('/posts/' . (1 + $c)));
+        $sent[$c] = microtime(true);
+    }
+    $failure = null;
+    $slowest = 0.0;
+    foreach ($connections as $c => $fp) {
+        try {
+            $answer = read_responses($fp, 1)[0];
+        } catch (RuntimeException $e) {
+            $failure = "connection $c: " . $e->getMessage();
+            break;
+        }
+        $slowest = max($slowest, microtime(true) - $sent[$c]);
+        if (post_id_of($answer) !== 1 + $c) {
+            $failure = "connection $c got " . json_encode(substr($answer['body'], 0, 60));
+            break;
+        }
+    }
+    say("$count connections opened in a burst: each answered with its own post, the slowest in " . round($slowest, 3) . ' s', $failure ?? ($slowest > 1.0 ? 'one answer took over 1 s' : null));
+    sleep(3);
+}
+
 /** What a server sends back for raw bytes: everything it sends until it is quiet for 150 ms or ends the connection. @return array{string, bool} */
 function raw_exchange(int $port, string $bytes): array
 {
@@ -367,8 +403,8 @@ function cmd_compare(int $port, int $other): void
 $failed = false;
 $port = (int) ($argv[1] ?? 0);
 $command = $argv[2] ?? '';
-if ($port < 1 || !function_exists('cmd_' . $command) || ($command === 'compare' && (int) ($argv[3] ?? 0) < 1) || ($command === 'follow' && (int) ($argv[4] ?? 0) < 1)) {
-    fwrite(STDERR, "usage: php ring-client.php <port> split|pipeline|big|midclose|many|follow <idle> <requests>|compare <other port>\n");
+if ($port < 1 || !function_exists('cmd_' . $command) || ($command === 'compare' && (int) ($argv[3] ?? 0) < 1) || ($command === 'follow' && (int) ($argv[4] ?? 0) < 1) || ($command === 'burst' && (int) ($argv[3] ?? 0) < 1)) {
+    fwrite(STDERR, "usage: php ring-client.php <port> split|pipeline|big|midclose|many|follow <idle> <requests>|burst <connections>|compare <other port>\n");
     exit(2);
 }
 try {

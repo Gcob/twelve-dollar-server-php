@@ -14,13 +14,15 @@
 // - One io_uring_enter per turn of the loop: it submits what the turn built and waits for at least one completion (one second at most, so
 //   the statistics line comes out when the server is idle). A full submission queue forces one more submit-only enter in the middle of a
 //   turn: counted as `flushes`. Nothing newer than kernel 6.8 (the bench's) is used: no min_wait_usec, no batching knob.
-// - Connections are direct descriptors: multishot accept into a sparse table of fixed files (IORING_FILE_INDEX_ALLOC), as large as
+// - Connections are direct descriptors: accept into a sparse table of fixed files (IORING_FILE_INDEX_ALLOC), as large as
 //   RLIMIT_NOFILE allows (the kernel refuses a bigger one with EMFILE, and the lab's limit is 65,535), so a connection takes no file
 //   descriptor of the process. A table is per ring: APP_RINGS rings (1 to 4) in the one process hold that many tables of connections. Receive is multishot from a provided buffer ring (a pool shared by all connections, nothing held per idle
 //   connection), send is one SEND of the response copied into a pooled slot, and a server-side close is a shutdown linked to the close
 //   of the descriptor (the multishot receive keeps the socket alive until the shutdown ends it).
 // - SQEs are written in place in the ring's mapped memory, field by field; CQEs are read once per turn: one FFI::string, one unpack().
-// - Several rings (RingLoop): all of them accept from the one listening socket, each pausing its accept when its own table is nearly full.
+// - Accepts are single, a window of at most ACCEPT_WINDOW waiting and never more than the table has free slots for (topUpAccepts()): no
+//   connection is ever taken that has no slot, however large a burst the backlog holds.
+// - Several rings (RingLoop): all of them accept from the one listening socket; a ring arms accepts only when the ring before it is full.
 //   The loop blocks on the ring that had completions in its last turn (never always the first: connections fill the first ring and the
 //   traffic that comes after lands on the next), and in the same turn enters every other ring that has work (its IORING_SQ_TASKRUN flag
 //   is set: only an io_uring_enter of its own runs its deferred work) or SQEs queued (only its own enter submits them).
@@ -93,7 +95,6 @@ final class AppRing
 
     // Opcodes and SQE flags.
     private const OP_ACCEPT = 13;
-    private const OP_ASYNC_CANCEL = 14;
     private const OP_CLOSE = 19;
     private const OP_SEND = 26;
     private const OP_RECV = 27;
@@ -101,7 +102,6 @@ final class AppRing
     private const SQE_FIXED_FILE = 1;
     private const SQE_IO_LINK = 4;
     private const SQE_BUFFER_SELECT = 32;
-    private const ACCEPT_MULTISHOT = 1;
     private const RECV_MULTISHOT = 2;
     private const FILE_INDEX_ALLOC = 0xFFFFFFFF;
     private const CQE_F_BUFFER = 1;
@@ -111,8 +111,9 @@ final class AppRing
     private const SHUT_RDWR = 2;
     private const ENOBUFS = 105;
     private const ECANCELED = 125;
-    /** Descriptors of the table kept free: the accept stops before the table is full (see onAccept). */
-    private const TABLE_MARGIN = 16;
+    private const ECONNABORTED = 103;
+    /** Accepts one ring keeps waiting on the listening socket at most (see topUpAccepts()). */
+    private const ACCEPT_WINDOW = 64;
     private const EINTR = 4;
     private const EAGAIN = 11;
     private const EBUSY = 16;
@@ -125,7 +126,6 @@ final class AppRing
     private const T_SEND = 2;
     private const T_CLOSE = 3;
     private const T_SHUTDOWN = 4;
-    private const T_CANCEL = 5;
 
     private const SQ_TASKRUN = 1 << 2;
     private const SQ_ENTRIES = 4096;
@@ -193,7 +193,7 @@ final class AppRing
     private readonly int $sqMask;
     private readonly int $cqEntries;
     private readonly int $bufAddr;
-    private readonly int $acceptLimit;
+    private readonly ?AppRing $previous;
     private readonly ?string $failStep;
     private int $listenFd = -1;
     /** @var list<array{int, int}> the mappings this ring made (address, bytes), unmapped by release() */
@@ -231,6 +231,12 @@ final class AppRing
     private array $stalled = [];
     /** @var list<int> connections whose receive ended for want of a buffer, waiting to be armed again (descriptor | generation << 16) */
     private array $dryQ = [];
+    /** Accepts submitted and not completed. */
+    private int $acceptsOut = 0;
+    /** Slots of the table taken: connections open, and closed ones whose descriptor has not been given back yet (its close has not completed). */
+    private int $used = 0;
+    private bool $tableFull = false;
+    /** An accept failed for a reason that is not the table: no more are armed until a connection closes. */
     private bool $acceptPaused = false;
     private bool $pauseReported = false;
 
@@ -245,7 +251,8 @@ final class AppRing
      * @param FFI $ffi the declarations of ring-server.h
      * @param FFI $ffiAddr an FFI whose mmap() and munmap() take and return addresses as integers (see map())
      * @param RingTotals $totals the open connections of every ring, shared by them
-     * @param array{recv_buffers?: int, send_slots?: int, table_size?: int, soft_limit?: ?int, fail_step?: ?string} $options pool sizes (a power of
+     * @param array{recv_buffers?: int, send_slots?: int, table_size?: int, soft_limit?: ?int, fail_step?: ?string, previous?: ?AppRing} $options
+     *        the ring before this one (it accepts first: see topUpAccepts()), pool sizes (a power of
      *        two of receive buffers, the table of direct descriptors that RLIMIT_NOFILE does not already make smaller), the soft connection limit (a response built while more connections than this are open, on all the rings, says
      *        `Connection: close` and ends its connection), and a test hook: the step ('files' or 'buffer_ring') to ask the kernel for something
      *        it refuses
@@ -264,7 +271,7 @@ final class AppRing
         }
         $this->tableSize = min($rl->cur, self::MAX_TABLE, $options['table_size'] ?? self::MAX_TABLE);
         $this->gens = array_fill(0, $this->tableSize, 0);
-        $this->acceptLimit = $this->tableSize - self::TABLE_MARGIN;
+        $this->previous = $options['previous'] ?? null;
         try {
             $this->build();
         } catch (RingRefused $e) {
@@ -479,17 +486,49 @@ final class AppRing
         $s->file_index = $fileIndex;
     }
 
-    /** Arms this ring's multishot accept on the listening socket (all the rings accept from the same one). */
+    /** Tells the ring which socket the connections come from (all the rings accept from the same one) and arms its first accepts. */
     public function armAccept(int $listenFd): void
     {
         $this->listenFd = $listenFd;
-        $this->armAcceptAgain();
+        $this->topUpAccepts();
     }
 
-    private function armAcceptAgain(): void
+    /** True when every slot of the table is taken or promised to an accept (or accepting failed): nothing more can be armed here. */
+    public function isFull(): bool
     {
-        // personality, addr3 and pad2 are never written: they stay zero.
-        $this->prep(self::OP_ACCEPT, 0, self::ACCEPT_MULTISHOT, $this->listenFd, 0, 0, 0, self::O_NONBLOCK, self::T_ACCEPT, 0, self::FILE_INDEX_ALLOC);
+        return $this->acceptPaused || $this->tableSize - $this->used - $this->acceptsOut <= 0;
+    }
+
+    /**
+     * Keeps up to ACCEPT_WINDOW single accepts waiting, never more than the table has free slots for: an accept that finds the table full has
+     * already taken the connection off the listening queue and the kernel drops it, and a multishot accept takes the whole backlog in one go
+     * (up to 4,096 connections here and on the bench), so no margin below the table's end is safe in a burst. With at most as many accepts
+     * waiting as there are free slots, no connection can be taken that has nowhere to go. A connection arriving past that waits in the
+     * backlog, and a ring that gets a slot back (a close completes) arms an accept that takes it at once: an accept tries before it waits.
+     * First fit: a ring arms accepts only when the ring before it is full, so the connections fill the first ring, then the next.
+     */
+    public function topUpAccepts(): void
+    {
+        if ($this->acceptPaused) {
+            return;
+        }
+        $room = $this->tableSize - $this->used - $this->acceptsOut;
+        if ($room <= 0) {
+            if (!$this->tableFull) {
+                $this->tableFull = true;
+                $this->acceptPauses++;
+            }
+            return;
+        }
+        $this->tableFull = false;
+        if ($this->previous !== null && !$this->previous->isFull()) {
+            return;
+        }
+        for ($want = min(self::ACCEPT_WINDOW - $this->acceptsOut, $room); $want > 0; $want--) {
+            // personality, addr3 and pad2 are never written: they stay zero. No multishot flag: one accept, one connection.
+            $this->prep(self::OP_ACCEPT, 0, 0, $this->listenFd, 0, 0, 0, self::O_NONBLOCK, self::T_ACCEPT, 0, self::FILE_INDEX_ALLOC);
+            $this->acceptsOut++;
+        }
     }
 
     private function armRecv(int $idx): void
@@ -506,10 +545,6 @@ final class AppRing
         unset($this->partial[$idx], $this->inflight[$idx], $this->pend[$idx], $this->closing[$idx], $this->stalled[$idx]);
         $this->open--;
         $this->totals->open--;
-        if ($this->acceptPaused && $this->open < $this->acceptLimit - self::TABLE_MARGIN) {
-            $this->acceptPaused = false;
-            $this->armAcceptAgain();
-        }
         if ($shutdown) {
             $this->prep(self::OP_SHUTDOWN, self::SQE_FIXED_FILE | self::SQE_IO_LINK, 0, $idx, 0, 0, self::SHUT_RDWR, 0,
                 self::T_SHUTDOWN | $idx << 3 | $gen << 19, 0, 0);
@@ -571,9 +606,12 @@ final class AppRing
             } elseif ($kind === self::T_SEND) {
                 $this->onSend($ud, $res);
             } elseif ($kind === self::T_ACCEPT) {
-                $this->onAccept($res, $flags);
+                $this->onAccept($res);
+            } elseif ($kind === self::T_CLOSE) {
+                $this->onClose($ud, $res);
             }
         }
+        $this->topUpAccepts();
         return true;
     }
 
@@ -591,26 +629,17 @@ final class AppRing
         return $this->sendSlots - $this->freeCount;
     }
 
-    private function onAccept(int $res, int $flags): void
+    private function onAccept(int $res): void
     {
+        $this->acceptsOut--;
         if ($res >= 0) {
             $this->accepted++;
             $this->open++;
+            $this->used++;
             $this->totals->open++;
             $this->armRecv($res);
-            // Why a limit below the table's size: an accept that finds the table full has already taken the connection off the listening
-            // queue, and the kernel drops it (the client sees the connection closed). So the accept is cancelled while there is still room,
-            // the clients wait in the backlog and it is armed again once connections have closed.
-            if ($this->open >= $this->acceptLimit && !$this->acceptPaused) {
-                $this->acceptPaused = true;
-                $this->acceptPauses++;
-                $this->prep(self::OP_ASYNC_CANCEL, 0, 0, 0, 0, self::T_ACCEPT, 0, 0, self::T_CANCEL, 0, 0);
-                return;
-            }
-        } elseif ($res === -self::ECANCELED) {
-            return; // the accept this ring cancelled itself
-        } else {
-            // The accept failed: stop accepting until a connection closes.
+        } elseif ($res !== -self::ECONNABORTED) {
+            // The accept failed (the client left before it was taken is not one): stop accepting until a connection closes.
             $this->acceptPaused = true;
             $this->acceptPauses++;
             if (!$this->pauseReported) {
@@ -618,11 +647,18 @@ final class AppRing
                 fwrite(STDERR, "ring-server[{$this->name}]: accept failed with " . -$res . " at {$this->open} connections: " .
                     "accepting again when one closes, clients wait in the backlog meanwhile\n");
             }
+        }
+    }
+
+    /** A close completed: its slot is free again. One that was cancelled with its shutdown (the link broke) is closed again, on its own. */
+    private function onClose(int $ud, int $res): void
+    {
+        if ($res === -self::ECANCELED) {
+            $this->prep(self::OP_CLOSE, 0, 0, 0, 0, 0, 0, 0, $ud, 0, (($ud >> 3) & 0xFFFF) + 1);
             return;
         }
-        if (!($flags & self::CQE_F_MORE) && !$this->acceptPaused) {
-            $this->armAcceptAgain();
-        }
+        $this->used--;
+        $this->acceptPaused = false;
     }
 
     private function onRecv(int $ud, int $res, int $flags): void
@@ -989,6 +1025,10 @@ final class RingLoop
             $got = $activeGot = $rings[$active]->turn($n === 1 ? self::IDLE_WAIT_NS : self::WAIT_NS);
             if ($n > 1) {
                 $moved = -1;
+                // Why on every ring: a ring arms accepts when the one before it is full, which this turn may have just made so.
+                foreach ($rings as $ring) {
+                    $ring->topUpAccepts();
+                }
                 for ($i = 0; $i < $n; $i++) {
                     if ($i === $active || !($rings[$i]->hasWork() || $rings[$i]->hasQueued())) {
                         continue;
@@ -1140,7 +1180,7 @@ function ring_open(int $count, ?int $softLimit): RingLoop
     try {
         for ($i = 0; $i < $count; $i++) {
             $rings[] = new AppRing($ffi, $ffiAddr, 'ring' . $i, $totals, ['recv_buffers' => $recvBuffers, 'send_slots' => $sendSlots, 'table_size' => $tableSize,
-                'soft_limit' => $softLimit, 'fail_step' => $i === $count - 1 ? $failStep : null]);
+                'soft_limit' => $softLimit, 'fail_step' => $i === $count - 1 ? $failStep : null, 'previous' => $rings[$i - 1] ?? null]);
         }
     } catch (RingRefused $e) {
         foreach ($rings as $built) {

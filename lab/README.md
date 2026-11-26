@@ -1348,8 +1348,10 @@ unset the app runs as it always did (the DIY files are not even loaded when it i
   connection, one at a time and pipelined. `--app` starts the server as the app on a fresh seed copy. `/noop?id={id}` (the default) is the spike's echo.
 - **`lab/servers/bake-ring.php`** is the ring on the bake-off's handler, so `lab/conformance.sh --server lab/servers/bake-ring.php --ext sockets --seccomp-unconfined` runs.
 - **Several rings, `APP_RINGS=<n>` (1 to 4, default 1; refused otherwise, and refused without `APP_RING=1`):** n rings in the one process, each with its own table
-  of direct descriptors as large as `RLIMIT_NOFILE` gives (65,535 at most), all accepting from the one listening socket and each pausing its accept 16
-  descriptors before its table is full. Three rings held 150,000 connections with 12 file descriptors in the process (`results/2026-11-26-three-rings/`).
+  of direct descriptors as large as `RLIMIT_NOFILE` gives (65,535 at most), all accepting from the one listening socket. Accepts are single (not multishot): a ring keeps at most 64 waiting and never more than its table has free slots for, so no connection is
+  taken that has no slot, whatever burst the 4,096-connection backlog holds (a multishot accept drains the backlog in one go: with a margin of 16 slots a burst of 90 against a table of 80 lost one
+  connection to `ENFILE` and left 9 in the backlog; `check_rings_burst_at_a_full_table` stops the server, queues 150 connections and starts it again). A ring arms accepts only when the ring before it is full, so
+  the connections fill the first ring, then the next; a slot is free again when its close completes. Three rings held 150,000 connections with 12 file descriptors in the process (`results/2026-11-26-three-rings/`).
   The loop blocks on the ring that had completions in its last turn (500 µs at most, so a ring that is not the active one is looked at twice a millisecond when
   everything is idle) and, in the same turn, enters every other ring whose `IORING_SQ_TASKRUN` flag is set or that has SQEs queued: only an `io_uring_enter` of its
   own submits a ring's SQEs and runs its deferred work. `APP_SOFT_CONN_LIMIT` counts the open connections of all the rings together. `loop: ring, 3 rings`; with
@@ -1363,7 +1365,7 @@ unset the app runs as it always did (the DIY files are not even loaded when it i
   `APP_SOFT_CONN_LIMIT` when lower), which is what the submission ships: it needs `--ext pcntl --ext sockets --ext event`. Never silent, never mid-run.
   `check_rings_fall_back_to_epoll` runs it under Docker's default filter (42/42 on the fallback) and with a refused buffer ring and a refused table on the last of 3 rings.
 - **The tests of several rings:** `check_rings_refusals`, `check_rings_soft_limit_across_rings`, `check_rings_loop_follows_the_active_ring`,
-  `check_rings_fall_back_to_epoll`, `check_rings_in_steplab`.
+  `check_rings_burst_at_a_full_table`, `check_rings_fall_back_to_epoll`, `check_rings_in_steplab`.
 
 ## Connection test
 

@@ -3640,6 +3640,32 @@ check_rings_loop_follows_the_active_ring() {
   [ "$busy" -gt 0 ] && grep -q '^ok    ' <<<"$out" || { echo "no second of the statistics served 1,000 requests on ring 1 ($busy), or the client failed: ${out//$'\n'/ | }"; return 1; }
 }
 
+# A burst at a full table loses no connection. 2 rings with tables of 80; the server is stopped (SIGSTOP from outside the container) while 150
+# connections are opened one right after the other and each sends its request, so that the whole burst is in the listen backlog when it runs again.
+# Then the two rings hold them between them (80 at most each), every one is answered with its own post's answer within 1 s, and the server never
+# prints an accept failure. A ring that accepted past its table lost the connection that found no slot (ENFILE) and left the ones behind it in the
+# backlog until another connection came; so does one that arms more accepts than it has free slots.
+check_rings_burst_at_a_full_table() {
+  local name=lab-check-rings out log r0 r1 file pid rc=0
+  ring_start "$name" 18177 APP_RINGS=2 URING_TABLE_SIZE=80 || { docker rm -f "$name" >/dev/null 2>&1; return 1; }
+  file="$(mktemp)"
+  docker kill --signal=STOP "$name" >/dev/null
+  docker exec "$name" php -d extension=sockets /lab/check/ring-client.php 18177 burst 150 >"$file" 2>&1 &
+  pid=$!
+  sleep 0.5
+  docker kill --signal=CONT "$name" >/dev/null
+  wait "$pid" || rc=$?
+  out="$(cat "$file")"
+  rm -f "$file"
+  log="$(docker logs "$name" 2>&1)"
+  docker rm -f "$name" >/dev/null 2>&1
+  [ "$rc" = 0 ] && grep -q '^ok    ' <<<"$out" || { echo "the burst was not answered (exit $rc): ${out//$'\n'/ | }"; return 1; }
+  ! grep -q 'accept failed' <<<"$log" || { echo "an accept failed: $(grep 'accept failed' <<<"$log" | head -n 1)"; return 1; }
+  r0="$(grep '^ring: ' <<<"$log" | grep -o ' ring0_open=[0-9]*' | cut -d= -f2 | sort -n | tail -n 1)"
+  r1="$(grep '^ring: ' <<<"$log" | grep -o ' ring1_open=[0-9]*' | cut -d= -f2 | sort -n | tail -n 1)"
+  [ "$r0" -le 80 ] && [ "$r1" -le 80 ] && [ $((r0 + r1)) = 150 ] || { echo "the two rings did not hold the 150 connections between them, 80 at most each: ring 0 $r0, ring 1 $r1"; return 1; }
+}
+
 # The fallback. Under Docker's default seccomp filter the kernel refuses io_uring_setup (EPERM): the server prints `loop: epoll (io_uring refused:
 # setup 1)` and serves on the DIY loop with 2 worker processes and a soft limit of 64,000 each (what the submission is), and passes the challenge's
 # 42 checks there. Then the same fallback for a step after the setup, on the last of 3 rings (a test hook asks the kernel for a buffer ring of 0
@@ -3812,6 +3838,7 @@ CHECKS=(
   check_rings_refusals
   check_rings_soft_limit_across_rings
   check_rings_loop_follows_the_active_ring
+  check_rings_burst_at_a_full_table
   check_rings_fall_back_to_epoll
   check_rings_in_steplab
   check_score
