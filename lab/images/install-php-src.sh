@@ -8,9 +8,13 @@
 # SQLITE_PREFIX (default empty): where a SQLite built by install-sqlite-tuned.sh lives. When it is set, pdo_sqlite is built against that
 # library (its sqlite3.pc comes first for pkg-config) and php records the folder as its RUNPATH, so that it finds the library at run time
 # without LD_LIBRARY_PATH. Every other flag is the same, so the image differs from the plain one by its SQLite and nothing else.
+#
+# WITH_SWOOLE_URING (default 0, only with WITH_SWOOLE=1): Swoole is configured with --enable-uring_socket and --with-liburing-dir=/usr/local, so
+# that its coroutine HTTP server (Swoole\Coroutine\Http\Server) runs its sockets on io_uring. It needs liburing 2.8 or later under /usr/local
+# (install-liburing.sh runs first in lab/images/Dockerfile.8.5-uring). Unset, Swoole is built as it always was.
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
-: "${PHP_VERSION:?}" "${PHP_SHA256:?}" "${WITH_SWOOLE:=1}" "${SQLITE_PREFIX:=}"
+: "${PHP_VERSION:?}" "${PHP_SHA256:?}" "${WITH_SWOOLE:=1}" "${SQLITE_PREFIX:=}" "${WITH_SWOOLE_URING:=0}"
 
 # At most 8 compiler jobs, so a build leaves the Mac usable even when Docker's VM has 12 CPUs.
 JOBS="$(nproc)"
@@ -90,9 +94,22 @@ if [ "$WITH_SWOOLE" = 1 ]; then
   cd "swoole-src-$SWOOLE_VERSION"
   phpize
   # Only the HTTP server is used: no OpenSSL, HTTP/2 client libs, curl/sqlite coroutine hooks or brotli.
-  ./configure --disable-brotli --disable-zstd
+  SWOOLE_FLAGS=(--disable-brotli --disable-zstd)
+  if [ "$WITH_SWOOLE_URING" = 1 ]; then
+    # --with-liburing-dir turns io_uring on (it also moves the coroutine sleep, file and poll hooks to it); --enable-uring_socket is what
+    # puts the coroutine servers' sockets on it. Without liburing's header, configure stops: the build never falls back to epoll silently.
+    SWOOLE_FLAGS+=(--enable-uring_socket --with-liburing-dir=/usr/local)
+  fi
+  echo "Swoole $SWOOLE_VERSION configure flags: ${SWOOLE_FLAGS[*]}"
+  ./configure "${SWOOLE_FLAGS[@]}"
   make -j"$JOBS"
   make install
+  if [ "$WITH_SWOOLE_URING" = 1 ]; then
+    # The build is only worth keeping if the extension says it has both.
+    ri="$(php -d extension=swoole --ri swoole)"
+    grep -E '^(io_uring|uring_socket) => enabled$' <<<"$ri"
+    [ "$(grep -cE '^(io_uring|uring_socket) => enabled$' <<<"$ri")" = 2 ] || { echo "Swoole was built without io_uring sockets" >&2; exit 1; }
+  fi
 fi
 
 cd /

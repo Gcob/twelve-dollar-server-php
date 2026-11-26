@@ -2,7 +2,10 @@
 # Measures how many idle keep-alive connections one server process holds, and what each one costs in memory.
 #
 #   bash lab/conns.sh --image 8.5 --server lab/servers/bake-swoole.php [--ext <name>]... [--env K=V]... [--label <text>]
-#                     [--steps 1000,5000,...] [--max <n>] [--server-nofile <n>] [--port 18100] [--out <path>] [--seccomp-unconfined]
+#                     [--steps 1000,5000,...] [--max <n>] [--server-nofile <n>] [--port 18100] [--out <path>] [--seccomp-unconfined] [--app]
+#
+# --app is for a server that is the challenge app (lab/servers/swoole-co.php): it starts on a fresh copy of the seed (lab_start_app, with
+# SQLITE_PATH and JWT_SECRET) and the requests are GET /health, whose body must match the app's, instead of GET /noop.
 #
 # --ext names a PHP extension to load (`-d extension=<name>`, repeatable, default `swoole`); --env K=V is passed to the server
 # container (repeatable); --label goes in the JSON and in the default file name after the server's name; --max drops every
@@ -48,7 +51,7 @@ SETTLE_S=1
 
 usage() {
   echo "usage: lab/conns.sh --image <variant> --server <php file under lab/ or submissions/> [--ext <name>]... [--env K=V]... [--label <text>]" >&2
-  echo "                    [--steps a,b,...] [--max <n>] [--server-nofile <n>] [--port <n>] [--out <path>] [--seccomp-unconfined]" >&2
+  echo "                    [--steps a,b,...] [--max <n>] [--server-nofile <n>] [--port <n>] [--out <path>] [--seccomp-unconfined] [--app]" >&2
   exit 2
 }
 fail() { echo "conns: $*" >&2; exit 1; }
@@ -56,10 +59,11 @@ fail() { echo "conns: $*" >&2; exit 1; }
 command_line="lab/conns.sh $*"
 command_line="${command_line//$REPO/.}"
 
-image="" server_file="" out="" port=18100 label="" steps_arg="$DEFAULT_STEPS" max="" server_nofile=""
+image="" server_file="" out="" port=18100 label="" steps_arg="$DEFAULT_STEPS" max="" server_nofile="" app=""
 LAB_EXT=() LAB_ENV=()
 while [ "$#" -gt 0 ]; do
   if [ "$1" = --seccomp-unconfined ]; then export LAB_SERVER_SECCOMP_UNCONFINED=1; shift; continue; fi
+  if [ "$1" = --app ]; then app=1; shift; continue; fi
   [ "$#" -ge 2 ] || { echo "missing value for $1" >&2; usage; }
   case "$1" in
     --image) image="$2" ;;
@@ -151,7 +155,19 @@ fi
 lab_build_php_flags
 # Read by lab_start_server.
 export LAB_SERVER_NOFILE="$server_nofile"
-lab_start_server "$SERVER" "$image" "$port" "$server_in"
+# What the requests ask: /noop and its exact body, or the app's /health (its body carries the uptime, so a pattern).
+request_path=/noop
+client_args=()
+if [ -n "$app" ]; then
+  request_path=/health
+  client_args=(--path /health --body-regex '^\{"status":"ok",.*\}$')
+  # Why disable SC2034: lab_start_app (lib.sh) reads LAB_COLD.
+  # shellcheck disable=SC2034
+  LAB_COLD=0
+  lab_start_app "$SERVER" "$image" "$port" "$server_in"
+else
+  lab_start_server "$SERVER" "$image" "$port" "$server_in"
+fi
 
 # The server copies the seed (250 MB) before it listens: up to 30 s, and it must still be running while we wait.
 answered=""
@@ -161,7 +177,7 @@ for _ in $(seq 1 150); do
     docker logs "$SERVER" >&2 || true
     exit 1
   fi
-  if probe http-answers "$port" /noop; then answered=1; break; fi
+  if probe http-answers "$port" "$request_path"; then answered=1; break; fi
   sleep 0.2
 done
 [ -n "$answered" ] || { docker logs "$SERVER" >&2 || true; fail "the server did not answer on port $port within 30 s"; }
@@ -187,7 +203,7 @@ docker run -d --name "$CLIENT" --network host --cpuset-cpus "$LAB_CPUSET_K6" --u
 mkfifo "$tmp/commands"
 : >"$tmp/events"
 # Why display_errors=stderr: a PHP fatal error must not land in the events file.
-docker exec -i "$CLIENT" php -d memory_limit=-1 -d display_errors=stderr -d log_errors=0 /lab/conns/client.php "$port" <"$tmp/commands" >"$tmp/events" 2>"$tmp/client.err" &
+docker exec -i "$CLIENT" php -d memory_limit=-1 -d display_errors=stderr -d log_errors=0 /lab/conns/client.php "$port" "${client_args[@]+"${client_args[@]}"}" <"$tmp/commands" >"$tmp/events" 2>"$tmp/client.err" &
 client_pid=$!
 exec 7>"$tmp/commands"
 
@@ -226,7 +242,7 @@ read_probe() {
   mem="$(probe memory-now "$server_id" | lines_to_json)" || return 1
   events="$(probe memory-events "$server_id" | lines_to_json)" || return 1
   tcp="$(probe connections "$port" | lines_to_json)" || return 1
-  fresh="$(probe fresh-request "$port" /noop | lines_to_json)" || return 1
+  fresh="$(probe fresh-request "$port" "$request_path" | lines_to_json)" || return 1
   fds="$(probe fds "$server_id")" || return 1
   jq -nc --argjson mem "$mem" --argjson events "$events" --argjson tcp "$tcp" --argjson fresh "$fresh" --arg fds "$fds" '{
     pss_kb: $mem.memory_now.pss_kb, pss_anon_kb: $mem.memory_now.pss_anon_kb, cgroup_current: $mem.memory_now.cgroup_current, oom_kill: $events.memory_events.oom_kill,

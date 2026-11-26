@@ -1,0 +1,293 @@
+{
+  "date": "2026-11-26T21:30:06Z",
+  "command": "lab/conns.sh --image 8.5-uring --server lab/servers/swoole-co.php --ext swoole --seccomp-unconfined --app --label default-stack --steps 1000,3000,6000,9000,12000,16000,20000 --out lab/results/2026-11-26-off-the-shelf-uring/conns-default-stack.json",
+  "label": "default-stack",
+  "other_containers": {
+    "count": 0
+  },
+  "host": {
+    "docker_desktop": "Docker Desktop 4.76.0 (228118)",
+    "engine": "29.5.2",
+    "vm_kernel": "6.12.76-linuxkit",
+    "arch": "arm64",
+    "cpuset_server": "2",
+    "cpuset_client": "4-11",
+    "cpuset_probe": "0-1",
+    "limits": "--cpus=1 --memory=2g --memory-swap=2g --ulimit nofile=65535:65535"
+  },
+  "server": {
+    "variant": "8.5-uring",
+    "image_id": "sha256:eeb0a03438089478212abdd1592180d6b0e85e6834bd3fa478176e4f57ac7664",
+    "php_version": "8.5.13",
+    "swoole_version": "6.2.6",
+    "file": "servers/swoole-co.php",
+    "port": 18100,
+    "php_flags": "-d extension=swoole -d memory_limit=-1 -d opcache.enable_cli=1 -d opcache.jit=tracing -d opcache.jit_buffer_size=32M -d opcache.file_update_protection=0 -d zend.assertions=-1",
+    "ext": [
+      "swoole"
+    ],
+    "env": [],
+    "nofile": 65535,
+    "socket": {
+      "backlog": 512,
+      "tcp_nodelay": 1
+    }
+  },
+  "client": {
+    "nofile": 200000,
+    "port_range": [
+      55000,
+      65535
+    ],
+    "ports_per_address": 10036,
+    "source_addresses": [
+      "127.0.0.3",
+      "127.0.0.4"
+    ]
+  },
+  "max_option": null,
+  "steps_planned": [
+    1000,
+    3000,
+    6000,
+    9000,
+    12000,
+    16000,
+    20000
+  ],
+  "results": {
+    "max_connections": 12000,
+    "max_connections_step": 12000,
+    "held_at_stop": 13530,
+    "ceiling": {
+      "step": 16000,
+      "reason": "server OOM-killed",
+      "held_at_stop": 13530,
+      "client_failure": "connection closed by the server (EOF)",
+      "client_detail": "read failed, errno 0"
+    },
+    "reason_stopped": "server OOM-killed",
+    "baseline": {
+      "pss_kb": 25971,
+      "pss_anon_kb": 11520,
+      "cgroup_current_bytes": 273301504
+    },
+    "memory_per_connection": {
+      "held_steps_used": 5,
+      "pss_kib_per_connection": 160.44808883248731,
+      "pss_anon_kib_per_connection": 160.44813197969543,
+      "cgroup_current_kib_per_connection": 154.068192893401
+    }
+  },
+  "steps": [
+    {
+      "target": 1000,
+      "held": 1000,
+      "client": {
+        "event": "step",
+        "target": 1000,
+        "held": 1000,
+        "closed_by_server": 0,
+        "failure": null,
+        "detail": null,
+        "seconds": 0.08,
+        "source_addresses": [
+          "127.0.0.3"
+        ],
+        "ports_per_address": 10036,
+        "bind_retries": 0,
+        "nofile": 200000,
+        "port_range": [
+          55000,
+          65535
+        ]
+      },
+      "probe": {
+        "pss_kb": 179682,
+        "pss_anon_kb": 165024,
+        "cgroup_current": 439037952,
+        "oom_kill": 0,
+        "tcp_established": 1000,
+        "fresh_http_code": 200,
+        "fresh_ms": 0.4,
+        "server_fds": 1011
+      },
+      "ceiling_reason": null
+    },
+    {
+      "target": 3000,
+      "held": 3000,
+      "client": {
+        "event": "step",
+        "target": 3000,
+        "held": 3000,
+        "closed_by_server": 0,
+        "failure": null,
+        "detail": null,
+        "seconds": 0.17,
+        "source_addresses": [
+          "127.0.0.3"
+        ],
+        "ports_per_address": 10036,
+        "bind_retries": 0,
+        "nofile": 200000,
+        "port_range": [
+          55000,
+          65535
+        ]
+      },
+      "probe": {
+        "pss_kb": 751915,
+        "pss_anon_kb": 737256,
+        "cgroup_current": 1042030592,
+        "oom_kill": 0,
+        "tcp_established": 3000,
+        "fresh_http_code": 200,
+        "fresh_ms": 0.5,
+        "server_fds": 3011
+      },
+      "ceiling_reason": null
+    },
+    {
+      "target": 6000,
+      "held": 6000,
+      "client": {
+        "event": "step",
+        "target": 6000,
+        "held": 6000,
+        "closed_by_server": 0,
+        "failure": null,
+        "detail": null,
+        "seconds": 0.55,
+        "source_addresses": [
+          "127.0.0.3"
+        ],
+        "ports_per_address": 10036,
+        "bind_retries": 0,
+        "nofile": 200000,
+        "port_range": [
+          55000,
+          65535
+        ]
+      },
+      "probe": {
+        "pss_kb": 1742859,
+        "pss_anon_kb": 1728200,
+        "cgroup_current": 2082140160,
+        "oom_kill": 0,
+        "tcp_established": 6000,
+        "fresh_http_code": 200,
+        "fresh_ms": 0.6,
+        "server_fds": 6011
+      },
+      "ceiling_reason": null
+    },
+    {
+      "target": 9000,
+      "held": 9000,
+      "client": {
+        "event": "step",
+        "target": 9000,
+        "held": 9000,
+        "closed_by_server": 0,
+        "failure": null,
+        "detail": null,
+        "seconds": 0.92,
+        "source_addresses": [
+          "127.0.0.3"
+        ],
+        "ports_per_address": 10036,
+        "bind_retries": 0,
+        "nofile": 200000,
+        "port_range": [
+          55000,
+          65535
+        ]
+      },
+      "probe": {
+        "pss_kb": 1856442,
+        "pss_anon_kb": 1841784,
+        "cgroup_current": 2147188736,
+        "oom_kill": 0,
+        "tcp_established": 9000,
+        "fresh_http_code": 200,
+        "fresh_ms": 0.7,
+        "server_fds": 9011
+      },
+      "ceiling_reason": null
+    },
+    {
+      "target": 12000,
+      "held": 12000,
+      "client": {
+        "event": "step",
+        "target": 12000,
+        "held": 12000,
+        "closed_by_server": 0,
+        "failure": null,
+        "detail": null,
+        "seconds": 0.55,
+        "source_addresses": [
+          "127.0.0.3",
+          "127.0.0.4"
+        ],
+        "ports_per_address": 10036,
+        "bind_retries": 25,
+        "nofile": 200000,
+        "port_range": [
+          55000,
+          65535
+        ]
+      },
+      "probe": {
+        "pss_kb": 1919710,
+        "pss_anon_kb": 1905052,
+        "cgroup_current": 2147196928,
+        "oom_kill": 0,
+        "tcp_established": 12000,
+        "fresh_http_code": 200,
+        "fresh_ms": 0.9,
+        "server_fds": 12011
+      },
+      "ceiling_reason": null
+    },
+    {
+      "target": 16000,
+      "held": 13530,
+      "client": {
+        "event": "step",
+        "target": 16000,
+        "held": 13530,
+        "closed_by_server": 1468,
+        "failure": "connection closed by the server (EOF)",
+        "detail": "read failed, errno 0",
+        "seconds": 0.63,
+        "source_addresses": [
+          "127.0.0.3",
+          "127.0.0.4"
+        ],
+        "ports_per_address": 10036,
+        "bind_retries": 25,
+        "nofile": 200000,
+        "port_range": [
+          55000,
+          65535
+        ]
+      },
+      "probe": null,
+      "ceiling_reason": "server OOM-killed"
+    }
+  ],
+  "raw": {
+    "baseline": {
+      "pss_kb": 25971,
+      "pss_anon_kb": 11520,
+      "cgroup_current": 273301504,
+      "oom_kill": 0,
+      "tcp_established": 0,
+      "fresh_http_code": 200,
+      "fresh_ms": 0.4,
+      "server_fds": 11
+    }
+  }
+}

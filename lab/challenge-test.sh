@@ -4,10 +4,11 @@
 # of the seed (lab_start_app: the suite's golden answers need a fresh database, and it writes to it); the suite runs in a second
 # container on the same host network, from an image with the four programs it needs (lab/images/Dockerfile.tools).
 #
-#   bash lab/challenge-test.sh --image 8.5 [--server <php file under lab/ or submissions/>] [--php-ini <php.ini>] [--ext sockets --ext event] [--env K=V]... [--port 18110]
+#   bash lab/challenge-test.sh --image 8.5 [--server <php file under lab/ or submissions/>] [--php-ini <php.ini>] [--ext sockets --ext event] [--env K=V]... [--port 18110] [--seccomp-unconfined]
 #
 # --env K=V (repeatable) is passed to the server container, after JWT_SECRET and SQLITE_PATH: the way to run the suite on a variant
-# (`--env APP_SOFT_CONN_LIMIT=0`).
+# (`--env APP_SOFT_CONN_LIMIT=0`). --seccomp-unconfined starts the server container (not the test container) without Docker's default seccomp
+# filter, which refuses io_uring: the server of the 8.5-uring image needs it (`--image 8.5-uring --server lab/servers/swoole-co.php --ext swoole`).
 #
 # Prints the suite's output and exits with its code (0: every check passed). Exit 1 too when the server never answers
 # GET /health (60 s at most, like test/run.sh), 2 on a usage error. Both containers are removed at the end, whatever happens.
@@ -22,7 +23,7 @@ SERVER=lab-challenge-server
 TESTER=lab-challenge-test
 
 usage() {
-  echo "usage: lab/challenge-test.sh --image <variant> [--server <php file under lab/ or submissions/>] [--php-ini <php.ini under lab/>] [--ext <name>]... [--env K=V]... [--port <n>]" >&2
+  echo "usage: lab/challenge-test.sh --image <variant> [--server <php file under lab/ or submissions/>] [--php-ini <php.ini under lab/>] [--ext <name>]... [--env K=V]... [--port <n>] [--seccomp-unconfined]" >&2
   exit 2
 }
 fail() { echo "challenge-test: $*" >&2; exit 1; }
@@ -33,6 +34,7 @@ LAB_PHP_INI_FILE=""
 # Why disable SC2034: lab_build_php_flags (lib.sh) reads LAB_PHP_INI_FILE, set below.
 # shellcheck disable=SC2034
 while [ "$#" -gt 0 ]; do
+  if [ "$1" = --seccomp-unconfined ]; then export LAB_SERVER_SECCOMP_UNCONFINED=1; shift; continue; fi
   [ "$#" -ge 2 ] || { echo "missing value for $1" >&2; usage; }
   case "$1" in
     --image) image="$2" ;;

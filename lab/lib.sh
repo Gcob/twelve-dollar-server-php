@@ -10,8 +10,10 @@ LAB_VARIANTS=(8.3-apt 8.3 8.4 8.5 8.6)
 LAB_SOURCE_VARIANTS=(8.3 8.4 8.5 8.6)
 # Images built on top of another one (lab/images/Dockerfile.<variant>): `lab/build.sh <variant>` builds them (after their base), `all` and
 # the micro benches' default list leave them out. 8.5-sqlite is not on top of 8.5 but beside it, and is left out for the same reason: it is
-# 8.5 with a SQLite of its own, built from the amalgamation with profile-guided optimisation (lab/images/install-sqlite-tuned.sh).
-LAB_DERIVED_VARIANTS=(8.3-apt-tzimpel 8.5-sqlite)
+# 8.5 with a SQLite of its own, built from the amalgamation with profile-guided optimisation (lab/images/install-sqlite-tuned.sh). 8.5-uring is
+# beside 8.5 too, and left out of `all` for the same reason: it is 8.5 with a Swoole built on io_uring sockets, against a liburing of our own
+# (lab/images/install-liburing.sh); lab/servers/swoole-co.php is its server, and it needs --seccomp-unconfined.
+LAB_DERIVED_VARIANTS=(8.3-apt-tzimpel 8.5-sqlite 8.5-uring)
 
 # lab_source_release <variant>: prints "<php version> <sha256 of its .tar.xz> <WITH_SWOOLE> <WITH_EVENT> <WITH_EXCIMER>".
 # The sha256 values are the ones php.net publishes (https://www.php.net/releases/?json&version=<branch>), read on
@@ -253,4 +255,12 @@ lab_other_containers_count() {
 # for: the images' Swoole cannot read them back), as the text after `socket: `. Empty when the server prints none.
 lab_socket_line() {
   docker logs "$1" 2>&1 | sed -n 's/^socket: //p' | head -n 1
+}
+
+# lab_loop_line <container>: the `loop: ...` line a server prints at boot (what its event loop runs on: `epoll`, `swoole-co, uring`), as the
+# text after `loop: `. Empty when the server prints none. lab/realistic.sh records it in the run's JSON (`server.loop`), and
+# `lab/steplab.sh --expect-loop` refuses a run whose line is not the one expected: a server that fell back to another loop would be measured
+# as the one it was not.
+lab_loop_line() {
+  docker logs "$1" 2>&1 | sed -n 's/^loop: //p' | head -n 1
 }

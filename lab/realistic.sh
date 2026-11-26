@@ -11,7 +11,10 @@
 #                         [--server <php file under lab/ or submissions/>] [--ext <name>]... [--env K=V]... [--label <text>]
 #                         [--warmup <req/s>,<seconds>] [--vu-cap <n>] [--ramp <s>] [--out <path>] [--port <n>]
 #                         [--local-ips <range>] [--lag-gate <s>] [--k6-memory <MiB>] [--calibrate-vus <a>,<b>] [--calibrate-seconds <s>]
-#                         [--profile <collapsed stacks file>]
+#                         [--profile <collapsed stacks file>] [--seccomp-unconfined]
+#
+# --seccomp-unconfined starts the server container without Docker's default seccomp filter, which refuses io_uring (the server of the 8.5-uring
+# image, lab/servers/swoole-co.php, needs it). The JSON's `server.loop` is the `loop: ...` line the server printed at boot (null when it printed none).
 #
 # The numbers of the journey: 2.17 requests per loop (1 + 1 + 0.15 + 0.02), 20.5 s of mean think time per loop (5 + 5.5 + 10), so one
 # VU offers 2.17 / (20.5 * scale) req/s, and a steady load is 9.45 users per req/s (20.5 / 2.17). Users are always mapped from the
@@ -100,7 +103,7 @@ usage: lab/realistic.sh --image <variant> (--staircase <from>,<step>,<to>,<s> | 
                         [--server <php file under lab/ or submissions/>] [--php-ini <php.ini under lab/>] [--ext <name>]... [--env K=V]... [--label <text>]
                         [--warmup <rate>,<s>] [--vu-cap <n>] [--ramp <s>] [--out <path>] [--port <n>] [--local-ips <range>] [--lag-gate <s>] [--k6-memory <MiB>]
                         [--calibrate-vus <a>,<b>] [--calibrate-seconds <s>] [--idle <n>] [--cold] [--no-series]
-                        [--profile <collapsed stacks file>]
+                        [--profile <collapsed stacks file>] [--seccomp-unconfined]
 rates are in req/s, <s> is the seconds of one plateau; --think-scale is the share of the bench's think time (default 1)
 EOF
   exit 2
@@ -122,6 +125,7 @@ while [ "$#" -gt 0 ]; do
   if [ "$1" = --calibrate ]; then calibrate=1; shift; continue; fi
   if [ "$1" = --cold ]; then cold=1; shift; continue; fi
   if [ "$1" = --no-series ]; then series=""; shift; continue; fi
+  if [ "$1" = --seccomp-unconfined ]; then export LAB_SERVER_SECCOMP_UNCONFINED=1; shift; continue; fi
   [ "$#" -ge 2 ] || { echo "missing value for $1" >&2; usage; }
   case "$1" in
     --image) image="$2" ;;
@@ -326,6 +330,7 @@ done
 server_id="$(docker inspect -f '{{.Id}}' "$SERVER")"
 php_version="$(docker exec "$PROBE" php -r 'echo PHP_VERSION;')"
 socket_line="$(lab_socket_line "$SERVER")"
+loop_line="$(lab_loop_line "$SERVER")"
 server_fds="$(probe fds "$server_id" | lines_to_json | jq '.fds.open')"
 # Why disable SC2034: sampler_start (series.sh) reads server_pid.
 # shellcheck disable=SC2034
@@ -735,7 +740,7 @@ jq -n \
   --arg variant "$image" --arg image_id "$(docker image inspect -f '{{.Id}}' "$LAB_IMAGE:$image")" --arg php_version "$php_version" \
   --arg server_file "${server_in#/lab/}" --arg flags "${LAB_PHP_FLAGS[*]}" --argjson port "$port" --arg label "$label" \
   --argjson ext "$(json_array "${LAB_EXT[@]}")" --argjson env "$(json_array "${LAB_ENV[@]+"${LAB_ENV[@]}"}")" \
-  --arg socket_line "$socket_line" --argjson server_fds "$server_fds" --argjson other_containers "$other_json" \
+  --arg socket_line "$socket_line" --arg loop_line "$loop_line" --argjson server_fds "$server_fds" --argjson other_containers "$other_json" \
   --argjson host_before "$host_before" --argjson host_plateau "$host_plateau" --argjson host_fsync "$host_fsync" \
   --argjson think_scale "$think_scale" --argjson per_vu_rate "$per_vu_rate" --argjson users_per_rps "$USERS_PER_RPS" \
   --argjson ramp "$ramp" --argjson plateau "$plateau" --argjson vu_cap "$vu_cap" --arg warmup "$warmup" \
@@ -762,7 +767,7 @@ jq -n \
           + (if $host_fsync == null then {fsync_reason: "the probe container could not write and fdatasync its file"} else {} end)),
     server: {variant: $variant, image_id: $image_id, php_version: $php_version, file: $server_file, port: $port, php_flags: $flags,
              ext: $ext, env: $env, fds_open_at_boot: $server_fds,
-             socket: (if $socket_line == "" then null else $socket_line end)},
+             socket: (if $socket_line == "" then null else $socket_line end), loop: (if $loop_line == "" then null else $loop_line end)},
     load: {think_scale: $think_scale, per_vu_rate_rps: $per_vu_rate, users_per_rps: $users_per_rps, ramp_s: $ramp, plateau_s: $plateau,
            vus: $steps_vus, vu_cap: $vu_cap, vu_cap_bound_by: $vu_cap_bound_by, warmup: (if $warmup == "" then null else $warmup end),
            pass_rule: "p95 < 500 ms, p99 < 1000 ms, errors < 1 %, achieved >= 97 % of offered"},

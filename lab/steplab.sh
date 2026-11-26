@@ -15,7 +15,8 @@
 #   bash lab/steplab.sh --image 8.5 --rate 24000 --think-scale 0.02 --idle 60000 --seconds 60 --pairs 3 \
 #       --variant ref= --variant telemetry-on=APP_TELEMETRY=1 [--server-variant <name>=<php file under lab/ or submissions/>]... \
 #       [--warmup <req/s>,<s>] [--floor <us> | --floor-from <A/A folder>] [--order alternate|fixed] [--label <text>] [--out <folder>] [--first-round <n>] [--time-wait-max <n>] [--idle-time-wait-max <n>] [--time-wait-wait <s>]
-#                       [--local-ips <range>] [--lag-gate <s>] [--port <n>] [--vu-cap <n>] [--ramp <s>] [--k6-memory <MiB>] [--ext <name>]...
+#                       [--local-ips <range>] [--lag-gate <s>] [--port <n>] [--vu-cap <n>] [--ramp <s>] [--k6-memory <MiB>] [--ext <name>]... [--seccomp-unconfined]
+#                       [--expect-loop <variant>=<text>]...
 #
 # --variant <name>=<K=V,K=V...> sets environment variables on the server (an empty list, `ref=`, is the skeleton as it is);
 # --server-variant <name>=<file> runs another server file (the same name in both flags: both apply); --variant-args <name>=<arguments>
@@ -23,6 +24,13 @@
 # the variant wins or adds: `--variant-args other='--image 8.3-apt --ext swoole --php-ini servers/x/php.ini'`; a path of --php-ini
 # is under lab/, relative to the current folder or absolute). The first variant given is the
 # reference. The default warm-up is a tenth of the rate for 60 s (the baseline's).
+#
+# --seccomp-unconfined starts the server container of every run without Docker's default seccomp filter, which refuses io_uring: it applies to
+# both sides of a pair, because the bench has no filter, and a pair whose one side ran under the filter would not compare like with like.
+# --expect-loop <variant>=<text> (repeatable, one per variant at most) refuses a run whose server did not print a `loop: ...` boot line that
+# contains <text> (`--expect-loop ref=epoll --expect-loop uring=swoole-co, uring`): a server that fell back to another loop (a Swoole built without
+# io_uring, a missing extension) would be measured as the one it is not. The line is the run's `server.loop` (lab/realistic.sh). The check runs
+# after each run, the first one included, and stops the comparison with exit 1 and the line it got; the run's JSON is not kept.
 #
 # Before each run the TIME_WAIT sockets on every source address the lab's clients use, k6's and the idle client's (127.0.0.2 and up), are
 # counted (lab/macro/probe.sh time-wait). A closed connection keeps its port for 60 s, the VM's ephemeral ports are 55000 to 65535 (about
@@ -63,7 +71,7 @@ usage: lab/steplab.sh --image <variant> --rate <req/s> --think-scale <s> --secon
                       [--variant-args <name>=<arguments>]... [--idle <n>] [--warmup <req/s>,<s>] [--floor <us> | --floor-from <A/A folder>]
                       [--order alternate|fixed] [--dry-run] [--label <text>] [--out <folder>]
                       [--first-round <n>] [--time-wait-max <n>] [--idle-time-wait-max <n>] [--time-wait-wait <s>] [--local-ips <range>] [--lag-gate <s>] [--port <n>]
-                      [--vu-cap <n>] [--ramp <s>] [--k6-memory <MiB>] [--ext <name>]...
+                      [--vu-cap <n>] [--ramp <s>] [--k6-memory <MiB>] [--ext <name>]... [--seccomp-unconfined] [--expect-loop <variant>=<text>]...
 the first variant is the reference; an empty list (`ref=`) is the skeleton as it is
 EOF
   exit 2
@@ -80,7 +88,8 @@ idle_ips="127.0.0.2-127.0.0.254"
 pass_through=()
 # The variants, in the order given: names, their env (one K=V per line), their server file (empty: the skeleton's) and their extra
 # arguments for lab/realistic.sh (empty: none).
-v_names=() v_env=() v_server=() v_args=()
+v_names=() v_env=() v_server=() v_args=() v_expect=()
+expect_names=() expect_texts=()
 # variant_index <name>: sets VI to the index of the variant, adding it when it is new (not a $(...): the arrays must change here).
 VI=0
 variant_index() {
@@ -88,11 +97,12 @@ variant_index() {
   for i in "${!v_names[@]}"; do
     [ "${v_names[$i]}" != "$1" ] || { VI="$i"; return; }
   done
-  v_names+=("$1") v_env+=("") v_server+=("") v_args+=("")
+  v_names+=("$1") v_env+=("") v_server+=("") v_args+=("") v_expect+=("")
   VI=$(( ${#v_names[@]} - 1 ))
 }
 while [ "$#" -gt 0 ]; do
   if [ "$1" = --dry-run ]; then dry_run=1; shift; continue; fi
+  if [ "$1" = --seccomp-unconfined ]; then pass_through+=(--seccomp-unconfined); shift; continue; fi
   [ "$#" -ge 2 ] || { echo "missing value for $1" >&2; usage; }
   case "$1" in
     --image) image="$2" ;;
@@ -137,6 +147,11 @@ while [ "$#" -gt 0 ]; do
       vi="$VI"
       v_server[vi]="$vfile"
       ;;
+    --expect-loop)
+      [[ "$2" == ?*=?* ]] || { echo "--expect-loop wants <variant>=<text of its loop: line>, got '$2'" >&2; usage; }
+      # Why not variant_index: a name that no --variant gave would add a variant that runs the skeleton, so the names are matched after the loop.
+      expect_names+=("${2%%=*}") expect_texts+=("${2#*=}")
+      ;;
     --variant-args)
       [[ "$2" == ?*=?* ]] || { echo "--variant-args wants <name>=<arguments of lab/realistic.sh>, got '$2'" >&2; usage; }
       vname="${2%%=*}"
@@ -147,6 +162,15 @@ while [ "$#" -gt 0 ]; do
     *) echo "unknown option: $1" >&2; usage ;;
   esac
   shift 2
+done
+
+# Each --expect-loop names a variant that exists (given by --variant, --server-variant or --variant-args), and a variant has one at most.
+for i in "${!expect_names[@]}"; do
+  found=""
+  for j in "${!v_names[@]}"; do
+    [ "${v_names[$j]}" != "${expect_names[$i]}" ] || { found=1; [ -z "${v_expect[$j]}" ] || { echo "--expect-loop: '${expect_names[$i]}' has one already" >&2; usage; }; v_expect[j]="${expect_texts[$i]}"; }
+  done
+  [ -n "$found" ] || { echo "--expect-loop names '${expect_names[$i]}', which is not one of the variants (${v_names[*]:-none})" >&2; usage; }
 done
 
 for n in image rate think_scale seconds pairs; do
@@ -204,6 +228,7 @@ if [ -n "$dry_run" ]; then
   echo "steplab (dry run): ${#v_names[@]} variant(s) x $pairs round(s), order $order"
   for round in $(seq "$first_round" $(( first_round + pairs - 1 ))); do echo "round $round: $(round_names "$round")"; done
   [ -z "$floor_note" ] || echo "$floor_note"
+  for i in "${!v_names[@]}"; do [ -z "${v_expect[$i]}" ] || echo "expect loop: ${v_names[$i]} must print a loop: line with '${v_expect[$i]}'"; done
   exit 0
 fi
 
@@ -309,6 +334,13 @@ for round in $(seq "$first_round" "$last_round"); do
       *) echo "steplab: the run $id failed (exit $run_rc):" >&2; tail -n 20 "$tmp/$id.stderr" >&2; exit 1 ;;
     esac
     [ -s "$tmp/$id.json" ] || fail "the run $id left no JSON"
+    if [ -n "${v_expect[$i]}" ]; then
+      got_loop="$(jq -r '.server.loop // "none"' "$tmp/$id.json")"
+      case "$got_loop" in
+        *"${v_expect[$i]}"*) ;;
+        *) fail "the run $id: the server's loop line is '$got_loop', which does not contain '${v_expect[$i]}' (--expect-loop $name=...): it ran on another loop than the one asked for" ;;
+      esac
+    fi
     tw_after="$(time_wait_json)" || fail "cannot count the TIME_WAIT sockets"
 
     # The run's own JSON stays as it is, but for the runner's temp folder (a per-user path on the Mac, in the run's `command`): the

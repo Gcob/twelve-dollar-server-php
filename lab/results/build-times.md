@@ -22,3 +22,4 @@ second `8.5` (0 s) is a rebuild after a change to `php-info` only: every layer b
 | 2026-11-22 | 8.3 | 14 | Docker Desktop 4.76.0 (228118) |
 | 2026-11-23 | 8.3-apt-tzimpel | 21 | Docker Desktop 4.76.0 (228118) |
 | 2026-11-26 | 8.5-sqlite | 94 | Docker Desktop 4.76.0 (228118) |
+| 2026-11-26 | 8.5-uring | 111 | Docker Desktop 4.76.0 (228118) |

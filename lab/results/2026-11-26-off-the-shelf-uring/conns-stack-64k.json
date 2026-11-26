@@ -1,0 +1,132 @@
+{
+  "date": "2026-11-26T21:30:11Z",
+  "command": "lab/conns.sh --image 8.5-uring --server lab/servers/swoole-co.php --ext swoole --seccomp-unconfined --app --label stack-64k --env SWOOLE_CO_STACK_SIZE=65536 --steps 1000,3000,6000,9000,12000,16000,20000,30000 --out lab/results/2026-11-26-off-the-shelf-uring/conns-stack-64k.json",
+  "label": "stack-64k",
+  "other_containers": {
+    "count": 0
+  },
+  "host": {
+    "docker_desktop": "Docker Desktop 4.76.0 (228118)",
+    "engine": "29.5.2",
+    "vm_kernel": "6.12.76-linuxkit",
+    "arch": "arm64",
+    "cpuset_server": "2",
+    "cpuset_client": "4-11",
+    "cpuset_probe": "0-1",
+    "limits": "--cpus=1 --memory=2g --memory-swap=2g --ulimit nofile=65535:65535"
+  },
+  "server": {
+    "variant": "8.5-uring",
+    "image_id": "sha256:eeb0a03438089478212abdd1592180d6b0e85e6834bd3fa478176e4f57ac7664",
+    "php_version": "8.5.13",
+    "swoole_version": "6.2.6",
+    "file": "servers/swoole-co.php",
+    "port": 18100,
+    "php_flags": "-d extension=swoole -d memory_limit=-1 -d opcache.enable_cli=1 -d opcache.jit=tracing -d opcache.jit_buffer_size=32M -d opcache.file_update_protection=0 -d zend.assertions=-1",
+    "ext": [
+      "swoole"
+    ],
+    "env": [
+      "SWOOLE_CO_STACK_SIZE=65536"
+    ],
+    "nofile": 65535,
+    "socket": {
+      "backlog": 512,
+      "tcp_nodelay": 1
+    }
+  },
+  "client": {
+    "nofile": 200000,
+    "port_range": [
+      55000,
+      65535
+    ],
+    "ports_per_address": 10036,
+    "source_addresses": [
+      "127.0.0.5"
+    ]
+  },
+  "max_option": null,
+  "steps_planned": [
+    1000,
+    3000,
+    6000,
+    9000,
+    12000,
+    16000,
+    20000,
+    30000
+  ],
+  "results": {
+    "max_connections": 0,
+    "max_connections_step": null,
+    "held_at_stop": 123,
+    "ceiling": {
+      "step": 1000,
+      "reason": "bad answer",
+      "held_at_stop": 123,
+      "client_failure": "bad answer",
+      "client_detail": "\"HTTP\\/1.1 200 OK\\r\\nContent-Type: application\\/json\\r\\nServer: swoole-http-server\\r\\nDate: Thu, 26 Nov 2026 21:30:10 GMT\\r\\nConnection: keep-alive\\r\\nContent-Length: 0\\r\\n\\r\\n\""
+    },
+    "reason_stopped": "bad answer",
+    "baseline": {
+      "pss_kb": 23959,
+      "pss_anon_kb": 9476,
+      "cgroup_current_bytes": 271192064
+    },
+    "memory_per_connection": {
+      "held_steps_used": 0,
+      "pss_kib_per_connection": null,
+      "pss_anon_kib_per_connection": null,
+      "cgroup_current_kib_per_connection": null
+    }
+  },
+  "steps": [
+    {
+      "target": 1000,
+      "held": 123,
+      "client": {
+        "event": "step",
+        "target": 1000,
+        "held": 123,
+        "closed_by_server": 0,
+        "failure": "bad answer",
+        "detail": "\"HTTP\\/1.1 200 OK\\r\\nContent-Type: application\\/json\\r\\nServer: swoole-http-server\\r\\nDate: Thu, 26 Nov 2026 21:30:10 GMT\\r\\nConnection: keep-alive\\r\\nContent-Length: 0\\r\\n\\r\\n\"",
+        "seconds": 0.01,
+        "source_addresses": [
+          "127.0.0.5"
+        ],
+        "ports_per_address": 10036,
+        "bind_retries": 0,
+        "nofile": 200000,
+        "port_range": [
+          55000,
+          65535
+        ]
+      },
+      "probe": {
+        "pss_kb": 43611,
+        "pss_anon_kb": 28920,
+        "cgroup_current": 291680256,
+        "oom_kill": 0,
+        "tcp_established": 123,
+        "fresh_http_code": 200,
+        "fresh_ms": 0.6,
+        "server_fds": 134
+      },
+      "ceiling_reason": "bad answer"
+    }
+  ],
+  "raw": {
+    "baseline": {
+      "pss_kb": 23959,
+      "pss_anon_kb": 9476,
+      "cgroup_current": 271192064,
+      "oom_kill": 0,
+      "tcp_established": 0,
+      "fresh_http_code": 200,
+      "fresh_ms": 0.3,
+      "server_fds": 11
+    }
+  }
+}

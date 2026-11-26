@@ -3316,6 +3316,90 @@ check_score_k6_setup_modes() {
   rm -rf "$dir"
 }
 
+# swoole_co_start <container> <image> [K=V]...: lab/servers/swoole-co.php on a fresh copy of the seed, without Docker's seccomp filter (io_uring needs it
+# lifted; epoll does not mind), waited on until it listens or exits. Prints the failure and returns 1 otherwise.
+# Why disable SC2034: LAB_COLD, LAB_EXT and LAB_ENV are read by lab_start_app and lab_build_php_flags (lib.sh), which shellcheck does not follow.
+# shellcheck disable=SC2034
+swoole_co_start() {
+  local name="$1" image="$2"
+  shift 2
+  LAB_COLD=0 LAB_EXT=(swoole) LAB_ENV=("$@")
+  lab_build_php_flags
+  docker rm -f "$name" >/dev/null 2>&1
+  LAB_SERVER_SECCOMP_UNCONFINED=1 lab_start_app "$name" "$image" 18175 /lab/servers/swoole-co.php || { echo "lab_start_app failed"; return 1; }
+  for _ in $(seq 1 120); do
+    docker logs "$name" 2>&1 | grep -q '^loop: ' && return 0
+    [ "$(docker inspect -f '{{.State.Running}}' "$name")" = true ] || { echo "the server exited ($(docker inspect -f '{{.State.ExitCode}}' "$name")): $(docker logs "$name" 2>&1 | tr '\n' ' ')"; return 1; }
+    sleep 0.5
+  done
+  echo "the server did not print its loop line within 60 s"
+  return 1
+}
+
+# The image with Swoole's io_uring sockets and the server on it. The image: `--ri swoole` names io_uring and uring_socket, liburing is the pinned version
+# and the build refuses one under 2.8 (before any download). The server: its boot lines, keep-alive (two requests, one connection), JSON bytes, the
+# 401 and 404 of the app, a ring in the process's descriptors once it has served, and a Swoole without io_uring (the 8.5 image's) says `epoll` in the
+# same line, so the line is the build's answer and not a constant. APP_GROUP_COMMIT=1 and a stack size under Swoole's minimum are refused at boot.
+check_swoole_co() {
+  local out want name=lab-check-swoole-co log
+  docker image inspect "$LAB_IMAGE:8.5-uring" >/dev/null 2>&1 || { echo "skip: image $LAB_IMAGE:8.5-uring is not built (run lab/build.sh 8.5-uring)"; return 0; }
+  out="$(bash "$LAB/run.sh" 8.5-uring php -d extension=swoole --ri swoole 2>&1)" || { echo "php --ri swoole failed: $out"; return 1; }
+  grep -qx 'io_uring => enabled' <<<"$out" && grep -qx 'uring_socket => enabled' <<<"$out" || { echo "--ri swoole does not say io_uring and uring_socket are enabled: ${out//$'\n'/ | }"; return 1; }
+  want="$(sed -n 's/^LIBURING_PINNED_VERSION=//p' "$LAB/images/install-liburing.sh")"
+  [ -n "$want" ] || { echo "no LIBURING_PINNED_VERSION in lab/images/install-liburing.sh"; return 1; }
+  out="$(bash "$LAB/run.sh" 8.5-uring pkg-config --modversion liburing 2>&1)"
+  [ "$out" = "$want" ] || { echo "the image's liburing is '$out', the pin is $want"; return 1; }
+  out="$(LIBURING_VERSION=2.5 bash "$LAB/images/install-liburing.sh" 2>&1)" && { echo "install-liburing.sh accepted liburing 2.5"; return 1; }
+  grep -q 'liburing 2.5 is under 2.8' <<<"$out" || { echo "the refusal of liburing 2.5 does not say why: ${out//$'\n'/ | }"; return 1; }
+  lab_ensure_tools_image
+  swoole_co_start "$name" 8.5-uring || { docker rm -f "$name" >/dev/null 2>&1; return 1; }
+  log="$(docker logs "$name" 2>&1)"
+  grep -qx 'loop: swoole-co, uring' <<<"$log" || { docker rm -f "$name" >/dev/null 2>&1; echo "the loop line is not 'loop: swoole-co, uring': ${log//$'\n'/ | }"; return 1; }
+  out="$(docker run --rm --network host "$LAB_TOOLS_IMAGE" sh -c '
+    for _ in 1 2 3 4 5 6 7 8 9 10; do curl -sf -m 2 http://127.0.0.1:18175/health >/dev/null && break; sleep 0.3; done
+    curl -s -m 5 -o /dev/null -w "connects %{num_connects} " http://127.0.0.1:18175/health -o /dev/null http://127.0.0.1:18175/feed
+    curl -s -m 5 -D - -o /dev/null http://127.0.0.1:18175/health | tr -d "\r" | grep -i "^content-type:"
+    curl -s -m 5 -o /dev/null -w "post-no-token %{http_code}\n" -X POST -d "{}" http://127.0.0.1:18175/posts
+    curl -s -m 5 -o /dev/null -w "unknown %{http_code}\n" http://127.0.0.1:18175/nope
+    curl -s -m 5 http://127.0.0.1:18175/feed | head -c 9; echo' 2>&1)"
+  grep -q '^connects 1 connects 0 ' <<<"$out" || { docker rm -f "$name" >/dev/null 2>&1; echo "two requests were not served on one connection: ${out//$'\n'/ | }"; return 1; }
+  grep -qi 'content-type: application/json$' <<<"$out" || { docker rm -f "$name" >/dev/null 2>&1; echo "the Content-Type is not application/json: ${out//$'\n'/ | }"; return 1; }
+  grep -qx 'post-no-token 401' <<<"$out" && grep -qx 'unknown 404' <<<"$out" && grep -qx '{"posts":' <<<"$out" || { docker rm -f "$name" >/dev/null 2>&1; echo "the app's answers are not the expected ones: ${out//$'\n'/ | }"; return 1; }
+  out="$(docker exec "$name" sh -c 'ls -l /proc/1/fd | grep -c "anon_inode:.io_uring."')"
+  docker rm -f "$name" >/dev/null 2>&1
+  [ "${out:-0}" -ge 1 ] || { echo "the server holds no io_uring ring after serving requests"; return 1; }
+  if docker image inspect "$LAB_IMAGE:8.5" >/dev/null 2>&1; then
+    swoole_co_start "$name" 8.5 || { docker rm -f "$name" >/dev/null 2>&1; return 1; }
+    log="$(docker logs "$name" 2>&1)"
+    docker rm -f "$name" >/dev/null 2>&1
+    grep -qx 'loop: swoole-co, epoll' <<<"$log" || { echo "on a Swoole without io_uring the loop line is not 'loop: swoole-co, epoll': ${log//$'\n'/ | }"; return 1; }
+  fi
+  out="$(swoole_co_start "$name" 8.5-uring APP_GROUP_COMMIT=1)" && { docker rm -f "$name" >/dev/null 2>&1; echo "APP_GROUP_COMMIT=1 was accepted"; return 1; }
+  docker rm -f "$name" >/dev/null 2>&1
+  grep -q 'APP_GROUP_COMMIT=1 is not supported' <<<"$out" || { echo "the refusal of group commit does not say why: $out"; return 1; }
+  out="$(swoole_co_start "$name" 8.5-uring SWOOLE_CO_STACK_SIZE=100)" && { docker rm -f "$name" >/dev/null 2>&1; echo "SWOOLE_CO_STACK_SIZE=100 was accepted (Swoole's minimum is 65536)"; return 1; }
+  docker rm -f "$name" >/dev/null 2>&1
+  grep -q 'SWOOLE_CO_STACK_SIZE must be a whole number of bytes from 65536 to 16777216' <<<"$out" || { echo "the refusal of a stack size under 65536 does not say why: $out"; return 1; }
+}
+
+# lab/steplab.sh --expect-loop: a variant whose server printed another `loop:` line than the one asked for stops the comparison (exit 1, with the
+# line it got), the right line goes through and lands in the run's JSON, an unknown variant is a usage error, and --seccomp-unconfined is accepted.
+check_steplab_expect_loop() {
+  local out rc=0 dir
+  dir="$(mktemp -d)"
+  out="$(bash "$LAB/steplab.sh" --dry-run --image 8.5 --rate 100 --think-scale 0.1 --seconds 5 --pairs 1 --variant a= --expect-loop b=epoll 2>&1)" || rc=$?
+  [ "$rc" = 2 ] && grep -q "names 'b', which is not one of the variants" <<<"$out" || { rm -rf "$dir"; echo "an unknown variant in --expect-loop is not a usage error (exit $rc): ${out//$'\n'/ | }"; return 1; }
+  out="$(bash "$LAB/steplab.sh" --dry-run --image 8.5 --rate 100 --think-scale 0.1 --seconds 5 --pairs 1 --seccomp-unconfined --variant a= --expect-loop a=epoll 2>&1)" \
+    || { rm -rf "$dir"; echo "--dry-run with --seccomp-unconfined and --expect-loop failed: ${out//$'\n'/ | }"; return 1; }
+  rc=0
+  out="$(bash "$LAB/steplab.sh" --image 8.5 --rate 200 --think-scale 0.1 --seconds 5 --pairs 1 --warmup 20,5 --variant ref= --expect-loop ref=uring --out "$dir/wrong" 2>&1)" || rc=$?
+  [ "$rc" = 1 ] && grep -q "the server's loop line is 'epoll', which does not contain 'uring'" <<<"$out" || { rm -rf "$dir"; echo "a wrong loop line did not stop the run (exit $rc): ${out//$'\n'/ | }"; return 1; }
+  rc=0
+  out="$(bash "$LAB/steplab.sh" --image 8.5 --rate 200 --think-scale 0.1 --seconds 5 --pairs 1 --warmup 20,5 --variant ref= --expect-loop ref=epoll --out "$dir/right" 2>&1)" || rc=$?
+  [ "$rc" = 0 ] && [ "$(jq -r '.server.loop' "$dir/right/ref-1.json")" = epoll ] || { echo "the right loop line did not pass, or is not in the JSON (exit $rc): ${out//$'\n'/ | }"; rm -rf "$dir"; return 1; }
+  rm -rf "$dir"
+}
+
 CHECKS=(
   check_seed_files_exist
   check_seed_has_posts
@@ -3434,6 +3518,8 @@ CHECKS=(
   check_syscalls_cleans_up_after_failure
   check_post_plan
   check_sqlite_tuned
+  check_swoole_co
+  check_steplab_expect_loop
   check_score
   check_score_unit
   check_score_server_setup_checks

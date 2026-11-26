@@ -61,6 +61,7 @@ bash lab/run.sh 8.4 php-info
 | `8.6` | 8.6.0 | not built | same, `WITH_SWOOLE=0`: Swoole 6.2.6 does not compile on 8.6 (`results/swoole-on-php-8.6.md`) |
 | `8.3-apt-tzimpel` | 8.3.6 | 6.2.6 plus the `php-swoole-tzimpel` entry's memory patch, as a second extension in `/opt/swoole-tzimpel/swoole.so` | `FROM php-lab:8.3-apt` (`Dockerfile.8.3-apt-tzimpel`, `install-swoole-tzimpel.sh`); `bash lab/build.sh 8.3-apt-tzimpel` after `8.3-apt`, left out of `all` |
 | `8.5-sqlite` | 8.5.13 | not built | `Dockerfile.8.5-sqlite`: 8.5's flags, pcntl, sockets and event, on a SQLite built from sqlite.org's amalgamation (see below); `bash lab/build.sh 8.5-sqlite`, left out of `all` |
+| `8.5-uring` | 8.5.13 | 6.2.6 with `--enable-uring_socket` | `Dockerfile.8.5-uring`: 8.5 as it is (pcntl, sockets, event, Workerman, Excimer) with Swoole built on io_uring sockets, against a liburing built by `images/install-liburing.sh` (see below); `bash lab/build.sh 8.5-uring`, left out of `all` |
 
 The source builds share one Dockerfile and the same configure flags (CLI only, `pdo_sqlite` on the system libsqlite3,
 `mbstring`, `sodium`, `ffi`, `ctype`, `iconv`, OPcache with its JIT, `CFLAGS=-O2`; the reason for each is in
@@ -78,6 +79,20 @@ the training ran no statement (`LAB_SQLITE_TRAIN_LOOPS=0 bash lab/build.sh 8.5-s
 `images/` with the challenge's `schema.sql` and the submission's `app.php` added; the seed never enters the image. `-march=native` makes the image
 specific to the machine that built it: one built on the Mac (arm64) is only for the Mac, and the x86 session rebuilds it on its own box.
 `check_sqlite_tuned` checks the version, the options, php's `ldd` and Ubuntu's library (it skips when the image is not built).
+
+`8.5-uring` is `8.5` with a Swoole whose coroutine HTTP server (`Swoole\Coroutine\Http\Server`) runs its sockets on io_uring: `install-php-src.sh`
+configures Swoole 6.2.6 with `--enable-uring_socket --with-liburing-dir=/usr/local` when `WITH_SWOOLE_URING=1`, and stops the build unless
+`php --ri swoole` says `io_uring => enabled` and `uring_socket => enabled`. Ubuntu 24.04 ships liburing 2.5 and Swoole wants 2.8 or later, so
+`images/install-liburing.sh` builds liburing 2.15 from its tag's tarball (sha256 pinned; it refuses a version under 2.8 before downloading anything)
+into `/usr/local`. Swoole's reactor server (`Swoole\Http\Server`, `bake-swoole.php`) does not use these sockets. Docker's default seccomp filter refuses
+io_uring: a server on this image runs with `--seccomp-unconfined` (`lab/challenge-test.sh`, `lab/realistic.sh`, `lab/steplab.sh`, `lab/syscalls.sh` and
+the others that start a server). `lab/servers/swoole-co.php` is the challenge app on it: one process, `Co\run`, one `Swoole\Coroutine\Http\Server`, the
+app booted once, `handler_handle()` called for each request; its header lists what differs from the DIY server's bytes. It passes the challenge's 42
+checks (`bash lab/challenge-test.sh --image 8.5-uring --server lab/servers/swoole-co.php --ext swoole --seccomp-unconfined`). `check_swoole_co` checks
+the image and the server (it skips when the image is not built). **What a connection costs it:** `lab/conns.sh --app` (the server is the app: a fresh copy of the seed, requests are `GET /health`) holds idle connections and reads the memory. In Docker
+Desktop's VM, whose kernel has transparent huge pages on `always`, a connection costs 160 KiB (the server is OOM-killed near 12,000 connections); with `SWOOLE_CO_THP_OFF=1`
+(`prctl(PR_SET_THP_DISABLE)` through FFI) 21.1 KiB, and 64,000 connections fit. `SWOOLE_CO_STACK_SIZE=<bytes>` sets the coroutines' C stack (Swoole accepts 65536 to 16 MiB; the app
+answers an empty body on 65536). The runs and the reading are in `results/2026-11-26-off-the-shelf-uring/`.
 
 An unknown variant exits non-zero and lists the known ones. `lab/run.sh` runs a command in the image with 1 CPU, 2 GiB,
 no swap, 65535 file descriptors, on the host network, pinned to CPU 2; `lab/` is mounted at `/lab` (read-only, except
@@ -565,8 +580,10 @@ variant of every step of a request, on purpose: later work measures the alternat
 - **`lab/challenge-test.sh`** runs the challenge's own `test/test.sh`, unchanged, against it:
 
   ```bash
-  bash lab/challenge-test.sh --image 8.5 [--server lab/app/server.php] [--ext sockets --ext event] [--env K=V]... [--port 18110]
+  bash lab/challenge-test.sh --image 8.5 [--server lab/app/server.php] [--ext sockets --ext event] [--env K=V]... [--port 18110] [--seccomp-unconfined]
   ```
+
+  `--seccomp-unconfined` starts the server container (not the test container) without Docker's default seccomp filter, which refuses io_uring.
 
   `--env K=V` (repeatable) goes to the server container, after `JWT_SECRET` and `SQLITE_PATH`: `--env APP_SOFT_CONN_LIMIT=0` runs the
   suite on the soft connection limit (every response says `Connection: close`) and it still passes.
@@ -1140,7 +1157,10 @@ Each run is `lab/realistic.sh --hold <rate>,<seconds>` (a fresh seed copy, serve
 rate for 60 s (`--warmup <req/s>,<s>` changes it). `--variant <name>=<K=V,K=V...>` sets environment variables (an empty list is the
 skeleton as it is); `--server-variant <name>=<php file under lab/ or submissions/>` runs another server file; `--variant-args <name>=<arguments>` adds
 arguments to that variant's `lab/realistic.sh` call, split on spaces and given last, so a variant can run on another image and with its own
-extension and `php.ini` (`--variant-args "other=--image 8.3-apt --ext swoole"`). **The first variant is the reference.** Runs are **interleaved by round**: every round runs every variant once, and `--pairs` rounds follow each other, so a slow drift of the VM hits every variant alike.
+extension and `php.ini` (`--variant-args "other=--image 8.3-apt --ext swoole"`). **The first variant is the reference.** `--seccomp-unconfined` starts the
+server container of every run without Docker's default seccomp filter, on both sides of a pair (the bench has none); `--expect-loop <variant>=<text>` stops the
+comparison, with exit 1 and the line it got, when that variant's server printed a `loop: ...` boot line (the run's `server.loop`, recorded by `lab/realistic.sh`)
+that does not contain the text: a server that fell back to another loop would be measured as the one it is not. `check_steplab_expect_loop` runs both cases. Runs are **interleaved by round**: every round runs every variant once, and `--pairs` rounds follow each other, so a slow drift of the VM hits every variant alike.
 
 **The order inside a round alternates** (`--order alternate`, the default). Odd rounds run the variants in reverse (B A; C B A with three), even rounds in the order
 given (A B; A B C), counted from the round's own number, so `--first-round` keeps the alternation. **Round 1 runs the reference last**, on purpose: the A/A data

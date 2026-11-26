@@ -1,0 +1,18 @@
+conns: the baseline is read, steps: 1000 3000 6000 9000 12000 16000 20000 30000
+conns: step 1000: held 123, stopped: bad answer
+
+image 8.5-uring (PHP 8.5.13, Swoole 6.2.6), swoole-co.php, server nofile 65535
+    target     held    Pss MiB  Pss_Anon MiB  mem.cur MiB  /proc tcp  fresh ms   own fds  status
+      1000      123      42.59         28.24       278.17        123       0.6       134  bad answer
+
+  max connections (held, answered)       0 (at step none)
+  held when it stopped                   123
+  stopped because                        bad answer
+  memory per connection, Pss             n/a (slope over 0 held steps)
+  memory per connection, Pss_Anon        n/a (slope over 0 held steps)
+  memory per connection, memory.current  n/a (slope over 0 held steps)
+  baseline (one request, no connection)  Pss 23.4 MiB, Pss_Anon 9.25 MiB, memory.current 258.63 MiB
+  socket settings (server's boot line)   backlog=512 tcp_nodelay=1
+  other containers on the VM             0
+wrote lab/results/2026-11-26-off-the-shelf-uring/conns-stack-64k.json
+rc=0

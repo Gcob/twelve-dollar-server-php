@@ -1,0 +1,32 @@
+conns: the baseline is read, steps: 1000 10000 20000 30000 40000 50000 60000 64000
+conns: step 1000: held 1000
+conns: step 10000: held 10000
+conns: step 20000: held 20000
+conns: step 30000: held 30000
+conns: step 40000: held 40000
+conns: step 50000: held 50000
+conns: step 60000: held 60000
+conns: step 64000: held 64000
+
+image 8.5-uring (PHP 8.5.13, Swoole 6.2.6), swoole-co.php, server nofile 65535
+    target     held    Pss MiB  Pss_Anon MiB  mem.cur MiB  /proc tcp  fresh ms   own fds  status
+      1000     1000      44.21         29.89       287.39       1000       0.3      1011  ok
+     10000    10000     229.94        215.63       546.13      10000       0.7     10011  ok
+     20000    20000     436.21        421.89       833.25      20000       1.4     20011  ok
+     30000    30000     641.82         627.5      1119.71      30000       1.4     30011  ok
+     40000    40000      848.8        834.48       1407.8      40000       2.2     40011  ok
+     50000    50000    1054.66       1040.34      1694.52      50000       2.1     50011  ok
+     60000    60000    1260.19       1245.87      1980.89      60000       3.9     60011  ok
+     64000    64000    1342.38       1328.06      2047.64      64000       3.5     64011  ok
+
+  max connections (held, answered)       64000 (at step 64000)
+  held when it stopped                   64000
+  stopped because                        no ceiling: every planned step held
+  memory per connection, Pss             21.1 KiB (slope over 8 held steps)
+  memory per connection, Pss_Anon        21.1 KiB (slope over 8 held steps)
+  memory per connection, memory.current  29 KiB (slope over 8 held steps)
+  baseline (one request, no connection)  Pss 23.37 MiB, Pss_Anon 9.26 MiB, memory.current 258.64 MiB
+  socket settings (server's boot line)   backlog=512 tcp_nodelay=1
+  other containers on the VM             0
+wrote lab/results/2026-11-26-off-the-shelf-uring/conns-thp-off-to-64000.json
+rc=0

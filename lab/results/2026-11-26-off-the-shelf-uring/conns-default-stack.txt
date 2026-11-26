@@ -1,0 +1,29 @@
+conns: the baseline is read, steps: 1000 3000 6000 9000 12000 16000 20000
+conns: step 1000: held 1000
+conns: step 3000: held 3000
+conns: step 6000: held 6000
+conns: step 9000: held 9000
+conns: 25 connects in a row failed with 'Cannot assign requested address' on 127.0.0.3 (sockets of an earlier run), moving to another address
+conns: step 12000: held 12000
+conns: step 16000: held 13530, stopped: server OOM-killed
+
+image 8.5-uring (PHP 8.5.13, Swoole 6.2.6), swoole-co.php, server nofile 65535
+    target     held    Pss MiB  Pss_Anon MiB  mem.cur MiB  /proc tcp  fresh ms   own fds  status
+      1000     1000     175.47        161.16        418.7       1000       0.4      1011  ok
+      3000     3000     734.29        719.98       993.76       3000       0.5      3011  ok
+      6000     6000    1702.01        1687.7      1985.68       6000       0.6      6011  ok
+      9000     9000    1812.93       1798.62      2047.72       9000       0.7      9011  ok
+     12000    12000    1874.72        1860.4      2047.73      12000       0.9     12011  ok
+     16000    13530        n/a           n/a          n/a        n/a       n/a       n/a  server OOM-killed
+
+  max connections (held, answered)       12000 (at step 12000)
+  held when it stopped                   13530
+  stopped because                        server OOM-killed
+  memory per connection, Pss             160.45 KiB (slope over 5 held steps)
+  memory per connection, Pss_Anon        160.45 KiB (slope over 5 held steps)
+  memory per connection, memory.current  154.07 KiB (slope over 5 held steps)
+  baseline (one request, no connection)  Pss 25.36 MiB, Pss_Anon 11.25 MiB, memory.current 260.64 MiB
+  socket settings (server's boot line)   backlog=512 tcp_nodelay=1
+  other containers on the VM             0
+wrote lab/results/2026-11-26-off-the-shelf-uring/conns-default-stack.json
+rc=0

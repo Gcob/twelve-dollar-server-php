@@ -1,0 +1,31 @@
+# php-lab:8.5-uring: the 8.5 image (same PHP, same configure flags, Swoole 6.2.6, pcntl, sockets, PECL event, Workerman, Excimer) whose Swoole is built
+# with io_uring sockets (--enable-uring_socket) against a liburing of our own (install-liburing.sh, under /usr/local). Ubuntu's liburing 2.5 is
+# too old for Swoole and is not installed. The reactor server of Swoole (Swoole\Http\Server) does not use io_uring sockets: only the coroutine
+# servers do (lab/servers/swoole-co.php).
+# Build through lab/build.sh, never by hand: the PHP version and its sha256 come from lab_source_release 8.5 in lab/lib.sh, and the other build args
+# are the ones of Dockerfile.src.
+FROM ubuntu:24.04@sha256:9c7f200c07e3d4a03e7249d2c16bf66a51120fb876aa2242cf31451412543289
+
+ARG PHP_VERSION
+ARG PHP_SHA256
+
+# liburing first: it is the cheap layer, and PHP's compile does not depend on it.
+COPY install-liburing.sh /tmp/install-liburing.sh
+RUN bash /tmp/install-liburing.sh && rm /tmp/install-liburing.sh
+
+COPY install-php-src.sh /tmp/install.sh
+RUN PHP_VERSION="$PHP_VERSION" PHP_SHA256="$PHP_SHA256" WITH_SWOOLE=1 WITH_SWOOLE_URING=1 bash /tmp/install.sh \
+    && rm /tmp/install.sh
+
+ARG WITH_EVENT=1
+COPY install-extras.sh workerman-nocache.patch /tmp/
+RUN PHP_VERSION="$PHP_VERSION" PHP_SHA256="$PHP_SHA256" WITH_EVENT="$WITH_EVENT" bash /tmp/install-extras.sh \
+    && rm /tmp/install-extras.sh /tmp/workerman-nocache.patch
+
+ARG WITH_EXCIMER=1
+COPY install-excimer.sh /tmp/
+RUN WITH_EXCIMER="$WITH_EXCIMER" bash /tmp/install-excimer.sh \
+    && rm /tmp/install-excimer.sh
+
+COPY php-info /usr/local/bin/php-info
+RUN chmod +x /usr/local/bin/php-info

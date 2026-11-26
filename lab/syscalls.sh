@@ -6,6 +6,11 @@
 #   bash lab/syscalls.sh --image 8.5                                  # the skeleton, 2,000 req/s, 20 s of strace
 #   bash lab/syscalls.sh --image 8.5 --env APP_SOMETHING=1 --out /tmp/count.json
 #                        [--rate 2000] [--think-scale 0.1] [--seconds 20] [--server <php file under lab/ or submissions/>] [--env K=V]...
+#                        [--ext <name>]... [--seccomp-unconfined]
+#
+# --ext <name> loads that extension in the server (the server's default is sockets and event, lab/realistic.sh's); --seccomp-unconfined starts
+# the server container without Docker's default seccomp filter, which refuses io_uring (the server of the 8.5-uring image needs it). The
+# sidecar's strace works the same: an io_uring server shows `io_uring_enter` where the others show `recvfrom`, `sendto` and `accept4`.
 #
 # Only counts are kept. strace stops the server at every syscall, so it slows it down and its times mean nothing; its time columns are
 # dropped (lab/syscalls-table.awk). The requests are the aggregator's (lab/macro/aggregate.php, one row per second of k6's own samples),
@@ -39,7 +44,7 @@ WRITE_FAMILY='["write", "sendto", "writev"]'
 usage() {
   cat >&2 <<'EOF'
 usage: lab/syscalls.sh --image <variant> [--rate <req/s>] [--think-scale <s>] [--seconds <s>] [--server <php file under lab/ or submissions/>]
-                       [--env K=V]... [--out <path>]
+                       [--env K=V]... [--ext <name>]... [--seccomp-unconfined] [--out <path>]
 defaults: --rate 2000, --think-scale 0.1, --seconds 20
 EOF
   exit 2
@@ -50,8 +55,9 @@ command_line="lab/syscalls.sh $*"
 command_line="${command_line//$REPO/.}"
 
 image="" rate=2000 think_scale=0.1 seconds=20 server_file="$LAB/app/server.php" out=""
-ENVS=()
+ENVS=() EXTS=() seccomp_args=()
 while [ "$#" -gt 0 ]; do
+  if [ "$1" = --seccomp-unconfined ]; then seccomp_args=(--seccomp-unconfined); shift; continue; fi
   [ "$#" -ge 2 ] || { echo "missing value for $1" >&2; usage; }
   case "$1" in
     --image) image="$2" ;;
@@ -60,6 +66,7 @@ while [ "$#" -gt 0 ]; do
     --seconds) seconds="$2" ;;
     --server) server_file="$2" ;;
     --env) ENVS+=("$2") ;;
+    --ext) EXTS+=("$2") ;;
     --out) out="$2" ;;
     *) echo "unknown option: $1" >&2; usage ;;
   esac
@@ -114,10 +121,12 @@ for kv in "${ENVS[@]+"${ENVS[@]}"}"; do
   [[ "$kv" != APP_TELEMETRY=* ]] || telemetry_set=1
 done
 [ -n "$telemetry_set" ] || env_args+=(--env APP_TELEMETRY=0)
+ext_args=()
+for e in "${EXTS[@]+"${EXTS[@]}"}"; do ext_args+=(--ext "$e"); done
 
 echo "syscalls: a realistic hold of $rate req/s (think scale $think_scale, $vus VUs, plateau ${plateau}s), strace for ${seconds}s from ${LEAD_S}s into the plateau" >&2
 bash "$LAB/realistic.sh" --image "$image" --think-scale "$think_scale" --hold "$rate,$plateau" --no-series --warmup "$warm_rate,10" \
-  --server "$server_file" "${env_args[@]}" --out "$tmp/run.json" >"$tmp/realistic.out" 2>"$tmp/realistic.err" &
+  --server "$server_file" "${env_args[@]}" "${seccomp_args[@]+"${seccomp_args[@]}"}" "${ext_args[@]+"${ext_args[@]}"}" --out "$tmp/run.json" >"$tmp/realistic.out" 2>"$tmp/realistic.err" &
 run_pid=$!
 
 # The plateau has started when the aggregator sees the step's VUs.

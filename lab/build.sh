@@ -5,6 +5,7 @@
 #   bash lab/build.sh 8.4
 #   bash lab/build.sh all        # every variant, one after the other (never in parallel: the times are recorded)
 #   bash lab/build.sh 8.5-sqlite # 8.5 on a SQLite built from the amalgamation with PGO (LAB_SQLITE_TRAIN_LOOPS=0 makes it fail: a test hook)
+#   bash lab/build.sh 8.5-uring  # 8.5 with Swoole's io_uring sockets, on a liburing built from its tarball
 set -euo pipefail
 
 LAB="$(cd "$(dirname "$0")" && pwd)"
@@ -39,6 +40,12 @@ elif [ "$variant" = 8.5-sqlite ]; then
   docker build -t "$LAB_IMAGE:$variant" -f "$LAB/images/Dockerfile.$variant" \
     --build-arg PHP_VERSION="$php_version" --build-arg PHP_SHA256="$php_sha256" --build-arg SQLITE_TRAIN_LOOPS="${LAB_SQLITE_TRAIN_LOOPS:-}" \
     "$context"
+elif [ "$variant" = 8.5-uring ]; then
+  # Why: same PHP as 8.5 (version, sha256, event and excimer switches), so only the Swoole build differs.
+  read -r php_version php_sha256 _ with_event with_excimer <<<"$(lab_source_release 8.5)"
+  docker build -t "$LAB_IMAGE:$variant" -f "$LAB/images/Dockerfile.$variant" \
+    --build-arg PHP_VERSION="$php_version" --build-arg PHP_SHA256="$php_sha256" --build-arg WITH_EVENT="$with_event" --build-arg WITH_EXCIMER="$with_excimer" \
+    "$LAB/images"
 else
   docker build -t "$LAB_IMAGE:$variant" -f "$LAB/images/Dockerfile.$variant" "$LAB/images"
 fi

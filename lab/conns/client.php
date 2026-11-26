@@ -1,7 +1,7 @@
 <?php
 // The client of lab/conns.sh: opens idle keep-alive connections to a server, one at a time, and holds them.
 //
-//   php client.php <port>
+//   php client.php <port> [--path <path>] [--body-regex <pcre>]
 //   php client.php <port> --hold <n> [--path <path>] [--body-regex <pcre>] [--end-file <file>]
 //
 // Without --hold it is driven through stdin and answers on stdout, one JSON object per line (lab/conns.sh reads them). Commands on stdin:
@@ -288,9 +288,9 @@ function sweep(array &$held): int
 }
 
 /** One request on one connection, then close it: what the server allocates for its first request is in the baseline. */
-function baseline(int $port, Source $source): void
+function baseline(int $port, Source $source, string $path, ?string $bodyRegex): void
 {
-    [$fp, $failure, $detail] = open_and_request($port, $source, DEFAULT_PATH, null);
+    [$fp, $failure, $detail] = open_and_request($port, $source, $path, $bodyRegex);
     if ($fp === null) {
         harness_error("the baseline request failed ($failure: $detail)");
     }
@@ -311,7 +311,7 @@ function own_memory_kb(): array
 
 $port = (int) ($argv[1] ?? 0);
 if ($port < 1) {
-    harness_error('usage: client.php <port> [--hold <n> [--path <path>] [--body-regex <pcre>] [--end-file <file>]]');
+    harness_error('usage: client.php <port> [--path <path>] [--body-regex <pcre>] [--hold <n> --end-file <file>]');
 }
 $options = ['hold' => null, 'path' => DEFAULT_PATH, 'body-regex' => null, 'end-file' => null];
 for ($i = 2; $i < count($argv); $i += 2) {
@@ -376,7 +376,7 @@ if ($holdMode) {
     exit(0);
 }
 
-baseline($port, $source);
+baseline($port, $source, $options['path'], $bodyRegex);
 emit(['event' => 'baseline_ready']);
 
 while (($line = fgets(STDIN)) !== false) {
@@ -391,7 +391,7 @@ while (($line = fgets(STDIN)) !== false) {
     $failure = $detail = null;
     $started = microtime(true);
     while (count($held) < $target) {
-        [$fp, $failure, $detail] = open_and_request($port, $source, DEFAULT_PATH, null);
+        [$fp, $failure, $detail] = open_and_request($port, $source, $options['path'], $bodyRegex);
         if ($fp === null) {
             break;
         }

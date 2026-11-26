@@ -1,0 +1,391 @@
+{
+  "date": "2026-11-26T21:34:17Z",
+  "command": "lab/conns.sh --image 8.5-uring --server lab/servers/swoole-co.php --ext swoole --seccomp-unconfined --app --label thp-off-to-the-fd-limit --env SWOOLE_CO_THP_OFF=1 --steps 1000,10000,20000,30000,40000,50000,60000,64000 --out lab/results/2026-11-26-off-the-shelf-uring/conns-thp-off-to-64000.json",
+  "label": "thp-off-to-the-fd-limit",
+  "other_containers": {
+    "count": 0
+  },
+  "host": {
+    "docker_desktop": "Docker Desktop 4.76.0 (228118)",
+    "engine": "29.5.2",
+    "vm_kernel": "6.12.76-linuxkit",
+    "arch": "arm64",
+    "cpuset_server": "2",
+    "cpuset_client": "4-11",
+    "cpuset_probe": "0-1",
+    "limits": "--cpus=1 --memory=2g --memory-swap=2g --ulimit nofile=65535:65535"
+  },
+  "server": {
+    "variant": "8.5-uring",
+    "image_id": "sha256:eeb0a03438089478212abdd1592180d6b0e85e6834bd3fa478176e4f57ac7664",
+    "php_version": "8.5.13",
+    "swoole_version": "6.2.6",
+    "file": "servers/swoole-co.php",
+    "port": 18100,
+    "php_flags": "-d extension=swoole -d memory_limit=-1 -d opcache.enable_cli=1 -d opcache.jit=tracing -d opcache.jit_buffer_size=32M -d opcache.file_update_protection=0 -d zend.assertions=-1",
+    "ext": [
+      "swoole"
+    ],
+    "env": [
+      "SWOOLE_CO_THP_OFF=1"
+    ],
+    "nofile": 65535,
+    "socket": {
+      "backlog": 512,
+      "tcp_nodelay": 1
+    }
+  },
+  "client": {
+    "nofile": 200000,
+    "port_range": [
+      55000,
+      65535
+    ],
+    "ports_per_address": 10036,
+    "source_addresses": [
+      "127.0.0.3",
+      "127.0.0.6",
+      "127.0.0.2",
+      "127.0.0.4",
+      "127.0.0.5",
+      "127.0.0.7",
+      "127.0.0.8"
+    ]
+  },
+  "max_option": null,
+  "steps_planned": [
+    1000,
+    10000,
+    20000,
+    30000,
+    40000,
+    50000,
+    60000,
+    64000
+  ],
+  "results": {
+    "max_connections": 64000,
+    "max_connections_step": 64000,
+    "held_at_stop": 64000,
+    "ceiling": null,
+    "reason_stopped": "no ceiling: every planned step held",
+    "baseline": {
+      "pss_kb": 23934,
+      "pss_anon_kb": 9480,
+      "cgroup_current_bytes": 271208448
+    },
+    "memory_per_connection": {
+      "held_steps_used": 8,
+      "pss_kib_per_connection": 21.102900237053856,
+      "pss_anon_kib_per_connection": 21.102888718239793,
+      "cgroup_current_kib_per_connection": 29.00266862542152
+    }
+  },
+  "steps": [
+    {
+      "target": 1000,
+      "held": 1000,
+      "client": {
+        "event": "step",
+        "target": 1000,
+        "held": 1000,
+        "closed_by_server": 0,
+        "failure": null,
+        "detail": null,
+        "seconds": 0.07,
+        "source_addresses": [
+          "127.0.0.3"
+        ],
+        "ports_per_address": 10036,
+        "bind_retries": 0,
+        "nofile": 200000,
+        "port_range": [
+          55000,
+          65535
+        ]
+      },
+      "probe": {
+        "pss_kb": 45275,
+        "pss_anon_kb": 30612,
+        "cgroup_current": 301346816,
+        "oom_kill": 0,
+        "tcp_established": 1000,
+        "fresh_http_code": 200,
+        "fresh_ms": 0.3,
+        "server_fds": 1011
+      },
+      "ceiling_reason": null
+    },
+    {
+      "target": 10000,
+      "held": 10000,
+      "client": {
+        "event": "step",
+        "target": 10000,
+        "held": 10000,
+        "closed_by_server": 0,
+        "failure": null,
+        "detail": null,
+        "seconds": 1.84,
+        "source_addresses": [
+          "127.0.0.3"
+        ],
+        "ports_per_address": 10036,
+        "bind_retries": 0,
+        "nofile": 200000,
+        "port_range": [
+          55000,
+          65535
+        ]
+      },
+      "probe": {
+        "pss_kb": 235462,
+        "pss_anon_kb": 220800,
+        "cgroup_current": 572653568,
+        "oom_kill": 0,
+        "tcp_established": 10000,
+        "fresh_http_code": 200,
+        "fresh_ms": 0.7,
+        "server_fds": 10011
+      },
+      "ceiling_reason": null
+    },
+    {
+      "target": 20000,
+      "held": 20000,
+      "client": {
+        "event": "step",
+        "target": 20000,
+        "held": 20000,
+        "closed_by_server": 0,
+        "failure": null,
+        "detail": null,
+        "seconds": 3.16,
+        "source_addresses": [
+          "127.0.0.3",
+          "127.0.0.6"
+        ],
+        "ports_per_address": 10036,
+        "bind_retries": 0,
+        "nofile": 200000,
+        "port_range": [
+          55000,
+          65535
+        ]
+      },
+      "probe": {
+        "pss_kb": 446674,
+        "pss_anon_kb": 432012,
+        "cgroup_current": 873725952,
+        "oom_kill": 0,
+        "tcp_established": 20000,
+        "fresh_http_code": 200,
+        "fresh_ms": 1.4,
+        "server_fds": 20011
+      },
+      "ceiling_reason": null
+    },
+    {
+      "target": 30000,
+      "held": 30000,
+      "client": {
+        "event": "step",
+        "target": 30000,
+        "held": 30000,
+        "closed_by_server": 0,
+        "failure": null,
+        "detail": null,
+        "seconds": 4.73,
+        "source_addresses": [
+          "127.0.0.3",
+          "127.0.0.6",
+          "127.0.0.2"
+        ],
+        "ports_per_address": 10036,
+        "bind_retries": 0,
+        "nofile": 200000,
+        "port_range": [
+          55000,
+          65535
+        ]
+      },
+      "probe": {
+        "pss_kb": 657222,
+        "pss_anon_kb": 642560,
+        "cgroup_current": 1174102016,
+        "oom_kill": 0,
+        "tcp_established": 30000,
+        "fresh_http_code": 200,
+        "fresh_ms": 1.4,
+        "server_fds": 30011
+      },
+      "ceiling_reason": null
+    },
+    {
+      "target": 40000,
+      "held": 40000,
+      "client": {
+        "event": "step",
+        "target": 40000,
+        "held": 40000,
+        "closed_by_server": 0,
+        "failure": null,
+        "detail": null,
+        "seconds": 7.21,
+        "source_addresses": [
+          "127.0.0.3",
+          "127.0.0.6",
+          "127.0.0.2",
+          "127.0.0.4"
+        ],
+        "ports_per_address": 10036,
+        "bind_retries": 0,
+        "nofile": 200000,
+        "port_range": [
+          55000,
+          65535
+        ]
+      },
+      "probe": {
+        "pss_kb": 869167,
+        "pss_anon_kb": 854504,
+        "cgroup_current": 1476186112,
+        "oom_kill": 0,
+        "tcp_established": 40000,
+        "fresh_http_code": 200,
+        "fresh_ms": 2.2,
+        "server_fds": 40011
+      },
+      "ceiling_reason": null
+    },
+    {
+      "target": 50000,
+      "held": 50000,
+      "client": {
+        "event": "step",
+        "target": 50000,
+        "held": 50000,
+        "closed_by_server": 0,
+        "failure": null,
+        "detail": null,
+        "seconds": 8.91,
+        "source_addresses": [
+          "127.0.0.3",
+          "127.0.0.6",
+          "127.0.0.2",
+          "127.0.0.4",
+          "127.0.0.5"
+        ],
+        "ports_per_address": 10036,
+        "bind_retries": 0,
+        "nofile": 200000,
+        "port_range": [
+          55000,
+          65535
+        ]
+      },
+      "probe": {
+        "pss_kb": 1079975,
+        "pss_anon_kb": 1065312,
+        "cgroup_current": 1776836608,
+        "oom_kill": 0,
+        "tcp_established": 50000,
+        "fresh_http_code": 200,
+        "fresh_ms": 2.1,
+        "server_fds": 50011
+      },
+      "ceiling_reason": null
+    },
+    {
+      "target": 60000,
+      "held": 60000,
+      "client": {
+        "event": "step",
+        "target": 60000,
+        "held": 60000,
+        "closed_by_server": 0,
+        "failure": null,
+        "detail": null,
+        "seconds": 10.51,
+        "source_addresses": [
+          "127.0.0.3",
+          "127.0.0.6",
+          "127.0.0.2",
+          "127.0.0.4",
+          "127.0.0.5",
+          "127.0.0.7"
+        ],
+        "ports_per_address": 10036,
+        "bind_retries": 0,
+        "nofile": 200000,
+        "port_range": [
+          55000,
+          65535
+        ]
+      },
+      "probe": {
+        "pss_kb": 1290431,
+        "pss_anon_kb": 1275768,
+        "cgroup_current": 2077110272,
+        "oom_kill": 0,
+        "tcp_established": 60000,
+        "fresh_http_code": 200,
+        "fresh_ms": 3.9,
+        "server_fds": 60011
+      },
+      "ceiling_reason": null
+    },
+    {
+      "target": 64000,
+      "held": 64000,
+      "client": {
+        "event": "step",
+        "target": 64000,
+        "held": 64000,
+        "closed_by_server": 0,
+        "failure": null,
+        "detail": null,
+        "seconds": 4.59,
+        "source_addresses": [
+          "127.0.0.3",
+          "127.0.0.6",
+          "127.0.0.2",
+          "127.0.0.4",
+          "127.0.0.5",
+          "127.0.0.7",
+          "127.0.0.8"
+        ],
+        "ports_per_address": 10036,
+        "bind_retries": 0,
+        "nofile": 200000,
+        "port_range": [
+          55000,
+          65535
+        ]
+      },
+      "probe": {
+        "pss_kb": 1374595,
+        "pss_anon_kb": 1359932,
+        "cgroup_current": 2147110912,
+        "oom_kill": 0,
+        "tcp_established": 64000,
+        "fresh_http_code": 200,
+        "fresh_ms": 3.5,
+        "server_fds": 64011
+      },
+      "ceiling_reason": null
+    }
+  ],
+  "raw": {
+    "baseline": {
+      "pss_kb": 23934,
+      "pss_anon_kb": 9480,
+      "cgroup_current": 271208448,
+      "oom_kill": 0,
+      "tcp_established": 0,
+      "fresh_http_code": 200,
+      "fresh_ms": 0.3,
+      "server_fds": 11
+    }
+  }
+}

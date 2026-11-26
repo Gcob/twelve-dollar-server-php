@@ -1,0 +1,32 @@
+conns: the baseline is read, steps: 1000 3000 6000 9000 12000 16000 20000 30000
+conns: step 1000: held 1000
+conns: step 3000: held 3000
+conns: step 6000: held 6000
+conns: step 9000: held 9000
+conns: step 12000: held 12000
+conns: step 16000: held 16000
+conns: step 20000: held 20000
+conns: step 30000: held 21450, stopped: server OOM-killed
+
+image 8.5-uring (PHP 8.5.13, Swoole 6.2.6), swoole-co.php, server nofile 65535
+    target     held    Pss MiB  Pss_Anon MiB  mem.cur MiB  /proc tcp  fresh ms   own fds  status
+      1000     1000     173.51        159.16       412.98       1000       0.4      1011  ok
+      3000     3000     473.35        459.01       721.77       3000       0.4      3011  ok
+      6000     6000      923.1        908.76      1184.71       6000       0.4      6011  ok
+      9000     9000    1372.79       1358.45      1647.72       9000       0.7      9011  ok
+     12000    12000     1767.8       1753.46      2047.76      12000       0.9     12011  ok
+     16000    16000    1849.83       1835.48      2047.79      16000       1.2     16011  ok
+     20000    20000    1932.75       1918.41      2047.89      20000       1.2     20011  ok
+     30000    21450        n/a           n/a          n/a        n/a       n/a       n/a  server OOM-killed
+
+  max connections (held, answered)       20000 (at step 20000)
+  held when it stopped                   21450
+  stopped because                        server OOM-killed
+  memory per connection, Pss             99.14 KiB (slope over 7 held steps)
+  memory per connection, Pss_Anon        99.14 KiB (slope over 7 held steps)
+  memory per connection, memory.current  93.32 KiB (slope over 7 held steps)
+  baseline (one request, no connection)  Pss 23.4 MiB, Pss_Anon 9.25 MiB, memory.current 258.63 MiB
+  socket settings (server's boot line)   backlog=512 tcp_nodelay=1
+  other containers on the VM             0
+wrote lab/results/2026-11-26-off-the-shelf-uring/conns-stack-128k.json
+rc=0

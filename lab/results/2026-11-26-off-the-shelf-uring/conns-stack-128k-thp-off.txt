@@ -1,0 +1,34 @@
+conns: the baseline is read, steps: 1000 3000 6000 9000 12000 16000 20000 30000 40000
+conns: step 1000: held 1000
+conns: step 3000: held 3000
+conns: step 6000: held 6000
+conns: step 9000: held 9000
+conns: step 12000: held 12000
+conns: step 16000: held 16000
+conns: step 20000: held 20000
+conns: step 30000: held 30000
+conns: step 40000: held 40000
+
+image 8.5-uring (PHP 8.5.13, Swoole 6.2.6), swoole-co.php, server nofile 65535
+    target     held    Pss MiB  Pss_Anon MiB  mem.cur MiB  /proc tcp  fresh ms   own fds  status
+      1000     1000      44.25          29.9       283.71       1000       0.3      1011  ok
+      3000     3000      85.51         71.16       333.84       3000       0.4      3011  ok
+      6000     6000     147.42        133.07       409.14       6000       0.5      6011  ok
+      9000     9000     209.41        195.05       484.32       9000       0.7      9011  ok
+     12000    12000     271.08        256.73       559.25      12000       0.9     12011  ok
+     16000    16000     353.26        338.91       659.09      16000       1.2     16011  ok
+     20000    20000     436.21        421.86       759.84      20000       0.9     20011  ok
+     30000    30000     642.04        627.69      1009.94      30000       1.4     30011  ok
+     40000    40000     849.01        834.66      1261.21      40000       2.4     40011  ok
+
+  max connections (held, answered)       40000 (at step 40000)
+  held when it stopped                   40000
+  stopped because                        no ceiling: every planned step held
+  memory per connection, Pss             21.12 KiB (slope over 9 held steps)
+  memory per connection, Pss_Anon        21.12 KiB (slope over 9 held steps)
+  memory per connection, memory.current  25.66 KiB (slope over 9 held steps)
+  baseline (one request, no connection)  Pss 23.41 MiB, Pss_Anon 9.26 MiB, memory.current 258.63 MiB
+  socket settings (server's boot line)   backlog=512 tcp_nodelay=1
+  other containers on the VM             0
+wrote lab/results/2026-11-26-off-the-shelf-uring/conns-stack-128k-thp-off.json
+rc=0
