@@ -584,6 +584,10 @@
   submission's README still gives no bench number (D103). Phase 7's Done when is met on the AWS number (pr-reviewer pass
   1, plan item 2; project manager, phase 7, 2026-11-25).
 
+- **D107:** the ceiling above 135,000 is left to phase 8. Its score session runs the ring against phase 7's 135,000
+  with a load box that doesn't bind (two load boxes, or one with more cores), and names the ceiling of both servers
+  then: one AWS session for two answers. Phase 8 starts from "at least 135,000" (Q23, Jacob, 2026-11-26).
+
 ## History
 
 Nothing yet.

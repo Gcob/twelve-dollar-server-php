@@ -2,7 +2,7 @@
 
 **Status:** 🏁 Phase 7 delivered (the score on x86, [details/phase-7.md](details/phase-7.md)): **135,000 users held 5 minutes** on AWS, our run; branch `phase-7-claude`, both final reviews OK, merged (`5fa7385`) · approved on 2026-11-21 · snapshot 2026-11-21-0920 ·
 **Round:** 7
-**Since your last read:** phase 7 is delivered. The challenge's own `bench/load.js`, unchanged, against
+**Since your last read:** Q23 answered A (D107): phase 8 names the ceiling; the phase 7 AWS policy is deleted (2026-11-26). Phase 7 is delivered. The challenge's own `bench/load.js`, unchanged, against
 `submissions/php-Gcob/` installed the bench's way on an AWS `c5.large` with one core and 2 GB, k6 on a separate
 16-vCPU box: **135,000 users held for 5 minutes** (p95 171 ms, p99 328 ms, 0 errors, 14,122 req/s, the service at 84 %
 of its core, 881 MiB). 142,000 failed: once on EC2's connection table, twice with k6's load box over its line and the
@@ -17,44 +17,12 @@ with a test. Lab suite 133/133. Merged on your go (`5fa7385`). Delivery and retr
 > **Answer freely:** a letter or `ok`, your own choice (`other: …`), `?` if it's unclear, or
 > `badly framed: …` if an option is missing or the question doesn't hold.
 
-**🔴 Delete the AWS policy `twelve-dollar-phase-7-score`:** in IAM, detach it from `jacob-cli`, then delete it under
-IAM → Policies. The session is over: both boxes terminated at about 10:00, `teardown.sh --verify` shows `TEARDOWN
-CLEAN` (only `terminated` instances; no placement group, security group with its port 80 rule, key pair or volume left).
-
-### Q23/23 [run, score] : a second AWS session to find the ceiling above 135,000, or leave it for phase 8?
-
-The session held 135,000 users for 5 minutes. 142,000 failed three times: once on EC2's connection table (port 80
-still closed then), twice with the load box's k6 spiking on its garbage collector (void by D105), with the service at 90 % of its core on
-the plateau's median second, over the 88 % CPU line. So the server's own ceiling is likely its CPU, between 135,000 and
-142,000, but not separated from k6.
-
-**Question:** should a second AWS session find that ceiling now, or does phase 8 find it with its own score run?
-
-- **A.** Leave it for phase 8: its score session runs the ring against today's 135,000, with a load box that doesn't
-  bind (two load boxes, or one with more cores), and names the ceiling of both servers then.
-  **Aims at:** one AWS session for two answers.
-  **For:** no AWS now; 135,000 already beats 71,000 by far. **Against:** phase 8 starts from "at least 135,000".
-- **B.** A short session now: the same server box, two load boxes (or a 36-vCPU one), probes 135,000, 139,000,
-  142,000, 146,000, then a hold.
-  **Aims at:** the ceiling of today's submission, named.
-  **For:** phase 8 compares against a named wall. **Against:** about 1 to 2 hours, a few USD, your go and the policy
-  again (a third instance type).
-
-**Confidence:** A 70 % · B 30 %
-
-**Recommendation:** A, because phase 8 needs an AWS session anyway and a load box that doesn't bind, and nothing in
-phase 7's Done when waits on the ceiling.
-
-**Flips if:** you want the submission's own ceiling named before the PR (phase 9), whatever phase 8 does.
-
-**Meanwhile:** nothing waits on it; phase 7 delivers with "at least 135,000".
-
-**Answer:**
+Nothing waits on you. Phase 8 is next: it starts with its plan, from "at least 135,000" (D107).
 
 ---
 
 Answered questions: [questions/](questions/), the latest in
-[2026-11-25-0734.ronde-6.md](questions/2026-11-25-0734.ronde-6.md).
+[2026-11-26-1500.ronde-7.md](questions/2026-11-26-1500.ronde-7.md).
 
 ## 🤝 Essentials
 
@@ -85,7 +53,7 @@ step's choice backed by a measurement.
 | 8 | Ring (D76, D84) | First a screen of off-the-shelf io_uring (Swoole's `uring_socket`, an audit of ext-mrloop); then, unless one wins, an io_uring loop in pure PHP through FFI to `liburing-ffi`; a SQLite built with PGO, the single-post plan checked | Each lever's µs/req against phase 7's; a new score if they win |
 | 9 | Submit          | The PR to the challenge repo                                | CI green                                                |
 
-**Decisions:** 106 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
+**Decisions:** 107 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
 is a prediction we re-measure, not an answer.
 
 ### Phase 7 scopes (merged)
