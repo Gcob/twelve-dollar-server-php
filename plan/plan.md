@@ -1,186 +1,25 @@
 # $12 server challenge in PHP
 
-**Status:** ⏸️ Phase 8: every local scope done (1 to 5, and 8's shared part; branch `phase-8-claude` at `62fc877`, pushed), stopped before scope 6, the first AWS session · approved for its local scopes on Jacob's standing go of 2026-11-26 15:10 · snapshot 2026-11-26-1537 · 🔴 Q24 and Q27, then his go
+**Status:** 🔄 Phase 8: scope 6's Mac series running tonight (D123), on the Mac's quiet VM; the x86 series and every
+AWS step wait for your go · local scopes 1 to 5 and 8's shared part done (`phase-8-claude`, pushed)
 **Round:** 8
-**Since your last read:** phase 8's plan is written: 10 scopes, D108 to D115, the predictions. The levers are judged by
-their µs per request on x86, against phase 7's submission, cheapest first: the single-post plan read (no timing if
-SQLite re-prepares nothing), ext-mrloop audited, Swoole's `uring_socket` one pair, a SQLite built with PGO, then our
-own ring through FFI (one process, 3 rings, an epoll fallback). Why µs and not the AWS score: phase 7's box hit the
-kernel's TCP memory and EC2's packet allowance near 142,000, while the bench's box hits its CPU near 86,000 (D106).
-Then one AWS score session names both servers' ceilings (D107). The plan review (0 🔴, 6 🟠) found the ring measured on
-one ring while it ships three, the epoll fallback able to stand in for io_uring unseen, and the AWS kernel (7.0) not
-the bench's (6.8): settled in D116 to D120, the kernel and the cross-box pair asked (Q27, Q28).
+**Since your last read:** your answers to Q24 to Q28 are in D123 to D127. Tonight the pairs run on the Mac (its own
+A/A floor, then the tuned SQLite and the ring against phase 7's server), arm64 numbers that close nothing alone; the
+x86 session repeats them and decides (D123). The score's load is one `m5.8xlarge` with two k6 (D125, already coded).
+Every AWS box boots the 6.8 kernel (D126): noble's archive still offers it (`linux-image-aws-lts-24.04`, 6.8.0-1070),
+so Q27's fallback to 7.0 shouldn't be needed. The cross-box pair is read past the boxes' CPU gap, or not at all if the
+CPU models differ (D127).
 **Project:** this repo, `plan/` · **Submission:** `submissions/php-Gcob/` (D80) · **Jira:** none
 
 ## 👉 Your turn
 
-> **Answer freely:** a letter or `ok`, your own choice (`other: …`), `?` if it's unclear, or
-> `badly framed: …` if an option is missing or the question doesn't hold.
-
-Phase 8's plan ([details/phase-8.md](details/phase-8.md)). On your standing go ("Yes, local work only", 15:10),
-Q25 is taken by default and the local scopes 1 to 5 run once the plan review is OK. Q24, Q26, Q27 and Q28 shape the
-AWS sessions (scopes 6 and 9): they wait for you, and nothing local waits on them.
-
-### Q24/28 [run, measure] : where do phase 8's pairs run, on an AWS x86 lab box or on the Mac?
-
-Phase 8 judges each lever by its µs per request against phase 7's submission, in the step lab's pairs (D51). Your
-containers are stopped since 15:20, so the Mac's VM is quiet now. But the Mac is arm64: S1-b cost 8.6 % there and
-14.8 % on the Xeon, and the ring's gain is in the same place (the kernel's share and the second process). **New since
-the plan (scope 5, 18:15):** at the real shape on the Mac, the ring and phase 7's server cost the same (three smoke
-pairs: −1.0, +0.1, −0.3 µs/req, about 32.5 µs/req each). So the Mac can't tell them apart: if the ring wins, it wins on
-x86.
-
-**Question:** where do the pairs run?
-
-- **A.** One AWS `c5.2xlarge`, the lab as 5b's x86 session ran it (server on one vCPU, k6 on the others), 7,500
-  req/s, a fresh A/A first, then the pairs (D113).
-  **Aims at:** x86 numbers, the CPU family of the bench, and your Mac left alone.
-  **For:** the decision is made where it counts; the tooling exists (5a, 5b); 2 to 3 hours, under 2 USD. **Against:**
-  your go and a policy, one more AWS session before the score's.
-- **B.** The Mac's quiet VM (your containers kept stopped 3 to 4 hours more): the pairs there, and x86 only as the
-  score session's per-box µs/req (its 1-vCPU boxes can't run the step lab).
-  **Aims at:** no AWS until the score.
-  **For:** no extra session, no cost. **Against:** the levers are decided on arm64, which may understate the ring's
-  gain, and a lever that only wins on x86 could be dropped.
-
-**Confidence:** A 85 % · B 15 %
-
-**Recommendation:** A, because the ring's gain is in the kernel and the second process, which cost almost twice as much
-on the Xeon as on the M3, the Mac already shows the two at par, and the session is cheap.
-
-**Flips if:** you'd rather keep AWS to the one score session, and the Mac can stay quiet for an afternoon.
-
-**Meanwhile:** scopes 1 to 5 build and check on the Mac either way; nothing waits on this before scope 6.
-
-**Answer:**
-
-### Q25/28 [run, ring] : the ring on 5a's own syscalls, or on liburing-ffi as D76 names it?
-
-D76 says "an io_uring loop in pure PHP through FFI to `liburing-ffi.so.2`". 5a's spike did it without liburing: raw
-`io_uring_setup` and `io_uring_enter` through FFI, the submissions written field by field in the ring's memory (14
-fields for about 90 ns), with the memory-ordering design you asked about (notes.md 2026-11-22 18:25). It passed: 0
-mismatches in 2,000,000 requests, 80,000 connections on two rings. liburing-ffi would make each prepare one FFI call
-(about 35 ns of crossing plus its arguments), and the submit and the barriers would be liburing's C.
-
-**Question:** which base does the ring build on?
-
-- **A.** The spike's own syscalls (D112), liburing-ffi left out.
-  **Aims at:** the code that already passed its stress test, no new library to install.
-  **For:** measured; nothing added to `install.sh`; same speed as far as the micro bench can tell. **Against:** we
-  keep our own copy of liburing's helpers (about 200 lines), and D76's wording changes.
-- **B.** liburing-ffi: liburing built from its pinned source in `install.sh` (Ubuntu's 2.5 package may not ship
-  `liburing-ffi.so.2`), the prepares and the submit through it.
-  **Aims at:** D76 as written, liburing's own C for the ordering.
-  **For:** less ring code of ours; the barriers in C. **Against:** a rewrite of a tested loop, one more build in
-  `install.sh`, an FFI call per prepare.
-- **C.** A, plus a micro bench of liburing-ffi's prepare and submit against the field writes; B only if it's faster.
-  **Aims at:** the choice measured.
-  **For:** settles it with a number. **Against:** half a scope for a margin the spike's micro already puts under 1 %.
-
-**Confidence:** A 70 % · C 20 % · B 10 %
-
-**Recommendation:** A, because the spike is measured and stress-tested, and with `SINGLE_ISSUER` and `DEFER_TASKRUN`
-the kernel touches the queues only inside our own call, so liburing's barriers buy nothing here.
-
-**Flips if:** you want "built on liburing" to be part of the story, or the ring's own code to stay as small as possible.
-
-**Meanwhile:** scope 4 codes A until you answer; B would only change scope 4.
-
-**Answer:** A (taken by default, Jacob away, his go of 2026-11-26 15:10; he may revise). D112.
-
-### Q26/28 [run, score] : the score session's load, two load boxes or one bigger box?
-
-In phase 7, one `m5.4xlarge` (16 vCPUs) held 135,000 k6 users in 43 GiB, and its garbage collector spiked all 16
-vCPUs for a few seconds about every 35 s, enough to void the three runs at 142,000 (D104, D105). D107 asks for a load
-that doesn't bind. Both options split the users in two k6 halves of about 70,000 (where phase 7's box had 4 to 7
-spiked seconds in 120, under the void line), each running the unchanged `load.js`; a run passes when both halves pass,
-which is stricter than one k6 (its p95 can't be over both halves' p95).
-
-**Question:** which load?
-
-- **A.** One `m5.8xlarge` (32 vCPUs, 128 GiB) running two k6 containers, each on its own 16 vCPUs and 2 source
-  addresses.
-  **Aims at:** the simplest driver: both halves started on one box, no SSH between load boxes.
-  **For:** one load box to set up; same price as two `m5.4xlarge` (about 1.7 USD an hour). **Against:** both halves
-  share one network card and one host.
-- **B.** Two `m5.4xlarge`, one k6 each, the driver on the first starting the second over SSH.
-  **Aims at:** the bench's shape ("several 16-core load generators").
-  **For:** two network cards; closest to the bench. **Against:** a second box to set up and keep in step (the
-  plateau is the seconds both report their target), more driver code.
-
-**Confidence:** A 60 % · B 40 %
-
-**Recommendation:** A, because the void came from k6's CPU, not the network (14,000 requests a second of a few KB each is under 1
-Gbit/s), and one box keeps the driver simple.
-
-**Flips if:** you want the load to look like the bench's generators, whatever the extra setup.
-
-**Meanwhile:** scope 8 builds A's driver until you answer; B adds the SSH start.
-
-**Answer:**
-
-### Q27/28 [run, measure] : the kernel of the AWS boxes, 7.0 as phase 7, or the bench's 6.8?
-
-Every AWS box so far booted Canonical's current Ubuntu 24.04 image, kernel 7.0 (phase 7's README); the bench runs 6.8
-(`LEADERBOARD.md`); the Mac's VM 6.12. The ring's gain is in the kernel's share, and io_uring's network path changed
-between 6.8 and 7.0, so in this plan the ring is never measured, nor even run, on the kernel it ships to. (The
-batching knob, which needed 6.12, is already out: D120.)
-
-**Question:** which kernel do phase 8's AWS boxes boot?
-
-- **A.** Ubuntu 24.04's GA kernel 6.8 on every box, lab and score: one package and one reboot, folded into the score
-  boxes' `mem=` reboot (D91).
-  **Aims at:** the bench's kernel for the lever whose gain is in the kernel.
-  **For:** the ring proven and measured where it will run. **Against:** the phase 7 server's check against phase 7's
-  53.6 µs then also reads the kernel change, not only the box; one more step in the setup scripts.
-- **B.** 7.0 as phase 7, plus one 6.8 correctness check of the ring (42/42 and the stress test) on the lab box
-  after its pairs.
-  **Aims at:** boxes comparable with phase 7, and the ring at least run on 6.8.
-  **For:** phase 7's numbers stay directly comparable. **Against:** every µs/req and bench estimate stays a 7.0 number,
-  said so.
-
-**Confidence:** A 55 % · B 45 %
-
-**Recommendation:** A, because the ring's whole gain is the kernel's share, and it costs one reboot a box.
-
-**Flips if:** the 6.8 kernel can't be installed on the current image without another image (then B).
-
-**Meanwhile:** nothing local waits on it; it changes only the setup of scopes 6 and 9.
-
-**Answer:**
-
-### Q28/28 [run, score] : the score session's fixed-load pair, across two boxes: how is it read?
-
-D114 puts each server on its own `c5.large` (each installed on a clean box), so the A B B A probes at 101,000 users
-alternate boxes as well as servers. Two boxes of the same type can differ by a few percent; 3 % is about 1.6 µs/req,
-the size of the tuned SQLite's whole predicted gain.
-
-**Question:** how does the score session separate the server from its box?
-
-- **A.** Both boxes must report the same CPU model (D96), and each runs the same short CPU-only PHP benchmark
-  (`/opt/php-gcob/bin/php`, no SQLite, no network) before the probes; the servers' difference is read only beyond
-  the boxes' gap, and scope 6's lab pairs stay the decision.
-  **Aims at:** a bound on the box, for minutes of work.
-  **For:** cheap, no reinstall. **Against:** a CPU micro doesn't see the network card or the kernel's share.
-- **B.** No cross-box reading: each server's µs/req at 101,000 is a per-box number, and the comparison of the servers
-  is scope 6's alone.
-  **Aims at:** saying only what the design can tell.
-  **For:** honest and simplest. **Against:** the score session gives no comparison at the bench's shape.
-
-**Confidence:** A 55 % · B 45 %
-
-**Recommendation:** A, because it bounds the box for minutes of work while scope 6 keeps the decision.
-
-**Flips if:** the two boxes land on different CPU models (then B, and the README says so).
-
-**Meanwhile:** nothing local waits on it.
-
-**Answer:**
+Nothing open. Your next step is the go for the x86 lab session (scope 6's second part, D123): the policy is drafted
+in the factory and waits for you to attach it. The Mac series runs first, tonight.
 
 ---
 
 Answered questions: [questions/](questions/), the latest in
-[2026-11-26-1500.ronde-7.md](questions/2026-11-26-1500.ronde-7.md).
+[2026-11-26-2035.ronde-8.md](questions/2026-11-26-2035.ronde-8.md).
 
 ## 🤝 Essentials
 

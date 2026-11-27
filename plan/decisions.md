@@ -676,6 +676,29 @@
   `lab/results/2026-11-26-off-the-shelf-uring/` (project manager, phase 8, 2026-11-26, from scope 3; first written at
   16:27 on the OOM alone, corrected at 17:05).
 
+- **D123:** phase 8's pairs run twice: tonight on the Mac's quiet VM (Jacob's containers stay stopped), then on one
+  AWS `c5.2xlarge` after his go (D113's option A). The Mac series is scope 6's first part: the reference's own A/A
+  floor, then D109's steps (Swoole closed by D122), arm64 numbers, said so; it closes nothing on its own. The x86
+  series runs every step again and decides, since the ring's gain sits where the Xeon pays almost twice what the M3
+  does ([Q24](questions/2026-11-26-2035.ronde-8.md)).
+
+- **D124:** the ring stays on 5a's raw syscalls through FFI, no liburing-ffi; D76's wording gives way to D112
+  ([Q25](questions/2026-11-26-2035.ronde-8.md)).
+
+- **D125:** the score session's load is one `m5.8xlarge` running two k6 containers, each on its own 16 vCPUs and 2
+  source addresses, both started by the driver on that box: what scope 8 coded ([Q26](questions/2026-11-26-2035.ronde-8.md)).
+
+- **D126:** every phase 8 AWS box boots Ubuntu 24.04's GA kernel 6.8 (`linux-image-aws-lts-24.04`, with
+  `GRUB_DEFAULT` set to it), folded into the score boxes' `mem=` reboot, and each box's proofs print `uname -r`. If
+  the box can't install it from the current image's archive, that box stays on 7.0 and the results say so (Q27's B).
+  Checked on 2026-11-26 in an `ubuntu:24.04` container: noble's archive offers `linux-image-aws-lts-24.04` at
+  6.8.0-1070 next to `linux-image-aws` at 7.0 ([Q27](questions/2026-11-26-2035.ronde-8.md)).
+
+- **D127:** the score session's fixed-load pair is read only beyond the two server boxes' gap: both report the same
+  CPU model and run the same short CPU-only PHP benchmark before the probes; scope 6's lab pairs stay the decision.
+  If the two boxes land on different CPU models, there is no cross-box reading (each server's µs/req is a per-box
+  number) and the README says so ([Q28](questions/2026-11-26-2035.ronde-8.md)).
+
 ## History
 
 Nothing yet.

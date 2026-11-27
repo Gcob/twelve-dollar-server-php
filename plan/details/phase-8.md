@@ -259,7 +259,7 @@ reports.
 ## Scope 6: phase 8's levers on x86
 
 - **Before the launch:** the predictions below copied unchanged into the folder and committed; Q24 and Q27 answered;
-  the policy written; Jacob's go (🔴); `launch.sh --dry-run` clean. If Q27 = A, the factory's `aws/bootstrap.sh`
+  the policy written; Jacob's go (🔴); `launch.sh --dry-run` clean. By D126, the factory's `aws/bootstrap.sh`
   installs the 6.8 GA kernel and sets `GRUB_DEFAULT` to it (GRUB boots the newest otherwise), and the box's proofs
   print `uname -r`.
 - **The session (Q24 = A), in order:** launch; the lab set up as 5b's (`aws/bootstrap.sh`, the images built on the
@@ -268,9 +268,14 @@ reports.
   pair if the micro calls for it, the ring's pair (D116's shape; 2 more if it beats the floor), the winners together; every run
   without the seccomp filter, its `loop:` line checked (D117);
   results copied back (raw files to the factory's `lab/`); `teardown.sh`, then `--verify`.
-- **If Q24 = B:** the same series on the Mac's quiet VM, `--floor-from` its own A/A; arm64 numbers, said so. The
-  score boxes are 1-vCPU `c5.large`s, where the step lab can't run, so the x86 reading is then the score session's
-  per-box µs/req only.
+- **Q24 = B tonight, A after (D123): two series.**
+  - **6a, the Mac (tonight, local):** the same series on the Mac's quiet VM (Jacob's containers stay stopped; only
+    the lab's own containers run), its own 5-pair A/A of the reference, then the feed micro on both SQLites (the
+    images built on the Mac), the tuned SQLite's pair if the micro's saving times the feed's share reaches the Mac's
+    floor, the ring's pair (D116's shape, 2 more if it beats the floor), the winners together; `--floor-from` the
+    Mac's own A/A. Its README is `lab/results/<date>-mac-levers/README.md`: arm64 numbers, said so, with the Mac
+    predictions committed before the first run. It closes nothing on its own and starts no scope 7.
+  - **6b, x86 (after Jacob's go):** the series above on AWS, every step run whatever 6a found; it decides.
 - **The README:** the predictions, the plan of the runs, the machine, what differed, the tables (`summarize.sh`), the
   choice per lever with its bench estimate, the predictions judged. The bench estimate of a lever scales phase 7's
   by the pair: `86,800 × the reference's µs/req ÷ the lever's` (the `5.12 million / µs` rule reads the score box's µs
@@ -294,14 +299,18 @@ reports.
   line voids the run only if the run fails (D105). µs/req is the service's CPU over the plateau divided by both
   halves' plateau requests.
 - **The fixed-load pair and the finer steps** of D114, and the two new walls.
-- **The kernel (Q27):** if A, `lab/score/server-setup.sh --shape` installs the 6.8 GA kernel and sets `GRUB_DEFAULT`
-  beside its `mem=2G` drop-in (one reboot for both); `--check` and the box's facts print `uname -r` either way.
+- **The load (D125):** one `m5.8xlarge`, two k6 containers on it (what the shared part coded); the `FIXME(pending)`
+  naming Q26 in `run-k6.sh` becomes a plain comment naming D125.
+- **The kernel (D126):** `lab/score/server-setup.sh --shape` installs `linux-image-aws-lts-24.04` (6.8) and sets
+  `GRUB_DEFAULT` beside its `mem=2G` drop-in (one reboot for both); `--check` and the box's facts print `uname -r`.
+  If the install fails, the box stays on 7.0 and the facts say so. The factory's `launch.sh` waits for Jacob's go
+  for the score session.
 
 ## Scope 9: the score session
 
 - **Before the launch:** the predictions copied and committed; Jacob's go and port 80 (🔴); `--dry-run` clean.
 - **The session:** D98's order for each server box, both set up in parallel; the 42 checks on each, the `loop:` line
-  read; both boxes' CPU model (and Q28's check); both warm-ups, the fixed-load probes A B B A across the two servers,
+  read; both boxes' CPU model and the CPU-only PHP benchmark on each (D127: no cross-box reading if the models differ); both warm-ups, the fixed-load probes A B B A across the two servers,
   then phase 8's search, then phase 7's (D114); results copied back; teardown and `--verify`. Stop at 3 h 30 of the
   boxes' life.
 - **The README:** as phase 7's, both servers side by side, each wall named or the reason it isn't.
@@ -342,6 +351,19 @@ otherwise.
     memory` at 142,000 in phase 7, with either server).
 12. **The bench estimates** (5.12 million / µs): phase 7's about 86,000 (unchanged), phase 8's **100,000 to 120,000**.
 13. **Cost and time:** the lab session 2 to 3 h, under 2 USD; the score session 3 to 4 h with 4 boxes, under 10 USD.
+
+### The Mac series (6a, D123)
+
+Written by the project manager on 2026-11-26 at 21:21, before any of its runs. Mac's Docker VM (arm64, kernel 6.12),
+7,500 req/s, `s = 0.02`, 60,000 idle, 60 s runs, no seccomp filter, the reference phase 7's submission.
+
+14. **The Mac's A/A floor:** 0.5 to 2.0 µs/req; the reference at 31 to 35 µs/req (scope 5's smokes read about 32.5).
+15. **The tuned SQLite's feed micro on the Mac:** 15 to 28 % under Ubuntu's 3.45.1 (scope 2's smoke read 23 %), enough
+    to call for its pair; the pair −1.5 to −4 µs/req, beyond the floor with about 60 % confidence.
+16. **The ring on the Mac:** −1.5 to +1.5 µs/req, within the floor (scope 5's three smokes: −1.0, +0.1, −0.3): not
+    chosen on the Mac, its verdict left to the x86 series.
+17. **The winners together:** the tuned SQLite alone, if it wins; nothing to pair otherwise.
+18. **Time:** 2 to 3 hours of runs.
 
 ## Out of scope
 
