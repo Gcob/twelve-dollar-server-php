@@ -24,7 +24,8 @@
 #
 # server-start.txt and server-end.txt, next to the CSV, hold one fact a line: `nproc <n>`, `ena <counter> <value>` for each `allowance`
 # line of `ethtool -S <iface>` (or `ena-unread <why>`), `oom <message>` for each kernel OOM line (the part after the host name and
-# `kernel: `, the results are public; or `oom-unread <why>`). server-end.txt also has `sampler_cpu_ms` and `sampler_wall_ms`: the sampler's own CPU
+# `kernel: `, the results are public; or `oom-unread <why>`), and `tcp-oom <message>` for each `TCP: out of memory` line (the TCP stack's own limit,
+# not the OOM killer's). server-end.txt also has `sampler_cpu_ms` and `sampler_wall_ms`: the sampler's own CPU
 # time (it prints the share, which must stay under 1 % of one core).
 set -euo pipefail
 
@@ -69,6 +70,11 @@ oom_lines() {
   local line
   while IFS= read -r line; do
     case "$line" in
+      # Why apart: "TCP: out of memory -- consider tuning tcp_mem" is the TCP stack's own limit (a wall of its own), not the OOM killer.
+      *TCP:\ out\ of\ memory*)
+        line="${line#*kernel: }"
+        [[ "$line" != "["* ]] || line="${line#*] }"
+        echo "tcp-oom $line" ;;
       *[Oo]ut\ of\ memory* | *oom-kill* | *[Kk]illed\ process*)
         # journalctl -k: `Nov 24 10:00:00 <host> kernel: <message>`; dmesg: `[ 123.456] <message>`. Only the message is kept.
         line="${line#*kernel: }"

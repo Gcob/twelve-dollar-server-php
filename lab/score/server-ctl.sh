@@ -11,6 +11,8 @@
 #                                      server-died.txt when the service was not running (files stay readable for every user)
 #   server-ctl.sh facts                one JSON object: cpu_model, nproc, mem_total_mib, kernel, swap_mib
 #   server-ctl.sh died                 exit 0 when the service is not active, 1 when it is
+#   server-ctl.sh loop                 the text after the last `loop:` line the service printed (what its event loop runs on), from the unit's journal;
+#                                      nothing when it printed none
 #
 # The paths it reads and the unit it drives can be swapped (SCORE_CTL_SEED, SCORE_CTL_DATA, SCORE_CTL_UNIT, SCORE_CTL_URL, SCORE_CTL_OWNER,
 # SCORE_CTL_TIMEOUT in seconds, SCORE_CTL_CGROUP, SCORE_CTL_PIDS_OF, SCORE_CTL_SAMPLER, and SCORE_CPUINFO, SCORE_MEMINFO for `facts`):
@@ -29,7 +31,7 @@ SAMPLER="${SCORE_CTL_SAMPLER:-$(cd "$(dirname "$0")" && pwd)/server-sample.sh}"
 CPUINFO="${SCORE_CPUINFO:-/proc/cpuinfo}"
 MEMINFO="${SCORE_MEMINFO:-/proc/meminfo}"
 
-usage() { echo "usage: server-ctl.sh restart | sample-start <dir> | sample-stop <dir> | facts | died" >&2; exit 2; }
+usage() { echo "usage: server-ctl.sh restart | sample-start <dir> | sample-stop <dir> | facts | died | loop" >&2; exit 2; }
 fail() { echo "server-ctl: $*" >&2; exit 1; }
 
 cmd_restart() {
@@ -101,6 +103,11 @@ cmd_died() {
   if systemctl is-active --quiet "$UNIT"; then return 1; else return 0; fi
 }
 
+cmd_loop() {
+  # Why the last one: the journal keeps every start of the unit, and the search restarts it before each run.
+  journalctl -u "$UNIT" -o cat --no-pager 2>/dev/null | sed -n 's/^loop: //p' | tail -n 1 || true
+}
+
 [ "$#" -ge 1 ] || usage
 case "$1" in
   restart) [ "$#" -eq 1 ] || usage; cmd_restart ;;
@@ -108,5 +115,6 @@ case "$1" in
   sample-stop) [ "$#" -eq 2 ] || usage; cmd_sample_stop "$2" ;;
   facts) [ "$#" -eq 1 ] || usage; cmd_facts ;;
   died) [ "$#" -eq 1 ] || usage; cmd_died ;;
+  loop) [ "$#" -eq 1 ] || usage; cmd_loop ;;
   *) usage ;;
 esac

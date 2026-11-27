@@ -1454,6 +1454,8 @@ Arjay's search with the challenge's own `bench/load.js`, run as it is (its git b
 ```bash
 bash lab/score/smoke.sh                 # the whole search at a small size, against the submission in a lab container (about 7 minutes)
 bash lab/score/smoke.sh --k6-memory     # load.js at 1, 2,000 and 5,000 VUs: the k6 container's memory a VU (about 9 minutes)
+bash lab/score/smoke.sh --halves 2      # the same search with the load in two k6 halves (about 12 minutes)
+bash lab/score/smoke.sh --pair --halves 2   # a small fixed pair, the submission and the app on three rings, two local servers (about 6 minutes)
 bash lab/score/search.sh --base-url http://<server>:80 --ctl "ssh <server> sudo /srv/score/server-ctl.sh" --out <new folder> --tokens <tokens.json>
 ```
 
@@ -1464,18 +1466,27 @@ bash lab/score/search.sh --base-url http://<server>:80 --ctl "ssh <server> sudo 
 | `analyze.jq`, `score-lib.sh` | The numbers of a run from its samples (plateau, us/req, accepts a second, peaks, the wall of a failed run), and the arithmetic of the search. Pure logic, tested without Docker. |
 | `server-sample.sh` | The server box's sampler: cheap counters a second (bash builtins on `/proc` and the cgroup), its own CPU under 1 % of a core. |
 | `loadbox-sample.sh` | The load box's sampler: k6's REST API a second, the host's CPU, the k6 container's memory. |
-| `ctl-local.sh` | The smoke's controller (`restart`, `sample-start`, `sample-stop`, `facts`) for the submission in a lab container. |
+| `ctl-local.sh` | The smoke's controller (`restart`, `sample-start`, `sample-stop`, `facts`, `loop`) for the submission in a lab container (or another server: `SCORE_CTL_SERVER`, `SCORE_CTL_ENV`, `SCORE_CTL_NAME` and the port make a second one). |
+| `fixed-pair.sh` | The fixed-load pair (phase 8): the same users on two servers, A B B A, `pair.json` with each run's us/req, service share and p99, each server's mean and the B minus A difference of each pair. It judges nothing. |
+
+Phase 8 adds three things to the search. **Two k6 halves** (`search.sh --halves 2`, `run-k6.sh --halves 2`): each half is a container of the same k6 running the same
+`load.js` with half the users (the odd one goes to the first), its own half of `--local-ips`, its own REST port and its own cpuset (`--load-cpus`), all started at one agreed
+second. The plateau is the seconds where both halves report their users; its requests are the sum of the halves', p95 and p99 are each half's (`run.json` keeps both under
+`halves`, the row shows the worse), the run passes when both halves exit 0 and fails when either crosses a threshold. A half over the load box's line (its own CPUs, its
+container's memory over 90 % of its half of the box) voids a failing run, and nothing else. **The finer search** (`search.sh --finer`): probes 5 % up until one fails, one probe
+halfway back, holds 2.5 % down from the highest pass. **Two more walls**: `network` is only `pps_allowance_exceeded` grown in a failing run, and `tcp-memory` is a failing run
+whose kernel log has new `TCP: out of memory` lines. Each run's `loop:` line (when the controller answers `loop`) is `server.loop` in its JSON.
 
 The plateau is read from k6's REST API (`vus` equals the target) and the server's rows, stamped with milliseconds, are matched to it by time
 (the counters are interpolated at its first and last second). A failed run gets a **wall**, the first rule that holds: `k6` (the failed run is void: the load box
 over 85 % CPU on more than 10 % of the plateau's seconds or on 5 in a row, or k6 over 90 % of its memory; a second or two of garbage collection is not that; a run that passes is a valid pass whatever k6 did, since k6's saturation can only make the latency worse), `memory` (a new OOM line, or MemAvailable under 100 MiB), `died` (the service died with neither: a PHP fatal, a segfault, a stop), `network`
-(an ENA allowance counter grew), `fds` (ListenDrops grew, or dial errors with a process within 100 of 65,535 files), `cpu` (the service
+(the packets-a-second allowance, `pps_allowance_exceeded`, grew), `tcp-memory` (new `TCP: out of memory` kernel lines), `fds` (ListenDrops grew, or dial errors with a process within 100 of 65,535 files), `cpu` (the service
 over 88 % of a core on the plateau's median second, not its mean: a few seconds at 100 % do not make a CPU wall), else `latency-below-saturation`. The plateau includes the seconds of k6's graceful ramp down in which the VUs
 still run their last iteration: `vus` leaves the target only when they finish.
 
 `check_score` covers it: the next-step rule (71,000, 75,000, 79,000, ...; holds from the highest pass; 6 failing holds stop;
-rounding), numbers worked out by hand on a made-up run (`lab/check/fixtures/score/make-run.awk`), one fixture a wall and two for their order, the
-search against a fake controller and a fake k6 (exit 0, 99 and 1, a void run, a failing warm-up) and the refusals (a `load.js` with one byte
+rounding), numbers worked out by hand on a made-up run (`lab/check/fixtures/score/make-run.awk`), one fixture a wall and two for their order, two halves read as one run (the plateau of offset ramps, summed requests, each half's void), the finer arithmetic and search, the
+search against a fake controller and a fake k6 (exit 0, 99 and 1, a void run, a failing warm-up, one half failing) and the refusals (a `load.js` with one byte
 changed, an existing `--out`, facts that fail). Most of it needs no Docker; the server sampler's part runs in the `php-lab:8.5` image (it needs bash 5 and a Linux `/proc`), and the refusals copy `load.js` from the challenge's clone in `reference/`.
 
 ### The two boxes (`lab/score/`, phase 7)

@@ -4,7 +4,7 @@
 #
 #   bash lab/score/search.sh --base-url <url> --ctl <command> --out <dir> [--start 71000] [--step 5] [--probe 2m] [--hold 5m]
 #                            [--warmup 1000,2m] [--max-holds 6] [--max-probes 20] [--round 1000] [--pause 60] [--local-ips <list>]
-#                            [--ramp-up <duration>] [--tokens <file>] [--challenge <dir>] [--api <host:port>]
+#                            [--ramp-up <duration>] [--tokens <file>] [--challenge <dir>] [--api <host:port>] [--halves 1|2] [--load-cpus <lo-hi>] [--finer]
 #
 # The search (the user's choice; the arithmetic is lab/score/score-lib.sh): a warm-up at --warmup (users,duration; not scored, and a warm-up
 # that fails stops the search: the box is not ready), then probes of --probe from --start, each next one --step % up rounded to the nearest
@@ -17,6 +17,12 @@
 # end says `bound_by_k6: true`: the load box, not the server, may have been the limit. A void HOLD runs again once, at the same size; void
 # again, it counts as not passed and the next hold steps down. The rerun of a void probe is not the driver's: a person looks at it first
 # (a bigger load box, say). A search that ends with no passing hold says so (`end.result` no-score). --ramp-up exists for the smoke only (it passes -e RAMP_UP); without it the script's own 60 s stands.
+#
+# --halves 2 splits each run's load in two k6 halves (lab/score/run-k6.sh: half the users each, its own source addresses, REST port and CPUs, started in
+# the same second; --load-cpus names the CPUs the two halves share, a range like 4-11, every CPU by default): the run passes when both halves pass, fails when either crosses a threshold, and is void by the rule above read on each half.
+# --finer is phase 8's shape: probes from --start in --step % until one fails (or is void: no probe then), then ONE probe halfway back (the middle of
+# the last pass and the fail, rounded to --round; none when they are one --round apart), then holds stepping down half of --step (2.5 % at 5) from
+# the highest pass, rounded. Without it the arithmetic above stands, as in phase 7.
 #
 # <ctl> is a command line, split on spaces and tabs (see lab/score/run-k6.sh): `ssh host sudo /srv/score/server-ctl.sh`. It answers `facts`
 # (one JSON object), `restart`, `sample-start <dir>` and `sample-stop <dir>`.
@@ -35,14 +41,15 @@ REPO="$(dirname "$LAB")"
 source "$LAB/score/score-lib.sh"
 
 usage() {
-  echo "usage: lab/score/search.sh --base-url <url> --ctl <command> --out <dir> [--start 71000] [--step 5] [--probe 2m] [--hold 5m] [--warmup 1000,2m] [--max-holds 6] [--max-probes 20] [--round 1000] [--pause 60] [--local-ips <list>] [--ramp-up <d>] [--tokens <file>] [--challenge <dir>] [--api <host:port>]" >&2
+  echo "usage: lab/score/search.sh --base-url <url> --ctl <command> --out <dir> [--start 71000] [--step 5] [--probe 2m] [--hold 5m] [--warmup 1000,2m] [--max-holds 6] [--max-probes 20] [--round 1000] [--pause 60] [--local-ips <list>] [--ramp-up <d>] [--tokens <file>] [--challenge <dir>] [--api <host:port>] [--halves 1|2] [--load-cpus <lo-hi>] [--finer]" >&2
   exit 2
 }
 refuse() { echo "search: $*" >&2; exit 2; }
 
 base_url="" ctl="" out="" start=71000 step=5 probe=2m hold=5m warmup=1000,2m max_holds=6 max_probes=20 round=1000 pause=60
-local_ips="" ramp_up="" tokens="" challenge="$REPO/reference/twelve-dollar-server-challenge" api=127.0.0.1:6565
+local_ips="" ramp_up="" tokens="" challenge="$REPO/reference/twelve-dollar-server-challenge" api=127.0.0.1:6565 halves=1 load_cpus="" finer=0
 while [ "$#" -gt 0 ]; do
+  if [ "$1" = --finer ]; then finer=1; shift; continue; fi
   [ "$#" -ge 2 ] || usage
   case "$1" in
     --base-url) base_url="$2" ;;
@@ -62,6 +69,8 @@ while [ "$#" -gt 0 ]; do
     --tokens) tokens="$2" ;;
     --challenge) challenge="$2" ;;
     --api) api="$2" ;;
+    --halves) halves="$2" ;;
+    --load-cpus) load_cpus="$2" ;;
     *) usage ;;
   esac
   shift 2
@@ -71,6 +80,7 @@ for v in "$start" "$step" "$max_holds" "$max_probes" "$round" "$pause"; do
   [[ "$v" =~ ^[0-9]+$ ]] || refuse "a number is expected, got '$v'"
 done
 [ "$step" -gt 0 ] && [ "$step" -lt 100 ] && [ "$round" -gt 0 ] && [ "$start" -gt 0 ] && [ "$max_holds" -gt 0 ] && [ "$max_probes" -gt 0 ] || refuse "--step is 1 to 99, and --start, --round, --max-holds and --max-probes are above 0"
+[[ "$halves" =~ ^[12]$ ]] || refuse "--halves is 1 or 2, got '$halves'"
 [[ "$warmup" =~ ^[0-9]+,[0-9smh]+$ ]] || refuse "--warmup is <users>,<duration> (1000,2m), got '$warmup'"
 warm_users="${warmup%%,*}" warm_duration="${warmup#*,}"
 for d in "$probe" "$hold" "$warm_duration"; do score_seconds "$d" >/dev/null || refuse "a duration like 20s or 2m is expected, got '$d'"; done
@@ -90,9 +100,11 @@ sj_update() { jq "$@" "$out/search.json" >"$out/search.json.tmp" && mv "$out/sea
 jq -n --argjson facts "$facts" --arg url "$(sed -E 's#^([a-z]+://)[^:/]+#\1<server>#' <<<"$base_url")" --arg ctl "${CTL[0]} ..." \
   --argjson start "$start" --argjson step "$step" --arg probe "$probe" --arg hold "$hold" --arg warmup "$warmup" --argjson max_holds "$max_holds" \
   --argjson max_probes "$max_probes" --argjson round "$round" --argjson pause "$pause" --arg ramp_up "$ramp_up" --arg local_ips "$local_ips" \
+  --argjson halves "$halves" --argjson finer "$finer" \
   '{facts: $facts,
     arguments: {base_url: $url, ctl: $ctl, start: $start, step_percent: $step, probe: $probe, hold: $hold, warmup: $warmup, max_holds: $max_holds,
-                max_probes: $max_probes, round: $round, pause_s: $pause, ramp_up: (if $ramp_up == "" then null else $ramp_up end),
+                max_probes: $max_probes, round: $round, pause_s: $pause, halves: $halves, finer: ($finer == 1),
+                ramp_up: (if $ramp_up == "" then null else $ramp_up end),
                 local_ips: (if $local_ips == "" then null else $local_ips end)},
     runs: [], decisions: [], end: null}' >"$out/search.json"
 
@@ -120,6 +132,8 @@ run_one() {
   [ -z "$ramp_up" ] || extra+=(--ramp-up "$ramp_up")
   [ -z "$local_ips" ] || extra+=(--local-ips "$local_ips")
   [ -z "$tokens" ] || extra+=(--tokens "$tokens")
+  [ "$halves" = 1 ] || extra+=(--halves "$halves")
+  [ -z "$load_cpus" ] || extra+=(--load-cpus "$load_cpus")
   bash "$LAB/score/run-k6.sh" --base-url "$base_url" --ctl "$ctl" --out "$out/$R_FOLDER" --kind "$kind" --users "$users" --duration "$duration" \
     --challenge "$challenge" --api "$api" ${extra[@]+"${extra[@]}"} || rc=$?
   if [ "$rc" -ne 0 ]; then
@@ -148,7 +162,13 @@ if [ "$R_PASS" != true ]; then
   finish harness-error null "the warm-up failed at $R_FOLDER (k6 exit $R_EXIT): the server is not ready, there is nothing to measure" 1
 fi
 
-users="$start" probes=0 last_pass=""
+# down <users>: the next hold under <users>: <step> % (phase 7) or, with --finer, half of it (2.5 % at 5).
+down() {
+  if [ "$finer" = 1 ]; then score_next_down_by "$1" $((step * 5)) "$round"; else score_next_down "$1" "$step" "$round"; fi
+}
+down_label() { if [ "$finer" = 1 ]; then echo "$(awk -v s="$step" 'BEGIN { printf "%g", s / 2 }') %"; else echo "$step %"; fi; }
+
+users="$start" probes=0 last_pass="" first_fail=""
 while true; do
   decide "probe at $users users for $probe" "$([ -z "$last_pass" ] && echo "the start" || echo "$step % up from $last_pass, rounded to $round")"
   run_one probe "$users" "$probe"
@@ -164,13 +184,31 @@ while true; do
     if [ "$R_VOID" = true ]; then
       bound_by_k6=true
       decide "the climb ends at $users users" "the probe is void ($(void_reason)): neither a pass nor a fail; the holds start at the highest passing probe"
+    else
+      first_fail="$users"
     fi
     break
   fi
 done
 
+# The finer search's one probe between the last pass and the fail: a pass moves the holds' start up to it.
+if [ "$finer" = 1 ] && [ -n "$last_pass" ] && [ -n "$first_fail" ]; then
+  mid="$(score_halfway "$last_pass" "$first_fail" "$round")"
+  if [ -z "$mid" ]; then
+    decide "no probe between $last_pass and $first_fail users" "they are one $round apart"
+  else
+    decide "probe at $mid users for $probe" "halfway between the last pass ($last_pass) and the fail ($first_fail), rounded to $round"
+    run_one probe "$mid" "$probe"
+    if [ "$R_PASS" = true ]; then last_pass="$mid"
+    elif [ "$R_VOID" = true ]; then
+      bound_by_k6=true
+      decide "the halfway probe at $mid users is void" "$(void_reason): neither a pass nor a fail; the holds start at $last_pass"
+    fi
+  fi
+fi
+
 if [ -n "$last_pass" ]; then hold_users="$last_pass"; hold_why="the highest passing probe"
-else hold_users="$(score_next_down "$start" "$step" "$round")"; hold_why="the first probe failed: $step % under $start, rounded to $round"; fi
+else hold_users="$(down "$start")"; hold_why="the first probe failed: $(down_label) under $start, rounded to $round"; fi
 failed_holds=0
 while true; do
   [ "$hold_users" -gt 0 ] || finish no-score null "no hold passed: the next one would be 0 users" 0
@@ -189,6 +227,6 @@ while true; do
   if [ "$failed_holds" -ge "$max_holds" ]; then
     finish no-score null "no hold passed down to $hold_users ($failed_holds holds failed)$([ "$bound_by_k6" = false ] || echo ", and k6 may have been the limit: a void run was met")" 0
   fi
-  hold_users="$(score_next_down "$hold_users" "$step" "$round")"
-  hold_why="$step % under the failed hold, rounded to $round"
+  hold_users="$(down "$hold_users")"
+  hold_why="$(down_label) under the failed hold, rounded to $round"
 done

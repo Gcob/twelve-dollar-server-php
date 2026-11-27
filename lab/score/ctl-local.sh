@@ -7,8 +7,13 @@
 #   bash lab/score/ctl-local.sh sample-stop <dir>    stop it and leave server.csv, server-start.txt, server-end.txt (and sampler.txt) in <dir>;
 #                                                    server-died.txt too when the container was not running
 #   bash lab/score/ctl-local.sh facts                one JSON object: cpu_model, nproc, mem_total_mib, kernel, swap_mib (Docker's VM here)
+#   bash lab/score/ctl-local.sh loop                 the text after the `loop:` line the server printed at boot (empty when it printed none)
 #
 # Environment: SCORE_CTL_PORT (18130), SCORE_CTL_STATE (a folder for the restart counter, default under TMPDIR), SCORE_CTL_IMAGE (8.5),
+# SCORE_CTL_NAME (the container's name, lab-score-server), SCORE_CTL_SERVER (the server file as the container sees it, /submissions/php-Gcob/server.php),
+# SCORE_CTL_EXT (the extensions it loads, comma separated, `pcntl,sockets,event`), SCORE_CTL_ENV (K=V, comma separated: `APP_RING=1,APP_RINGS=3`;
+# commas, because the driver splits a controller's command line on spaces), SCORE_CTL_SECCOMP_UNCONFINED=1 (no
+# Docker seccomp filter: io_uring needs it lifted). Two controllers with different names, ports and state folders run two servers at once (the fixed pair),
 # SCORE_CTL_FAIL_RESTARTS (a list like "4,5": the server is stopped 3 s after the sampler starts, on those restarts counted from the
 # folder's first one, so k6 fails on errors: the smoke's way to make a probe and a hold fail). The server container has 1 CPU, 2 GiB and 65,535 open files
 # (lab/lib.sh), the three extensions the submission loads, and the lab's PHP flags.
@@ -18,12 +23,13 @@ LAB="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=../lib.sh
 source "$LAB/lib.sh"
 
-NAME=lab-score-server
+NAME="${SCORE_CTL_NAME:-lab-score-server}"
+SERVER="${SCORE_CTL_SERVER:-/submissions/php-Gcob/server.php}"
 PORT="${SCORE_CTL_PORT:-18130}"
 IMAGE="${SCORE_CTL_IMAGE:-8.5}"
 STATE="${SCORE_CTL_STATE:-${TMPDIR:-/tmp}/lab-score-ctl}"
 
-usage() { echo "usage: lab/score/ctl-local.sh restart | sample-start <dir> | sample-stop <dir> | facts" >&2; exit 2; }
+usage() { echo "usage: lab/score/ctl-local.sh restart | sample-start <dir> | sample-stop <dir> | facts | loop" >&2; exit 2; }
 fail() { echo "ctl-local: $*" >&2; exit 1; }
 
 healthy() { docker exec "$NAME" curl -sf -m 2 "http://127.0.0.1:$PORT/health" >/dev/null 2>&1; }
@@ -37,10 +43,12 @@ cmd_restart() {
   docker rm -f "$NAME" >/dev/null 2>&1 || true
   # Why disable SC2034: lab_build_php_flags (lib.sh) reads these two arrays.
   # shellcheck disable=SC2034
-  LAB_EXT=(pcntl sockets event) LAB_ENV=()
+  IFS=, read -r -a LAB_EXT <<<"${SCORE_CTL_EXT-pcntl,sockets,event}"
+  # shellcheck disable=SC2034
+  IFS=, read -r -a LAB_ENV <<<"${SCORE_CTL_ENV:-}"
   lab_build_php_flags
   began="$(date +%s)"
-  lab_start_app "$NAME" "$IMAGE" "$PORT" /submissions/php-Gcob/server.php
+  LAB_SERVER_SECCOMP_UNCONFINED="${SCORE_CTL_SECCOMP_UNCONFINED:-}" lab_start_app "$NAME" "$IMAGE" "$PORT" "$SERVER"
   for _ in $(seq 1 120); do
     [ "$(docker inspect -f '{{.State.Running}}' "$NAME")" = true ] || { docker logs "$NAME" >&2 || true; fail "the server container exited"; }
     if healthy; then ready=1; break; fi
@@ -100,11 +108,16 @@ cmd_facts() {
     '{cpu_model: $m, nproc: $n, mem_total_mib: $mem, kernel: $k, swap_mib: $s}'
 }
 
+cmd_loop() {
+  lab_loop_line "$NAME"
+}
+
 [ "$#" -ge 1 ] || usage
 case "$1" in
   restart) [ "$#" -eq 1 ] || usage; cmd_restart ;;
   sample-start) [ "$#" -eq 2 ] || usage; cmd_sample_start "$2" ;;
   sample-stop) [ "$#" -eq 2 ] || usage; cmd_sample_stop "$2" ;;
   facts) [ "$#" -eq 1 ] || usage; cmd_facts ;;
+  loop) [ "$#" -eq 1 ] || usage; cmd_loop ;;
   *) usage ;;
 esac

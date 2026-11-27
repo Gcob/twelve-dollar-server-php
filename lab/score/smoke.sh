@@ -2,7 +2,8 @@
 # The score search on the Mac at a small size, against the submission in a lab container (lab/score/ctl-local.sh): proves the driver, the
 # samplers and the analysis end to end before any AWS run. Nothing it prints is a measurement.
 #
-#   bash lab/score/smoke.sh [--out <dir>]        the whole search, at a small size
+#   bash lab/score/smoke.sh [--halves 2] [--out <dir>]   the whole search, at a small size (with --halves 2: the load in two k6 halves)
+#   bash lab/score/smoke.sh --pair [--halves 2] [--out <dir>]   a small fixed pair (lab/score/fixed-pair.sh) on two local servers (see below)
 #   bash lab/score/smoke.sh --k6-memory [--out <dir>]   k6's memory a VU (see below)
 #
 # The search: a warm-up of 50 users for 20 s, probes from 200 users (50 % steps rounded to 10: 200, 300, 450) of 20 s, holds of 30 s, a
@@ -10,6 +11,13 @@
 # (k6 exits 99 on errors): the search must walk warm-up, probe pass, probe pass, probe fail, hold fail, hold pass (150 users), and exit 0.
 # The smoke checks that sequence and that each run's JSON has every field the analysis promises; it exits 0 only then. The folder keeps
 # search.json and a folder a run (printed at the end).
+#
+# --halves 2: the same search with each run split in two k6 halves of half the users each (the halves share the lab's k6 CPUs, 4-11, a
+# cpuset each); it checks too that every run has two halves, that they started in the same second and that the plateau's requests are their sum.
+#
+# --pair: 200 users for 20 s, A B B A, 3 s between runs, a 10 s ramp, against two lab containers on two ports: the submission as A, the app on three
+# rings of io_uring (APP_RING=1 APP_RINGS=3, no seccomp filter) as B. It checks the four runs, pair.json's shape and that each run recorded
+# its server's `loop:` line (the ring's reads `ring, 3 rings`, so a fall back to epoll is seen).
 #
 # --k6-memory: the challenge's bench/load.js once at 1, 2,000 and 5,000 users, with its real think time and its own 60 s ramp, 1 minute of plateau,
 # against the local server; prints the k6 container's memory peak of each, and the peak a VU at 2,000 and 5,000 users with and without the memory
@@ -19,25 +27,32 @@ set -euo pipefail
 
 LAB="$(cd "$(dirname "$0")/.." && pwd)"
 
-usage() { echo "usage: lab/score/smoke.sh [--k6-memory] [--out <dir>]" >&2; exit 2; }
+usage() { echo "usage: lab/score/smoke.sh [--k6-memory | --pair] [--halves 2] [--out <dir>]" >&2; exit 2; }
 fail() { echo "smoke: $*" >&2; exit 1; }
 
-mode=search out=""
+mode=search out="" halves=1
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --k6-memory) mode=memory; shift ;;
+    --pair) mode=pair; shift ;;
+    --halves) [ "$#" -ge 2 ] || usage; halves="$2"; shift 2 ;;
     --out) [ "$#" -ge 2 ] || usage; out="$2"; shift 2 ;;
     *) usage ;;
   esac
 done
+[[ "$halves" =~ ^[12]$ ]] || usage
 [ -n "$out" ] || out="$(mktemp -d)/score-smoke"
+# shellcheck source=../lib.sh
+source "$LAB/lib.sh"
+halves_args=()
+[ "$halves" = 1 ] || halves_args=(--halves "$halves" --load-cpus "$LAB_CPUSET_K6")
 [ -f "$LAB/data/tokens.json" ] || fail "lab/data/tokens.json is missing (run lab/seed.sh)"
 state="$(mktemp -d)"
 export SCORE_CTL_STATE="$state"
 ctl="bash $LAB/score/ctl-local.sh"
 base_url=http://127.0.0.1:18130
 cleanup() {
-  docker rm -f lab-score-server lab-score-k6 lab-score-loadbox >/dev/null 2>&1 || true
+  docker rm -f lab-score-server lab-score-server-b lab-score-k6 lab-score-k6-2 lab-score-loadbox lab-score-loadbox-2 >/dev/null 2>&1 || true
   rm -rf "$state"
 }
 trap cleanup EXIT
@@ -47,7 +62,7 @@ trap 'exit 143' TERM HUP
 smoke_search() {
   local want got
   SCORE_CTL_FAIL_RESTARTS=4,5 bash "$LAB/score/search.sh" --base-url "$base_url" --ctl "$ctl" --out "$out" --tokens "$LAB/data/tokens.json" \
-    --start 200 --step 50 --round 10 --warmup 50,20s --probe 20s --hold 30s --ramp-up 10s --pause 3 || fail "search.sh exited $?"
+    --start 200 --step 50 --round 10 --warmup 50,20s --probe 20s --hold 30s --ramp-up 10s --pause 3 ${halves_args[@]+"${halves_args[@]}"} || fail "search.sh exited $?"
   want="warmup:50:true probe:200:true probe:300:true probe:450:false hold:300:false hold:150:true"
   got="$(jq -r '[.runs[] | "\(.kind):\(.users):\(.pass)"] | join(" ")' "$out/search.json")"
   [ "$got" = "$want" ] || fail "the runs are '$got', expected '$want'"
@@ -64,6 +79,40 @@ smoke_search() {
     jq -e '.plateau != null and .server.us_per_req != null and .server.accepts_per_s_median != null and .server.rows > 10 and .loadbox.k6_memory_peak_bytes != null' "$f" >/dev/null \
       || { [ "$(jq -r '.pass' "$f")" = false ] || fail "$f has no plateau, us/req, accepts a second or load box memory: $(jq -c '{plateau, us: .server.us_per_req, rows: .server.rows}' "$f")"; }
   done
+  [ "$halves" = 1 ] || smoke_check_halves "$out"/[0-9]*/run.json
+  echo "smoke: ok, the folder is $out"
+}
+
+# smoke_check_halves <run.json>...: every run has two halves of half the users, started in the same second (the skew under 1 s), and a passing run's
+# plateau requests are the sum of its halves' requests over the plateau both share.
+smoke_check_halves() {
+  local f
+  for f in "$@"; do
+    jq -e '(.halves | length) == 2 and (.halves[0].users + .halves[1].users) == .users and (.halves[0].users - .halves[1].users | . == 0 or . == 1)' "$f" >/dev/null \
+      || fail "$f has not two halves of half the users each: $(jq -c '[.users, (.halves // [] | map(.users))]' "$f")"
+    jq -e '.half_start_skew_s != null and .half_start_skew_s < 1' "$f" >/dev/null || fail "$f: the halves did not start in the same second: skew $(jq -r '.half_start_skew_s' "$f") s"
+    if [ "$(jq -r '.pass' "$f")" = true ]; then
+      jq -e '.plateau.http_reqs > 0 and (.halves | all(.plateau != null and .p99_ms != null)) and .p99_ms == ([.halves[].p99_ms] | max)' "$f" >/dev/null \
+        || fail "$f: a passing run's plateau, halves' plateaus and worse p99 are not all there: $(jq -c '[.plateau, (.halves | map([.plateau, .p99_ms]))]' "$f")"
+    fi
+  done
+}
+
+# The small fixed pair: the submission (A, port 18130) and the app on three rings (B, port 18131), each behind its own local controller.
+smoke_pair() {
+  local f ctl_a ctl_b state_b
+  state_b="$(mktemp -d)"
+  ctl_a="bash $LAB/score/ctl-local.sh"
+  ctl_b="env SCORE_CTL_NAME=lab-score-server-b SCORE_CTL_PORT=18131 SCORE_CTL_STATE=$state_b SCORE_CTL_SERVER=/lab/app/server.php SCORE_CTL_EXT=sockets SCORE_CTL_ENV=APP_RING=1,APP_RINGS=3 SCORE_CTL_SECCOMP_UNCONFINED=1 bash $LAB/score/ctl-local.sh"
+  bash "$LAB/score/fixed-pair.sh" --a-url "$base_url" --a-ctl "$ctl_a" --b-url http://127.0.0.1:18131 --b-ctl "$ctl_b" --out "$out" --tokens "$LAB/data/tokens.json" \
+    --users 200 --duration 20s --ramp-up 10s --pause 3 ${halves_args[@]+"${halves_args[@]}"} || fail "fixed-pair.sh exited $?"
+  rm -rf "$state_b"
+  [ "$(jq -r '[.runs[] | .server] | join("")' "$out/pair.json")" = ABBA ] || fail "the runs are not A B B A: $(jq -c '[.runs[].server]' "$out/pair.json")"
+  jq -e '(.runs | length) == 4 and (.runs | all(.us_per_req != null and .service_share != null and .p99_ms != null)) and (.means.A.us_per_req != null) and (.means.B.us_per_req != null)
+         and (.pairs | length) == 2 and (.pairs | all(.us_per_req_b_minus_a != null))' "$out/pair.json" >/dev/null || fail "pair.json lacks a number: $(jq -c . "$out/pair.json")"
+  [ "$(jq -r '[.runs[] | select(.server == "A") | .loop] | unique | join(",")' "$out/pair.json")" = epoll ] || fail "A's loop lines: $(jq -c '[.runs[] | select(.server == "A") | .loop]' "$out/pair.json")"
+  [ "$(jq -r '[.runs[] | select(.server == "B") | .loop] | unique | join(",")' "$out/pair.json")" = "ring, 3 rings" ] || fail "B's loop lines are not 'ring, 3 rings': $(jq -c '[.runs[] | select(.server == "B") | .loop]' "$out/pair.json")"
+  [ "$halves" = 1 ] || { for f in "$out"/[0-9]*/run.json; do smoke_check_halves "$f"; done; }
   echo "smoke: ok, the folder is $out"
 }
 
@@ -87,4 +136,8 @@ smoke_k6_memory() {
   done
 }
 
-if [ "$mode" = memory ]; then smoke_k6_memory; else smoke_search; fi
+case "$mode" in
+  memory) smoke_k6_memory ;;
+  pair) smoke_pair ;;
+  *) smoke_search ;;
+esac
