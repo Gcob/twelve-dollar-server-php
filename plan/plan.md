@@ -1,7 +1,8 @@
 # $12 server challenge in PHP
 
-**Status:** 🔄 Phase 8: the tuned SQLite chosen on x86 (D128, −7.33 µs/req) and going into the submission (scope 7);
-the ring refused by Ubuntu's 6.8 aws kernel (D129), a short session on the generic 6.8 kernel tonight (scope 6c)
+**Status:** 🔄 Phase 8: both levers chosen on x86: the tuned SQLite (D128, in the submission) and the ring on the
+older provided buffers, Ubuntu's 6.8 refusing the buffer ring (D130, D131: −4.49 µs/req, together −11.59); the ring
+goes into the submission tonight (scope 7b), then the score session waits for your go (scope 9)
 **Round:** 8
 **Since your last read:** your answers to Q24 to Q28 are in D123 to D127. Tonight the pairs run on the Mac (its own
 A/A floor, then the tuned SQLite and the ring against phase 7's server), arm64 numbers that close nothing alone; the

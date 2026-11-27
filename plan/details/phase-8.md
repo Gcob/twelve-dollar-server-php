@@ -255,6 +255,10 @@ reports.
   mid-run.
 - **Cases:** 150,000 held across 3 rings; a soft limit of 100 in a check: the 101st response closes; the fallback's
   boot line and its 42/42.
+- **5c (D130):** `URING_BUFFERS=auto|ring|legacy`; `auto` takes the older provided buffers (`PROVIDE_BUFFERS`) when the
+  kernel refuses the buffer ring, as Ubuntu's 6.8 does; the `loop:` line names the buffers.
+- **5d (D131):** `check_ring_buffers_loop_line` and `check_rings_auto_chooses_legacy_buffers` follow the kernel they run
+  on: where the buffer ring is refused for real, they check what that kernel allows and say what they skipped.
 
 ## Scope 6: phase 8's levers on x86
 
@@ -288,6 +292,8 @@ reports.
 - **What ships:** what scope 6 chose, no switch. The ring's copy follows `lab/servers/ring-server.php` at the commit
   scope 6 measured; the README says which.
 - **Skipped** when scope 6 chose nothing: the run goes to scope 8 with phase 7's submission alone.
+- **Split (D128, D131):** scope 7 shipped the tuned SQLite; scope 7b ships the ring from `8617faf`, the commit scope
+  6d measured, with its proofs (D119) and `--seccomp-unconfined` in `lab/submission-test.sh` (D115).
 
 ## Scope 8: the search on two load generators
 

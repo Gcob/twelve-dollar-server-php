@@ -719,6 +719,16 @@
   line names the buffers. The ring's x86 pairs then run on 6.8-generic with the older buffers, what the bench would
   run (project manager, phase 8, 2026-11-26 23:20, under Jacob's standing go: local code, easy to undo).
 
+- **D131:** the ring is chosen on x86 and goes into the submission (scope 7b, D115, D119): on Ubuntu's
+  `6.8.0-151-generic` (scope 6d, `c5.2xlarge`, the kernel a droplet runs), the ring on the older provided buffers
+  (`URING_BUFFERS=auto` chose them by itself, `loop: ring, 3 rings, legacy buffers`) is −4.49 µs/req against the
+  reference's 55.4 in 3 pairs of 3, beyond this kernel's A/A floor of 0.918 (−8.1 %, bench estimate 94,454); the ring
+  on the tuned SQLite is −11.59 in 3 pairs of 3 (−21.0 %, bench estimate 109,766), about the sum of both levers; the
+  tuned SQLite alone repeats there (−7.57, one pair). On the box: 42/42, stress 200,000 at pipelines 1 and 16 with 0
+  mismatches. Two lab checks (`check_ring_buffers_loop_line`, `check_rings_auto_chooses_legacy_buffers`) assume a
+  kernel that takes the buffer ring and fail on 6.8; scope 5d makes them follow the kernel (project manager, phase 8,
+  2026-11-27 01:19, from `lab/results/2026-11-26-x86-levers/`).
+
 ## History
 
 Nothing yet.
