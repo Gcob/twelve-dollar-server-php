@@ -3,9 +3,10 @@
 # with the submission installed the way the challenge's bench installs it and started by systemd. Runs as root, from a copy of this repo's
 # tree (`git archive`), on the server box only.
 #
-#   sudo bash lab/score/server-setup.sh --shape                         adds mem=2G to the kernel's boot line, updates grub, reboots. Nothing else.
+#   sudo bash lab/score/server-setup.sh --shape                         installs the 6.8 kernel (linux-image-aws-lts-24.04, the one the bench runs) and makes it
+#                                                                       grub's default, adds mem=2G to the boot line, updates grub once, reboots. Nothing else.
 #   sudo bash lab/score/server-setup.sh --launch-epoch <epoch>          after the reboot: everything below
-#   sudo bash lab/score/server-setup.sh --check                         only the checks, no install
+#   sudo bash lab/score/server-setup.sh --check                         only the checks, no install (and the CPU-only micro, lab/score/cpu-micro.php)
 #   sudo bash lab/score/server-setup.sh --cap-only --launch-epoch <e>   only re-arms the 240-minute shutdown
 #
 # The install, in order: the shape checks (a FAIL stops here, nothing is installed), the shutdown cap re-armed with the time left (the reboot
@@ -20,7 +21,8 @@
 # Every line is `ok`, `FAIL` or `info`, then the check's name and what it saw; the exit code is 0 only when nothing failed. The files the shape
 # checks read can be swapped (SCORE_CPUINFO, SCORE_MEMINFO, SCORE_SWAPS, SCORE_MODULES), and so can the unit's cgroup and /proc
 # (SCORE_UNIT_CGROUP, SCORE_PROC), the user the service must run as (SCORE_SETUP_USER), the clock (SCORE_SETUP_NOW) and the folder of grub's
-# drop-ins (SCORE_GRUB_DIR): lab/check.sh feeds it fixtures that way.
+# drop-ins (SCORE_GRUB_DIR), /boot (SCORE_BOOT_DIR), the kernel release (SCORE_KERNEL_RELEASE) and the PHP that runs the micro (SCORE_PHP):
+# lab/check.sh feeds it fixtures that way, with a stub for apt-get.
 set -euo pipefail
 
 CPUINFO="${SCORE_CPUINFO:-/proc/cpuinfo}"
@@ -32,6 +34,10 @@ UNIT_CGROUP="${SCORE_UNIT_CGROUP:-/sys/fs/cgroup/system.slice/$UNIT.service}"
 PROC="${SCORE_PROC:-/proc}"
 SERVICE_USER="${SCORE_SETUP_USER:-deploy}"
 GRUB_DIR="${SCORE_GRUB_DIR:-/etc/default/grub.d}"
+BOOT_DIR="${SCORE_BOOT_DIR:-/boot}"
+KERNEL_RELEASE="${SCORE_KERNEL_RELEASE:-$(uname -r)}"
+PHP="${SCORE_PHP:-/opt/php-gcob/bin/php}"
+KERNEL_PACKAGE=linux-image-aws-lts-24.04
 CAP_MINUTES=240
 MEM_LIMIT_MIB=2048
 # CAP_NET_BIND_SERVICE is capability 10: the bit 0x400.
@@ -66,14 +72,41 @@ bad() { echo "FAIL  $1: $2"; failed=1; }
 info() { echo "info  $1: $2"; }
 
 # --- --shape -----------------------------------------------------------------------------------------------------------------------
+# Why 6.8: the challenge's bench runs Ubuntu 24.04's own kernel, 6.8, and the AMI ships a newer one (7.0). The package pulls the 6.8 build in
+# beside the newer one; grub's menu entry for it is named in GRUB_DEFAULT, in the same drop-in as mem=2G, so there is one update-grub and one reboot.
+# A box that cannot get it stays on the AMI's kernel and says so: its facts print the kernel it ran.
+install_kernel() { # prints the menu entry of the newest 6.8 build, or says why not on a `info kernel:` line and prints nothing
+  local out version
+  wait_for_first_boot >&2
+  export DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1
+  # The lists may be as old as the image; a failed update is not fatal, the install says if it needed it.
+  apt-get -o DPkg::Lock::Timeout=120 update -q >/dev/null 2>&1 || true
+  if ! out="$(apt-get -o DPkg::Lock::Timeout=120 install -y -q "$KERNEL_PACKAGE" 2>&1)"; then
+    info kernel "6.8 not installed (apt-get failed: $(tail -n 1 <<<"$out")), staying on $KERNEL_RELEASE" >&2
+    return 0
+  fi
+  version="$(ls "$BOOT_DIR" 2>/dev/null | sed -n 's/^vmlinuz-\(6\.8\..*\)$/\1/p' | sort -V | tail -n 1)"
+  if [ -z "$version" ]; then
+    info kernel "6.8 not installed (no vmlinuz-6.8 in $BOOT_DIR), staying on $KERNEL_RELEASE" >&2
+    return 0
+  fi
+  echo "Advanced options for Ubuntu>Ubuntu, with Linux $version"
+}
+
 # Why 99-: Ubuntu's cloud image sets the boot line's options in /etc/default/grub.d/50-cloudimg-settings.cfg, and the drop-ins are read in
 # name order, so this one appends to what the image set. Appending, never replacing, keeps the image's console and NVMe options.
 shape_boot() {
+  local entry
+  entry="$(install_kernel)"
+  # The info line went to stderr; the entry (or nothing) is all that came back.
   mkdir -p "$GRUB_DIR"
-  printf '%s\n' '# The droplet has 2 GB: the kernel uses only that much of this box'"'"'s memory (lab/score/server-setup.sh --shape).' \
-    'GRUB_CMDLINE_LINUX_DEFAULT="$GRUB_CMDLINE_LINUX_DEFAULT mem=2G"' >"$GRUB_DIR/99-twelve-dollar-mem.cfg"
+  {
+    printf '%s\n' '# The droplet has 2 GB: the kernel uses only that much of this box'"'"'s memory (lab/score/server-setup.sh --shape).' \
+      'GRUB_CMDLINE_LINUX_DEFAULT="$GRUB_CMDLINE_LINUX_DEFAULT mem=2G"'
+    [ -z "$entry" ] || printf '%s\n' '# The bench'"'"'s kernel, 6.8, instead of the newest the image ships.' "GRUB_DEFAULT=\"$entry\""
+  } >"$GRUB_DIR/99-twelve-dollar-mem.cfg"
   update-grub
-  echo "shape: mem=2G is on the boot line, rebooting"
+  echo "shape: mem=2G${entry:+ and $entry} on the boot line, rebooting"
   reboot
 }
 
@@ -89,6 +122,11 @@ check_shape() {
   swaps="$(tail -n +2 "$SWAPS" | grep -c . || true)"
   if [ "$swaps" = 0 ]; then ok swap "no swap"; else bad swap "$swaps swap areas: $(tail -n +2 "$SWAPS" | awk '{print $1}' | paste -sd' ' -)"; fi
   if grep -q '^nf_conntrack ' "$MODULES"; then info conntrack "nf_conntrack is loaded"; else info conntrack "nf_conntrack is not loaded"; fi
+  # Why not a FAIL: a box that could not install 6.8 stays on the AMI's kernel and the search goes on; the reading must say which one ran.
+  case "$KERNEL_RELEASE" in
+    6.8.*) ok kernel "$KERNEL_RELEASE" ;;
+    *) info kernel "$KERNEL_RELEASE (not 6.8: the box stayed on its own kernel)" ;;
+  esac
 }
 
 # --- the service checks ----------------------------------------------------------------------------------------------------------------
@@ -126,6 +164,16 @@ check_service() {
     command -v capsh >/dev/null 2>&1 && decoded=" ($(capsh --decode="$AMBIENT_WANT" | sed 's/^[^=]*=//'))"
     ok capability "$nproc_seen processes have CapAmb $AMBIENT_WANT$decoded"
   else bad capability "expected CapAmb $AMBIENT_WANT (cap_net_bind_service):$caps_bad"; fi
+}
+
+# --- the CPU-only micro --------------------------------------------------------------------------------------------------------------
+# Why: two boxes of the same type can have different CPUs behind them, and the submission's numbers cannot tell the CPU from the code. The micro
+# is pure PHP (5 to 10 s), so its ns per iteration can. One info line, never a FAIL: nothing reads it but people.
+check_cpu_micro() {
+  local out rc=0
+  command -v "$PHP" >/dev/null 2>&1 || { info cpu-micro "not run ($PHP is missing)"; return; }
+  out="$("$PHP" "$TREE/lab/score/cpu-micro.php" 2>&1)" || rc=$?
+  if [ "$rc" = 0 ]; then info cpu-micro "$out"; else info cpu-micro "not run (php exited $rc)"; fi
 }
 
 # --- the 240-minute cap ----------------------------------------------------------------------------------------------------------------
@@ -216,7 +264,7 @@ summary() {
 case "$mode" in
   shape) shape_boot ;;
   cap) arm_cap; summary ;;
-  check) check_shape; check_service; summary ;;
+  check) check_shape; check_service; check_cpu_micro; summary ;;
   install)
     check_shape
     [ "$failed" = 0 ] || { echo "server-setup: the shape is wrong, nothing was installed" >&2; exit 1; }

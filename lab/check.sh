@@ -3131,7 +3131,11 @@ boxes_fixture() {
   printf '4242\n' >"$dir/cgroup/cgroup.procs"
   printf 'Name:\tphp\nUid:\t0\t0\t0\t0\nCapAmb:\t0000000000000400\n' >"$dir/proc/4242/status"
   printf 'Limit                     Soft Limit           Hard Limit           Units\nMax open files            65535                65535                files\n' >"$dir/proc/4242/limits"
-  boxes_stubs "$dir/bin" systemctl shutdown update-grub reboot useradd cloud-init
+  # The kernels a successful `apt-get install linux-image-aws-lts-24.04` leaves in /boot: two 6.8 builds (the newest must be named) and 7.0.
+  mkdir -p "$dir/boot"
+  touch "$dir/boot/vmlinuz-6.8.0-1047-aws" "$dir/boot/vmlinuz-6.8.0-1048-aws" "$dir/boot/vmlinuz-7.0.0-1005-aws" "$dir/boot/config-6.8.0-1048-aws"
+  boxes_stubs "$dir/bin" systemctl shutdown update-grub reboot useradd cloud-init apt-get php
+  echo '41.3 ns per iteration (1000 iterations, 6.1 s), Fixture CPU' >"$dir/bin/php.out"
 }
 
 # boxes_setup_run <dir> [env assignment]... -- <server-setup.sh arguments>...: runs the script on the fixture of <dir>; leaves its output in
@@ -3143,7 +3147,8 @@ boxes_setup_run() {
   shift
   BOXES_RC=0
   BOXES_OUT="$(env PATH="$dir/bin:$PATH" SCORE_CPUINFO="$dir/cpuinfo" SCORE_MEMINFO="$dir/meminfo" SCORE_SWAPS="$dir/swaps" SCORE_MODULES="$dir/modules" \
-    SCORE_UNIT_CGROUP="$dir/cgroup" SCORE_PROC="$dir/proc" SCORE_SETUP_USER=root SCORE_GRUB_DIR="$dir/grub.d" ${envs[@]+"${envs[@]}"} \
+    SCORE_UNIT_CGROUP="$dir/cgroup" SCORE_PROC="$dir/proc" SCORE_SETUP_USER=root SCORE_GRUB_DIR="$dir/grub.d" SCORE_BOOT_DIR="$dir/boot" SCORE_PHP="$dir/bin/php" \
+    SCORE_KERNEL_RELEASE=6.8.0-1048-aws ${envs[@]+"${envs[@]}"} \
     bash "$LAB/score/server-setup.sh" "$@" 2>&1)" || BOXES_RC=$?
 }
 
@@ -3160,6 +3165,20 @@ check_score_server_setup_checks() {
     grep -q "^ok    $want: " <<<"$BOXES_OUT" || { echo "no 'ok    $want:' line on the good fixture: ${BOXES_OUT//$'\n'/ | }"; return 1; }
   done
   grep -q '^info  conntrack: nf_conntrack is not loaded' <<<"$BOXES_OUT" || { echo "no conntrack line: ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  # The CPU-only micro, run by the box's own PHP on lab/score/cpu-micro.php, printed as one info line (nothing reads it but people).
+  grep -qx 'info  cpu-micro: 41.3 ns per iteration (1000 iterations, 6.1 s), Fixture CPU' <<<"$BOXES_OUT" && grep -qx "php $LAB/score/cpu-micro.php" "$dir/bin/calls" \
+    || { echo "--check prints the micro's answer on one info line: ${BOXES_OUT//$'\n'/ | } / $(tr '\n' ';' <"$dir/bin/calls")"; return 1; }
+  # A micro that fails (or a missing PHP) is said and never fails the check.
+  echo 3 >"$dir/bin/php.rc"
+  boxes_setup_run "$dir" SCORE_CURL=bash -- --check
+  [ "$BOXES_RC" = 0 ] && grep -q '^info  cpu-micro: not run (php exited 3)' <<<"$BOXES_OUT" || { echo "a failing micro is an info line and exit 0 (exit $BOXES_RC): ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  rm "$dir/bin/php.rc"
+  boxes_setup_run "$dir" SCORE_CURL=bash SCORE_PHP=/no/such/php -- --check
+  [ "$BOXES_RC" = 0 ] && grep -q '^info  cpu-micro: not run (/no/such/php is missing)' <<<"$BOXES_OUT" || { echo "no PHP is an info line and exit 0 (exit $BOXES_RC): ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  grep -qx 'ok    kernel: 6.8.0-1048-aws' <<<"$BOXES_OUT" || { echo "no 'ok    kernel: 6.8...' line on a box that booted 6.8: ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  # A box on 7.0 is a fallback, not a failure: an info line and exit 0.
+  boxes_setup_run "$dir" SCORE_CURL=bash SCORE_KERNEL_RELEASE=7.0.0-1005-aws -- --check
+  [ "$BOXES_RC" = 0 ] && grep -qx 'info  kernel: 7.0.0-1005-aws (not 6.8: the box stayed on its own kernel)' <<<"$BOXES_OUT" || { echo "a 7.0 box gets an info line and exit 0 (exit $BOXES_RC): ${BOXES_OUT//$'\n'/ | }"; return 1; }
   for kind in cpus memory swap unit user limits capability curl; do
     rm -rf "$dir"
     dir="$(mktemp -d)"
@@ -3190,6 +3209,22 @@ check_score_server_setup_checks() {
   rm -rf "$dir"
 }
 
+# lab/score/cpu-micro.php: pure PHP, a fixed loop, one line with the ns per iteration and the CPU model of /proc/cpuinfo. Run in the lab's PHP with a
+# fixture cpuinfo (the model must come from it) and a short loop (the real one takes 5 to 10 s); a loop count that is not a number is refused. The
+# integer the loop accumulates is the same for the same count, so its checksum is a literal worked out once with another PHP (the host's).
+check_score_cpu_micro() {
+  local dir out
+  dir="$(mktemp -d)"
+  printf 'processor\t: 0\nmodel name\t: Fixture CPU @ 9.99GHz\n\n' >"$dir/cpuinfo"
+  out="$(docker run --rm -v "$LAB/score/cpu-micro.php:/m.php:ro" -v "$dir/cpuinfo:/cpuinfo:ro" -e SCORE_CPUINFO=/cpuinfo "$LAB_IMAGE:8.5" php /m.php 20000 2>&1)" \
+    || { echo "cpu-micro.php failed: ${out//$'\n'/ | }"; return 1; }
+  [ "$(wc -l <<<"$out" | tr -d ' ')" = 1 ] && grep -Eq '^[0-9]+\.[0-9] ns per iteration \(20000 iterations, [0-9]+\.[0-9] s, checksum 574196083\), Fixture CPU @ 9\.99GHz$' <<<"$out" \
+    || { echo "cpu-micro.php prints one line: ns per iteration, the iterations, the time, the checksum and the model: '${out//$'\n'/ | }'"; return 1; }
+  out="$(docker run --rm -v "$LAB/score/cpu-micro.php:/m.php:ro" "$LAB_IMAGE:8.5" php /m.php abc 2>&1)" && { echo "cpu-micro.php must refuse a loop count that is not a number"; return 1; }
+  grep -q '^usage: cpu-micro.php' <<<"$out" || { echo "cpu-micro.php refuses with a usage line: ${out//$'\n'/ | }"; return 1; }
+  rm -rf "$dir"
+}
+
 # The install mode stops on a bad shape before it installs anything (no user, no copy, no cap armed), and --shape writes the boot line's drop-in
 # (it appends mem=2G to what the image set before it, so it must sort last), runs update-grub, then reboots, in that order and nothing else.
 check_score_server_setup_modes() {
@@ -3206,10 +3241,39 @@ check_score_server_setup_modes() {
   mkdir "$dir/grub.d"
   boxes_setup_run "$dir" -- --shape
   [ "$BOXES_RC" = 0 ] || { echo "--shape exits $BOXES_RC: ${BOXES_OUT//$'\n'/ | }"; return 1; }
-  [ "$(tr '\n' ';' <"$dir/bin/calls")" = "update-grub ;reboot ;" ] || { echo "--shape runs update-grub then reboot and nothing else: $(tr '\n' ';' <"$dir/bin/calls")"; return 1; }
+  [ "$(grep -c '^apt-get .*install .*linux-image-aws-lts-24.04' "$dir/bin/calls")" = 1 ] || { echo "--shape installs linux-image-aws-lts-24.04 once: $(tr '\n' ';' <"$dir/bin/calls")"; return 1; }
+  [ "$(grep -v '^apt-get \|^cloud-init ' "$dir/bin/calls" | tr '\n' ';')" = "update-grub ;reboot ;" ] || { echo "--shape runs update-grub then reboot, after the kernel and nothing else: $(tr '\n' ';' <"$dir/bin/calls")"; return 1; }
+  [ "$(grep 'linux-image-aws-lts-24.04\|^update-grub\|^reboot' "$dir/bin/calls" | sed 's/^apt-get .*/apt-get install/' | tr '\n' ';')" = "apt-get install;update-grub ;reboot ;" ] || { echo "the kernel is installed before the one update-grub, then the reboot: $(tr '\n' ';' <"$dir/bin/calls")"; return 1; }
   [ "$(ls "$dir/grub.d")" = "99-twelve-dollar-mem.cfg" ] || { echo "--shape writes one drop-in that sorts after the image's: $(ls "$dir/grub.d")"; return 1; }
   out="$(GRUB_CMDLINE_LINUX_DEFAULT='console=tty1 console=ttyS0' bash -c '. "$1"; echo "$GRUB_CMDLINE_LINUX_DEFAULT"' _ "$dir/grub.d/99-twelve-dollar-mem.cfg")"
   [ "$out" = "console=tty1 console=ttyS0 mem=2G" ] || { echo "the drop-in must append mem=2G to the image's boot line, got '$out'"; return 1; }
+  # The 6.8 kernel (the bench's): the drop-in names the menu entry of the newest 6.8 build in /boot, not the 7.0 one next to it.
+  out="$(GRUB_DEFAULT=0 bash -c '. "$1"; echo "$GRUB_DEFAULT"' _ "$dir/grub.d/99-twelve-dollar-mem.cfg")"
+  [ "$out" = "Advanced options for Ubuntu>Ubuntu, with Linux 6.8.0-1048-aws" ] || { echo "the drop-in must default to the newest 6.8 entry, got '$out'"; return 1; }
+  rm -rf "$dir"
+  # The install fails: the box stays on its kernel, says so on one info line, and the shape goes on (mem=2G, update-grub, reboot).
+  dir="$(mktemp -d)"
+  boxes_fixture "$dir"
+  mkdir "$dir/grub.d"
+  echo 100 >"$dir/bin/apt-get.rc"
+  echo 'E: Unable to locate package linux-image-aws-lts-24.04' >"$dir/bin/apt-get.out"
+  boxes_setup_run "$dir" SCORE_KERNEL_RELEASE=7.0.0-1005-aws -- --shape
+  [ "$BOXES_RC" = 0 ] || { echo "--shape must go on when the kernel install fails (exit $BOXES_RC): ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  grep -qxF 'info  kernel: 6.8 not installed (apt-get failed: E: Unable to locate package linux-image-aws-lts-24.04), staying on 7.0.0-1005-aws' <<<"$BOXES_OUT" \
+    || { echo "no 'info  kernel: 6.8 not installed' line: ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  [ "$(grep -v '^apt-get \|^cloud-init ' "$dir/bin/calls" | tr '\n' ';')" = "update-grub ;reboot ;" ] || { echo "a failed kernel install still runs update-grub then reboot: $(tr '\n' ';' <"$dir/bin/calls")"; return 1; }
+  ! grep -q GRUB_DEFAULT "$dir/grub.d/99-twelve-dollar-mem.cfg" || { echo "a failed kernel install must leave GRUB_DEFAULT alone: $(cat "$dir/grub.d/99-twelve-dollar-mem.cfg")"; return 1; }
+  out="$(GRUB_CMDLINE_LINUX_DEFAULT='console=tty1' bash -c '. "$1"; echo "$GRUB_CMDLINE_LINUX_DEFAULT"' _ "$dir/grub.d/99-twelve-dollar-mem.cfg")"
+  [ "$out" = "console=tty1 mem=2G" ] || { echo "mem=2G stays on the boot line when the kernel install fails, got '$out'"; return 1; }
+  rm -rf "$dir"
+  # The install works but leaves no 6.8 in /boot: the same fallback, with its own reason.
+  dir="$(mktemp -d)"
+  boxes_fixture "$dir"
+  mkdir "$dir/grub.d"
+  rm "$dir/boot"/vmlinuz-6.8.*
+  boxes_setup_run "$dir" -- --shape
+  grep -q '^info  kernel: 6.8 not installed (no vmlinuz-6.8 in .*), staying on 6.8.0-1048-aws$' <<<"$BOXES_OUT" && ! grep -q GRUB_DEFAULT "$dir/grub.d/99-twelve-dollar-mem.cfg" \
+    || { echo "an install that leaves no 6.8 kernel is the same fallback: ${BOXES_OUT//$'\n'/ | }"; return 1; }
   rm -rf "$dir"
 }
 
@@ -4045,6 +4109,7 @@ CHECKS=(
   check_score_server_setup_checks
   check_score_server_setup_modes
   check_score_server_setup_cap
+  check_score_cpu_micro
   check_score_server_ctl
   check_score_server_ctl_sampler
   check_score_ctl_ssh
