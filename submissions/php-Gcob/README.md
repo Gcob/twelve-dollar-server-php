@@ -4,14 +4,14 @@
 |---|---|
 | Language | PHP 8.5.13, built from the php.net tarball (sha256 pinned) by `install.sh` with `./configure CFLAGS=-O2 --disable-cgi --disable-fpm --enable-opcache --with-pdo-sqlite --enable-mbstring --with-sodium --with-ffi --enable-ctype --with-iconv`; OPcache with the tracing JIT |
 | Framework | None: an event loop of our own (`loop.php`, `connection.php`) on ext-event 3.2.0 (PECL tarball, sha256 pinned), which uses Ubuntu 24.04's libevent 2.1.12-stable |
-| SQLite driver | `pdo_sqlite`, linked to Ubuntu 24.04's SQLite 3.45.1 |
-| Dependencies | None beyond PHP's own extensions (pcntl, sockets, posix, mbstring, ctype, hash, json) and ext-event. No Composer. The toolchain and the libraries come from Ubuntu's apt |
+| SQLite driver | `pdo_sqlite`, linked to SQLite 3.54.1 that `install.sh` builds from sqlite.org's amalgamation (sha256 pinned) with `-O2 -march=native`, the compile options sqlite.org recommends for a single-threaded program and profile-guided optimisation, under `/opt/sqlite-tuned` |
+| Dependencies | None beyond PHP's own extensions (pcntl, sockets, posix, mbstring, ctype, hash, json), ext-event and SQLite, all built from source. No Composer. The toolchain and the other libraries come from Ubuntu's apt |
 | **Nginx or direct** | **Direct**: serves `0.0.0.0:80` itself, with `HOST` and `PORT` read from the environment |
 
 ## Running it
 
 ```bash
-sudo bash install.sh   # apt: toolchain and libraries; builds PHP and ext-event into /opt/php-gcob
+sudo bash install.sh   # apt: toolchain and libraries; builds SQLite into /opt/sqlite-tuned, PHP and ext-event into /opt/php-gcob
 bash build.sh          # nothing to compile; lints every PHP file
 SQLITE_PATH=... JWT_SECRET=... HOST=0.0.0.0 PORT=80 bash start.sh
 ```
@@ -19,14 +19,16 @@ SQLITE_PATH=... JWT_SECRET=... HOST=0.0.0.0 PORT=80 bash start.sh
 - **PHP goes to `/opt/php-gcob`**, its own prefix, so it never clashes with the system's PHP (Ubuntu 24.04 ships 8.3).
   No `php.ini` is written and nothing is enabled globally: `start.sh` loads pcntl, sockets and event with
   `-d extension=`, and passes the OPcache and JIT settings the same way.
-- **`install.sh` took 232 s** in a clean Ubuntu 24.04 container limited to 1 CPU and 2 GiB, on an arm64 core (Docker on
-  an M3 Pro). The droplet's x86 vCPU is not measured yet.
+- **`install.sh` took 285 s** (277 s on an earlier run) in a clean Ubuntu 24.04 container limited to 1 CPU and 2 GiB, on an arm64 core (Docker on
+  an M3 Pro). It took 222 s before it built its own SQLite: the two builds of the library and the training are the difference.
+  The droplet's x86 vCPU is not measured yet (the same install ran 425 s on a one-core AWS `c5.large`, before the SQLite build).
 - **`start.sh` was healthy after 0.1 s** in the same container (the poll step is 0.1 s), with 42 of 42 checks passing
   there. `bash lab/submission-test.sh` repeats this run, as root then `deploy`:
   [lab/submission-test.sh](https://github.com/Gcob/twelve-dollar-server-php/blob/main/lab/submission-test.sh).
-- The last line `install.sh` prints is `installed: PHP 8.5.13, SQLite 3.45.1, libevent 2.1.12-stable, ext-event 3.2.0,
-  OPcache with JIT, ...`. It is printed by the installed PHP itself, and the install fails if an extension or the JIT
-  is missing.
+- The last line `install.sh` prints is `installed: PHP 8.5.13, SQLite 3.54.1 (THREADSAFE=0 ...), libevent 2.1.12-stable,
+  ext-event 3.2.0, OPcache with JIT, ...`. It is printed by the installed PHP itself, and the install fails if an extension
+  or the JIT is missing, if SQLite is not 3.54.1 or not built with `THREADSAFE=0`, or if the `php` binary does not load
+  `/opt/sqlite-tuned/lib/libsqlite3.so.0`.
 
 ## Optimizations, and why
 
@@ -69,6 +71,21 @@ hyperthread sibling left idle). Neither is the droplet.
 - **Prepared statements, the reference SQL, `json_encode`.** The statements are prepared once per process. The SQL is
   the challenge's reference query: the variants (a join, a two-step query, other fetch modes) were slower in the micro
   benchmark and never reached a server run. The JSON is built by `json_encode`, against the variants in the next item.
+- **Our own SQLite: 3.54.1 from the amalgamation, single-threaded options, `-march=native`, profile-guided.** SQLite is
+  most of a request's CPU, and Ubuntu's 3.45.1 is a general build. `install.sh` builds sqlite.org's `sqlite-autoconf-3540100`
+  (sha256 pinned) with `THREADSAFE=0`, no memory statistics, no double-quoted strings, no deprecated interfaces, no
+  progress callback, no shared cache, stack temporaries and no expression depth limit (the options sqlite.org recommends
+  for a single-threaded program, each one read against what PDO and the app call), then compiles it twice. The first
+  build is instrumented, PHP is built against it, and a training runs the app's six statements
+  (`sqlite-train.php`, which reads them from `app.php`) in the bench's mix of one loop (a feed, a post, a like 15 % of the time, a
+  new post 2 %), 70,072 statements on a database of the seed's size; the second build reads that profile. PHP is not rebuilt:
+  the library keeps its soname and exports, and `php` finds it at the same path. **The training data is generated**, from the
+  challenge's schema, by `sqlite-train.php` itself (50,000 users, 500,000 posts, about 2 million likes, a fixed seed): it reads
+  neither the seed database nor anything the bench runs. Ubuntu's `libsqlite3` is untouched. On the Xeon (`c5.2xlarge`, kernel
+  6.8, 7,500 requests a second, 60,000 idle connections) the server costs 55.3 µs per request on Ubuntu's SQLite, and the tuned
+  one **7.33 µs less (13.3 %), in 3 pairs of 3, beyond the A/A floor of 0.60 µs**; the feed read alone is 16.4 % faster in the
+  micro benchmark:
+  [lab/results/2026-11-26-x86-levers](https://github.com/Gcob/twelve-dollar-server-php/tree/main/lab/results/2026-11-26-x86-levers).
 - **Measured and not kept**, in the same two folders
   ([2026-11-23-cpu-steps](https://github.com/Gcob/twelve-dollar-server-php/tree/main/lab/results/2026-11-23-cpu-steps)
   and [2026-11-24-cpu-steps-5b](https://github.com/Gcob/twelve-dollar-server-php/tree/main/lab/results/2026-11-24-cpu-steps-5b)):
@@ -108,9 +125,12 @@ The code is in this folder: `app.php` (the five endpoints and SQLite), `connecti
   open connections with a constant, so it behaves the same for any client, and it never closes an idle connection.
 - **Rule 9, Nginx or direct:** direct. `server.php` reads `HOST` (default `0.0.0.0`) and `PORT` (default 80) from the
   environment, with `SQLITE_PATH` and `JWT_SECRET`, and reads no other variable.
-- **Rule 10, built from source, pinned:** `install.sh` pins PHP 8.5.13 and ext-event 3.2.0 by version and sha256 and
-  checks each download (`fetch()`) before unpacking it. The libraries and the toolchain come from Ubuntu's own apt
-  packages. Nothing is prebuilt. In the clean container, `start.sh` was healthy after 0.1 s (limit: 60 s).
+- **Rule 10, built from source, pinned:** `install.sh` pins PHP 8.5.13, ext-event 3.2.0 and SQLite 3.54.1 by version and
+  sha256 and checks each download (`fetch()`) before unpacking it. The other libraries and the toolchain come from
+  Ubuntu's own apt packages. Nothing is prebuilt. The SQLite is compiled on the machine, twice (once with the profile
+  instrumentation, once with the profile), and the training between the two runs the server's own statements on a database
+  that `sqlite-train.php` generates from the challenge's schema: no seed, no bench data and no request of the bench is
+  read or replayed. In the clean container, `start.sh` was healthy after 0.1 s (limit: 60 s).
 - **Rule 11, nothing tuned for us:** no kernel parameter, no CPU pinning and no `setrlimit`. The two processes, the
   backlog (4,096) and the pragmas are settings inside our own process.
 

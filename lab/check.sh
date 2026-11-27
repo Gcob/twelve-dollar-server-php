@@ -957,6 +957,33 @@ submission_install_problems() {
   extras_sha="$(sed -n 's/^EVENT_SHA256=\([0-9a-f]*\).*/\1/p' "$LAB/images/install-extras.sh")"
   grep -q "^EVENT_VERSION=$extras_version\$" "$file" || echo "pin: install.sh does not pin ext-event $extras_version (lab/images/install-extras.sh)"
   grep -q "^EVENT_SHA256=$extras_sha\([[:space:]]\|\$\)" "$file" || echo "pin: install.sh's EVENT_SHA256 is not the lab's $extras_sha"
+  submission_sqlite_problems "$1"
+}
+
+# submission_sqlite_problems <folder>: the `pin` and `train` lines for the SQLite the install builds. It must be the library of the lab's
+# 8.5-sqlite image (same release, same tarball and sha256, same compile options, same training mix), so that what was measured is what is
+# installed, and the schema the training generates must be the challenge's own.
+#  pin    SQLITE_VERSION, SQLITE_SHA256, the download's URL and the SQLITE_OPTIONS lines of install.sh are the lab's (install-sqlite-tuned.sh)
+#  train  sqlite-train.php exists, its TRAIN_ constants are the lab trainer's, its schema is the challenge's schema.sql, install.sh runs it
+submission_sqlite_problems() {
+  local install="$1/install.sh" train="$1/sqlite-train.php" lab_script="$LAB/images/install-sqlite-tuned.sh" lab_train="$LAB/images/sqlite-train.php"
+  local version sha url schema_file="$REPO/reference/twelve-dollar-server-challenge/schema.sql" embedded
+  version="$(sed -n 's/^SQLITE_VERSION=//p' "$lab_script")"
+  sha="$(sed -n 's/^SQLITE_SHA256=//p' "$lab_script")"
+  url="$(sed -n 's/^SQLITE_URL=//p' "$lab_script")"
+  grep -q "^SQLITE_VERSION=$version\$" "$install" || echo "pin: install.sh does not pin SQLite $version (lab/images/install-sqlite-tuned.sh)"
+  grep -q "^SQLITE_SHA256=$sha\([[:space:]]\|\$\)" "$install" || echo "pin: install.sh's SQLITE_SHA256 is not the lab's $sha"
+  grep -qF "fetch \"$url\" \"\$SQLITE_SHA256\"" "$install" || echo "pin: install.sh does not fetch the lab's SQLite tarball $url with SQLITE_SHA256"
+  [ "$(sed -n '/^SQLITE_OPTIONS=(/,/^)/p' "$install" | grep -- '-D' | sort)" = "$(sed -n '/^OPTIONS=(/,/^)/p' "$lab_script" | grep -- '-D' | sort)" ] \
+    || echo "pin: install.sh's SQLITE_OPTIONS are not the lab's OPTIONS (lab/images/install-sqlite-tuned.sh)"
+  if [ ! -f "$train" ]; then echo "train: there is no sqlite-train.php"; return 0; fi
+  [ "$(grep '^const TRAIN_[A-Z_]* = [0-9.]*;$' "$train")" = "$(grep '^const TRAIN_[A-Z_]* = [0-9.]*;$' "$lab_train")" ] \
+    || echo "train: the TRAIN_ constants of sqlite-train.php are not the lab trainer's (lab/images/sqlite-train.php)"
+  if [ -f "$schema_file" ]; then
+    embedded="$(sed -n "/^const TRAIN_SCHEMA = <<<'SQL'\$/,/^SQL;\$/p" "$train" | sed '1d;$d')"
+    [ "$embedded" = "$(cat "$schema_file")" ] || echo "train: the schema in sqlite-train.php is not the challenge's schema.sql"
+  fi
+  grep -q 'sqlite-train.php' "$install" || echo "train: install.sh does not run sqlite-train.php"
 }
 
 # submission_readme_problems <folder>: the `readme` lines of submission_static_problems. The README is read in the challenge's repo, where lab/ does
@@ -1025,7 +1052,8 @@ check_submission_catches_violations() {
   problems="$(submission_static_problems "$tmp/ok")"
   [ -z "$problems" ] || { rm -rf "$tmp"; echo "constants named like a switch, getenv of PORT, and right links were refused: ${problems//$'\n'/ | }"; return 1; }
   for kind in getenv getenv-all env-array switch instrument-ffi instrument-checkpointer flags flags-order folder subfolder lint \
-    no-install unpinned-download bare-phpize bare-php-config bare-php wrong-pin shellcheck \
+    no-install unpinned-download bare-phpize bare-php-config bare-php wrong-pin wrong-sqlite-pin wrong-sqlite-option wrong-sqlite-url \
+    no-train wrong-train-mix wrong-schema shellcheck \
     no-readme readme-missing-path readme-missing-file readme-other-branch readme-relative-link readme-home-path readme-email; do
     rm -rf "$tmp/f"
     cp -R "$SUBMISSION" "$tmp/f"
@@ -1048,6 +1076,12 @@ check_submission_catches_violations() {
       bare-php-config) prefix=install; printf 'x="$(php-config --include-dir)"\n' >>"$tmp/f/install.sh" ;;
       bare-php) prefix=install; printf 'php -v\n' >>"$tmp/f/install.sh" ;;
       wrong-pin) prefix=pin; sed 's/^PHP_SHA256=607602/PHP_SHA256=607603/' "$SUBMISSION/install.sh" >"$tmp/f/install.sh" ;;
+      wrong-sqlite-pin) prefix=pin; sed 's/^SQLITE_SHA256=926ef8d3/SQLITE_SHA256=926ef8d4/' "$SUBMISSION/install.sh" >"$tmp/f/install.sh" ;;
+      wrong-sqlite-option) prefix=pin; sed '/^  -DSQLITE_DQS=0$/d' "$SUBMISSION/install.sh" >"$tmp/f/install.sh" ;;
+      wrong-sqlite-url) prefix=pin; sed 's|sqlite-autoconf-3540100.tar.gz" "\$SQLITE_SHA256"|sqlite-autoconf-3540200.tar.gz" "$SQLITE_SHA256"|' "$SUBMISSION/install.sh" >"$tmp/f/install.sh" ;;
+      no-train) prefix=train; rm "$tmp/f/sqlite-train.php" ;;
+      wrong-train-mix) prefix=train; sed 's/^const TRAIN_LIKE_PROBABILITY = 0.15;$/const TRAIN_LIKE_PROBABILITY = 0.5;/' "$SUBMISSION/sqlite-train.php" >"$tmp/f/sqlite-train.php" ;;
+      wrong-schema) prefix=train; sed 's/ON likes (post_id);$/ON likes (post_id, user_id);/' "$SUBMISSION/sqlite-train.php" >"$tmp/f/sqlite-train.php" ;;
       shellcheck) prefix=shellcheck; printf 'echo $(date)\n' >>"$tmp/f/build.sh" ;;
       no-readme) prefix=readme; rm "$tmp/f/README.md" ;;
       readme-missing-path) prefix=readme; printf '\n[gone](%s/tree/main/lab/results/2099-01-01-nothing)\n' "$SUBMISSION_REPO_URL" >>"$tmp/f/README.md" ;;
@@ -1118,18 +1152,23 @@ check_submission_default_host_and_port() {
   grep -q '"status":"ok"' <<<"$answer" || { echo "GET /health on port 80 inside the container answered: $answer"; return 1; }
 }
 
-# install.sh with one digit of PHP's sha256 changed stops at the check: it exits non-zero, sha256sum says FAILED, and configure never ran. A
-# throwaway container of the pinned Ubuntu image (the apt step and the download run for real, that is the minute this check takes).
+# install.sh with one digit of the SQLite tarball's sha256 changed, or of PHP's, stops at the check: it exits non-zero, sha256sum says FAILED, the
+# last thing the script printed is sha256sum's own complaint (nothing ran after it). A throwaway container of the pinned Ubuntu image (the apt
+# step and the download run for real; PHP's download comes after the SQLite build, which is the minutes this check takes).
 check_submission_install_stops_on_wrong_sha256() {
-  local tmp out rc=0
+  local tmp out rc pin from to file
   tmp="$(mktemp -d)"
-  sed 's/^PHP_SHA256=607602/PHP_SHA256=607603/' "$SUBMISSION/install.sh" >"$tmp/install.sh"
-  cmp -s "$SUBMISSION/install.sh" "$tmp/install.sh" && { rm -rf "$tmp"; echo "the fixture changed nothing: install.sh has no PHP_SHA256=607602 line"; return 1; }
-  out="$(docker run --rm "${LAB_RESOURCE_FLAGS[@]}" -v "$tmp:/src:ro" "$(lab_base_image)" bash /src/install.sh 2>&1)" || rc=$?
+  for pin in "SQLITE_SHA256=926ef8d3:SQLITE_SHA256=926ef8d4:sqlite.tar.gz" "PHP_SHA256=607602:PHP_SHA256=607603:php.tar.xz"; do
+    IFS=: read -r from to file <<<"$pin"
+    sed "s/^$from/$to/" "$SUBMISSION/install.sh" >"$tmp/install.sh"
+    cmp -s "$SUBMISSION/install.sh" "$tmp/install.sh" && { rm -rf "$tmp"; echo "the fixture changed nothing: install.sh has no $from line"; return 1; }
+    rc=0
+    out="$(docker run --rm "${LAB_RESOURCE_FLAGS[@]}" -v "$tmp:/src:ro" "$(lab_base_image)" bash /src/install.sh 2>&1)" || rc=$?
+    [ "$rc" != 0 ] || { rm -rf "$tmp"; echo "install.sh exited 0 on a wrong sha256 ($from)"; return 1; }
+    grep -q "$file: FAILED" <<<"$out" || { rm -rf "$tmp"; echo "no '$file: FAILED' in the output: $(tail -5 <<<"$out" | tr '\n' ' ')"; return 1; }
+    [[ "$(tail -n 1 <<<"$out")" == *"did NOT match"* ]] || { rm -rf "$tmp"; echo "the script went on after the wrong sha256 of $file: $(tail -3 <<<"$out" | tr '\n' ' ')"; return 1; }
+  done
   rm -rf "$tmp"
-  [ "$rc" != 0 ] || { echo "install.sh exited 0 on a wrong sha256"; return 1; }
-  grep -q 'php.tar.xz: FAILED' <<<"$out" || { echo "no 'php.tar.xz: FAILED' in the output: $(tail -5 <<<"$out" | tr '\n' ' ')"; return 1; }
-  ! grep -q '^checking ' <<<"$out" || { echo "configure ran after the wrong sha256"; return 1; }
 }
 
 # The submission's own cases (lab/check/submission-test.php, run with the submissions folder mounted): the configuration refusals leave

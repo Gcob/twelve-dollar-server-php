@@ -19,7 +19,7 @@
 # be arm64), and any other load: the times it prints are not a measurement. The container has its own network (port 80 is taken by
 # other projects on this VM). The submission, the challenge's test/ and the seed are copied in, not mounted.
 #
-# Takes about 4 minutes (the PHP compile on one arm64 CPU, 232 to 237 s measured; the droplet was not measured): run it in the background and follow the install log it names. Not run by
+# Takes about 5 minutes (the SQLite built twice with its training and the PHP compile on one arm64 CPU, 277 s measured, against 222 s before the SQLite build; the droplet was not measured): run it in the background and follow the install log it names. Not run by
 # lab/check.sh, which would take that long on every run. Prints one summary line per check, then `submission-test: ok` and exits 0 only
 # when every check passed. The container and its network are removed at the end, whatever happens, unless --keep.
 set -euo pipefail

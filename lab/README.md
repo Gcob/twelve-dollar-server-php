@@ -1522,14 +1522,14 @@ worker), `check_submission_default_host_and_port` (0.0.0.0:80 in a container wit
 (`lab/check/submission-test.php`: the configuration refusals, SIGTERM, a killed worker, and the soft limit on socket pairs and through the loop). It also runs `lab/check/post-insert-test.php` (a new post is committed when `post_insert()` returns, and a commit made to fail with a deferred foreign key is an exception).
 `check_submission` also reads `install.sh` (every `curl` followed by a `sha256sum -c` of its file, every `phpize`, `php-config` and `php` by its full
 `/opt/php-gcob/bin/` path, the PHP and ext-event pins equal to the lab's images) and runs the pinned shellcheck on `install.sh`, `build.sh` and
-`start.sh`; `check_submission_install_stops_on_wrong_sha256` runs `install.sh` with one digit of PHP's sha256 changed and sees it stop before `configure`.
+`start.sh`; its SQLite is the lab's `8.5-sqlite` library (same release, tarball sha256, URL and compile options as `lab/images/install-sqlite-tuned.sh`), `sqlite-train.php` keeps the lab trainer's `TRAIN_` constants and the challenge's `schema.sql` word for word, and `install.sh` runs it; `check_submission_install_stops_on_wrong_sha256` runs `install.sh` with one digit of the SQLite tarball's sha256 changed, then of PHP's, and sees each stop right after the check.
 It reads `README.md` too: each link to this repo must be a `/tree/main/` or `/blob/main/` link to a path that exists in the tree (the README is read in the
 challenge's repo, where `lab/` does not exist), no link may be relative, and it holds no home path and no e-mail address.
 
 `lab/submission-test.sh [--ci] [--keep]` installs and tests the submission in a clean Ubuntu 24.04 container the way the bench does (`install.sh`
 as root, `build.sh` and `test/run.sh` as `deploy` on port 80, a second start on `0.0.0.0:80`, the processes' user and open-files limit, port 80
 refused without the capability) or, with `--ci`, the way the challenge's own CI does (Ubuntu's PHP 8.3 first on the `PATH`, `sudo bash install.sh`,
-`test/run.sh` on `127.0.0.1:3000`). One CPU, 2 GiB, a network of its own. It takes about 4 minutes on the arm64 VM (the compile is most of it) and is
+`test/run.sh` on `127.0.0.1:3000`). One CPU, 2 GiB, a network of its own. It takes about 5 minutes on the arm64 VM (the compiles are most of it) and is
 not part of `lab/check.sh`.
 
 `check_results_regenerate` keeps the results folders honest: it runs every `lab/results/*/summarize.sh` (from its
