@@ -4,18 +4,54 @@
 older provided buffers, Ubuntu's 6.8 refusing the buffer ring (D130, D131: −4.49 µs/req, together −11.59); the ring
 goes into the submission tonight (scope 7b), then the score session waits for your go (scope 9)
 **Round:** 8
-**Since your last read:** your answers to Q24 to Q28 are in D123 to D127. Tonight the pairs run on the Mac (its own
-A/A floor, then the tuned SQLite and the ring against phase 7's server), arm64 numbers that close nothing alone; the
-x86 session repeats them and decides (D123). The score's load is one `m5.8xlarge` with two k6 (D125, already coded).
-Every AWS box boots the 6.8 kernel (D126): noble's archive still offers it (`linux-image-aws-lts-24.04`, 6.8.0-1070),
-so Q27's fallback to 7.0 shouldn't be needed. The cross-box pair is read past the boxes' CPU gap, or not at all if the
-CPU models differ (D127).
+**Since your last read:** both levers won on x86. The tuned SQLite (D128) and the ring (D131: Ubuntu's 6.8 refuses its
+buffer ring, so it uses the older provided buffers, D130) are both in the submission now: together −11.59 µs/req
+against phase 7's 55.2 (−21 %, bench estimate about 109,800 against 86,800). The full suite is green and the
+`pr-reviewer` gave OK on scopes 1 to 8; it raised one question for you (Q29, the score boxes' kernel).
 **Project:** this repo, `plan/` · **Submission:** `submissions/php-Gcob/` (D80) · **Jira:** none
 
 ## 👉 Your turn
 
-Nothing open. Your next step is the go for the x86 lab session (scope 6's second part, D123): the policy is drafted
-in the factory and waits for you to attach it. The Mac series runs first, tonight.
+One question, Q29: the kernel of the score boxes. Scope 9 also waits for your go: attach
+`aws/phase-8-score-policy.json` (factory) and open port 80; and the lab policy can be detached and deleted (no box is
+up). Nothing local waits on you: the review's small fixes run tonight (scope 7c), ready for either answer.
+
+### Q29/29 [run, score] : the score boxes' kernel, AWS's 6.8 (D126) or the generic 6.8 where the ring was proven?
+
+D126 boots every phase 8 AWS box on `linux-image-aws-lts-24.04` (6.8.0-1070-aws), your Q27 answer. Since then, that
+kernel refused the ring's buffer ring (D129), and the ring was fixed with the older provided buffers and measured on
+the generic 6.8 (6.8.0-151-generic, D130, D131): its older path (`PROVIDE_BUFFERS` with a multishot receive) has never
+run on the AWS 6.8. If that kernel refused it too, the score box would print `loop: epoll (io_uring refused: …)` and
+phase 8's server would run phase 7's loop: the session's central comparison lost, caught by the `loop:` line after the
+42 checks, but after the boxes' setup time. The bench is a KVM VPS on "Ubuntu 24.04, kernel 6.8" (`LEADERBOARD.md`),
+almost surely the generic flavour. The generic boot recipe works on these boxes (scope 6c, 6d: back in about a minute).
+Found by the `pr-reviewer` (pass 1, ⚠️).
+
+**Question:** which 6.8 do the score boxes boot?
+
+- **A.** The generic 6.8 on every score box, by scope 6c's recipe (`linux-image-generic`, its initramfs, the
+  `GRUB_FORCE_PARTUUID` drop-in commented out, `GRUB_DEFAULT`), folded into the `mem=2G` reboot as D126 planned.
+  **Aims at:** the kernel the ring was measured and proven on, and the bench's likely flavour.
+  **For:** no unknown left on the ring's path; the score and the lab pairs on the same kernel. **Against:** a recipe
+  that touches GRUB's drop-in (tested twice, on the lab box only); phase 7's score ran on 7.0, so its comparison reads
+  the kernel change anyway (as with D126).
+- **B.** AWS's 6.8 as D126, plus a one-minute ring probe on each box right after its reboot (the server's boot line
+  must say `ring, 3 rings, legacy buffers`); if refused, that box reboots on the generic 6.8 by the same recipe.
+  **Aims at:** D126 as you chose it, with the ring's path checked before anything is spent on it.
+  **For:** the kernel you picked, unless proven wrong. **Against:** two code paths in the setup; a refusal costs one
+  more reboot and mixes kernels across boxes unless both switch.
+
+**Confidence:** A 70 % · B 30 %
+
+**Recommendation:** A, because the ring is the lever under test and the generic 6.8 is where it was proven and where
+the bench most likely runs; AWS's flavour adds an unknown for no gain.
+
+**Flips if:** the bench turns out to run an AWS-like or provider kernel rather than `-generic` (then B).
+
+**Meanwhile:** scope 7c gives `lab/score/server-setup.sh --shape` a choice of the two kernels, D126's as the default
+until you answer; nothing runs on AWS before your go.
+
+**Answer:**
 
 ---
 
