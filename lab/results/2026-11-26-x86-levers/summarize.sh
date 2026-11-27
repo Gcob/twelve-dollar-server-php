@@ -83,8 +83,13 @@ else
   echo "Not run."
 fi
 
-lever() { # folder title
+lever() { # folder title [floor arguments for steplab-summary.sh, default: --floor-from aa-7500]
   [ -d "$1" ] || return 0
+  local folder="$1" title="$2"
+  shift 2
+  local floor_args=("$@")
+  [ "${#floor_args[@]}" -gt 0 ] || floor_args=(--floor-from aa-7500)
+  set -- "$folder" "$title"
   echo
   echo "### $2"
   echo
@@ -92,7 +97,7 @@ lever() { # folder title
   echo
   host_table "$1"
   echo
-  summary_block "$1" --floor-from aa-7500
+  summary_block "$1" "${floor_args[@]}"
   echo
   runs_of "$1" | jq -r --argjson users "$BENCH_USERS" "$PRELUDE"'
     map(select(counted)) as $c | ($c | map(select(.steplab.variant != "ref") | .steplab.variant) | unique) as $vs
@@ -102,5 +107,30 @@ lever() { # folder title
     | "- **\($v)**: median \($ml | r2) µs/req against the reference'"'"'s \($mr | r2); paired differences \($d | map(sgn) | join(", ")), **median \($d | med | sgn) µs/req (\(($d | med) / $mr * 100 | sgn) %)**; bench estimate \($users) × \($mr | r2) ÷ \($ml | r2) = **\($users * $mr / $ml | round) users** (x86 on a shared host, not the bench)."'
 }
 lever sqlite-7500 "The tuned SQLite against the reference (\`8.5-sqlite\`, same server file, 7,500 req/s, 1 pair, 2 more if it beats the floor)"
-lever ring-7500 "The ring against the reference (\`APP_RING=1 APP_RINGS=3\`, \`APP_PRAGMAS=mmap-off\`, \`APP_SOFT_CONN_LIMIT=192000\`, \`--server-nofile 32768\`, 7,500 req/s)"
-lever together-7500 "The ring on the tuned SQLite against the reference (1 pair)"
+[ -d aa-generic-7500 ] || {
+  lever ring-7500 "The ring against the reference (\`APP_RING=1 APP_RINGS=3\`, \`APP_PRAGMAS=mmap-off\`, \`APP_SOFT_CONN_LIMIT=192000\`, \`--server-nofile 32768\`, 7,500 req/s)"
+  lever together-7500 "The ring on the tuned SQLite against the reference (1 pair)"
+}
+
+# The pairs on 6.8.0-151-generic (scope 6d): their own A/A (3 pairs, aa-generic-7500/) and a floor that is the larger of that floor and the
+# 6.8.0-1070-aws one (0.603), typed with --floor.
+if [ -d aa-generic-7500 ]; then
+  echo
+  echo "### The reference against itself on 6.8.0-151-generic (\`ref\` and \`ref2\`, 7,500 req/s, \`s = 0.02\`, 60,000 idle, 3 pairs)"
+  echo
+  runs_table aa-generic-7500
+  echo
+  host_table aa-generic-7500
+  echo
+  GEN_FLOOR_JSON="$(bash "$LAB/steplab-floor.sh" aa-generic-7500)"
+  GEN_FLOOR="$(jq -n --argjson g "$GEN_FLOOR_JSON" --argjson a "$(jq .floor_us <<<"$FLOOR_JSON")" '[$g.floor_us, $a] | max')"
+  REF_GEN="$(runs_of aa-generic-7500 | jq "$PRELUDE"'map(select(counted and .steplab.variant == "ref") | us) | med')"
+  echo "Valid runs: $(runs_of aa-generic-7500 | jq 'map(select(.valid and .other_containers.count == 0)) | length') of $(runs_of aa-generic-7500 | jq length). The reference's median over its runs: **$(jq -rn "$PRELUDE"'$m | r2' --argjson m "$REF_GEN") µs/req**."
+  echo
+  jq -r "$PRELUDE"'"The floor on this kernel, \(.pairs) paired differences: median \(.median_difference_us | sgn) µs, interquartile range \(.iqr_us | r2) µs, floor \(.floor_us | r2) µs/req (|median| + IQR). The floor used below is the larger of this and the first kernel'"'"'s (\($a | r3)): **\($f | r3) µs/req**."' --argjson f "$GEN_FLOOR" --argjson a "$(jq .floor_us <<<"$FLOOR_JSON")" <<<"$GEN_FLOOR_JSON"
+  echo
+  summary_block aa-generic-7500 --floor-from aa-generic-7500
+  lever ring-7500 "The ring against the reference on 6.8.0-151-generic (\`APP_RING=1 APP_RINGS=3\`, \`URING_BUFFERS=auto\`, \`APP_PRAGMAS=mmap-off\`, \`APP_SOFT_CONN_LIMIT=192000\`, \`--server-nofile 32768\`, 7,500 req/s)" --floor "$GEN_FLOOR"
+  lever together-7500 "The ring on the tuned SQLite against the reference on 6.8.0-151-generic (3 pairs)" --floor "$GEN_FLOOR"
+  lever sqlite-generic-7500 "The tuned SQLite against the reference on 6.8.0-151-generic (\`8.5-sqlite\`, same server file, 1 pair)" --floor "$GEN_FLOOR"
+fi

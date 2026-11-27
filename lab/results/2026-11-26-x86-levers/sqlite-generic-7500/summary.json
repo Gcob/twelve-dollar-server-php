@@ -1,0 +1,88 @@
+{
+  "floor_us": 0.918,
+  "floor_from": null,
+  "floor_rule": "typed",
+  "floor_detail": null,
+  "order": "alternate",
+  "rule": "a variant is beyond the noise when it has at least 2 pairs, every paired difference (its µs CPU/req minus the reference's in the same round) has the same sign and the median paired difference is at least 0.918 µs in absolute value; otherwise it is within the noise. A round where either run is invalid has no pair. One pair with a floor: a screen (beats the floor when lower by at least the floor, else not better), never a verdict. No pair: no verdict. No floor: not judged (the floor comes from an A/A calibration).",
+  "reference": "ref",
+  "runs": [
+    {
+      "variant": "sqlite",
+      "index": 1,
+      "round": 1,
+      "position": 0,
+      "order": "alternate",
+      "valid": true,
+      "counted": true,
+      "failed_rule": false,
+      "achieved_rps": 7411.448275862069,
+      "us_per_request": 48.16858864461251,
+      "p95_ms": 5.837,
+      "p99_ms": 17.052,
+      "result": "pass",
+      "time_wait_before_max": 26747,
+      "other_containers": 0
+    },
+    {
+      "variant": "ref",
+      "index": 0,
+      "round": 1,
+      "position": 1,
+      "order": "alternate",
+      "valid": true,
+      "counted": true,
+      "failed_rule": false,
+      "achieved_rps": 7412.137931034483,
+      "us_per_request": 55.733826923299944,
+      "p95_ms": 6.289,
+      "p99_ms": 17.568,
+      "result": "pass",
+      "time_wait_before_max": 26734,
+      "other_containers": 0
+    }
+  ],
+  "variants": [
+    {
+      "variant": "ref",
+      "index": 0,
+      "reference": true,
+      "runs": 1,
+      "valid_runs": 1,
+      "failed_rule": 0,
+      "median_us": 55.733826923299944,
+      "min_us": 55.733826923299944,
+      "max_us": 55.733826923299944,
+      "median_p99_ms": 17.568,
+      "pairs": [],
+      "median_difference_us": null,
+      "same_sign": false,
+      "verdict": "reference",
+      "reason": "the others are judged against it"
+    },
+    {
+      "variant": "sqlite",
+      "index": 1,
+      "reference": false,
+      "runs": 1,
+      "valid_runs": 1,
+      "failed_rule": 0,
+      "median_us": 48.16858864461251,
+      "min_us": 48.16858864461251,
+      "max_us": 48.16858864461251,
+      "median_p99_ms": 17.052,
+      "pairs": [
+        {
+          "round": 1,
+          "us_per_request": 48.16858864461251,
+          "reference_us": 55.733826923299944,
+          "difference_us": -7.565238278687431
+        }
+      ],
+      "median_difference_us": -7.565238278687431,
+      "same_sign": true,
+      "verdict": "screen: beats the floor",
+      "reason": "one pair, 7.565238278687431 µs lower, at least 0.918 µs"
+    }
+  ]
+}
