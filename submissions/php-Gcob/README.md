@@ -21,8 +21,8 @@ SQLITE_PATH=... JWT_SECRET=... HOST=0.0.0.0 PORT=80 bash start.sh
   `-d extension=`, and passes the OPcache and JIT settings the same way.
 - **FFI is built in** (`--with-ffi`, against Ubuntu's libffi) and needs no setting: PHP's default, `ffi.enable=preload`, allows it in a CLI
   script, which is how `start.sh` runs the server. `install.sh` ends by calling libc through it, and fails if it cannot.
-- **`install.sh` took 258 to 267 s** in four runs of `bash lab/submission-test.sh` (with and without Docker's default seccomp filter, and the two
-  runs of `--ci`), in a clean Ubuntu 24.04 container limited to 1 CPU and 2 GiB, on an arm64 core (Docker on an M3 Pro). The ring adds nothing
+- **`install.sh` took 258 to 276 s** in eight runs of `bash lab/submission-test.sh` (with and without Docker's default seccomp filter, and the two
+  runs of `--ci`, twice over), in a clean Ubuntu 24.04 container limited to 1 CPU and 2 GiB, on an arm64 core (Docker on an M3 Pro). The ring adds nothing
   to it but a call to libc through FFI at the end: FFI was already built into PHP, and `ring.php` is a PHP file. It took 222 s before it built its
   own SQLite: the two builds of the library and the training are the difference. The droplet's x86 vCPU is not measured yet (the same install ran 425 s on a one-core AWS `c5.large`, before
   the SQLite build).
