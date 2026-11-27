@@ -58,7 +58,8 @@ hyperthread sibling left idle). Neither is the droplet.
   Swoole's or ext-mrloop's: [lab/results/2026-11-26-off-the-shelf-uring](https://github.com/Gcob/twelve-dollar-server-php/tree/main/lab/results/2026-11-26-off-the-shelf-uring).
   `ring.php` is a copy of the lab's ring, `lab/servers/ring-server.php` as of phase 8, with its test hooks, its environment knobs, its
   statistics line and two members nothing in the submission reads taken out
-  ([lab/servers/ring-server.php](https://github.com/Gcob/twelve-dollar-server-php/blob/main/lab/servers/ring-server.php)). An idle server is not at 0 % CPU: with
+  ([lab/servers/ring-server.php](https://github.com/Gcob/twelve-dollar-server-php/blob/main/lab/servers/ring-server.php));
+  `check_submission_ring_is_the_labs` in `lab/check.sh` fails when the logic of one of the two files changes and the other's does not. An idle server is not at 0 % CPU: with
   nothing to do the loop wakes every 500 µs on the active ring, and the pairs above were measured with it.
 - **The fallback, decided once at boot.** Before it opens the database or listens, `server.php` builds the three rings. If the machine refuses a step
   (Docker's default seccomp filter, which answers `EPERM` to `io_uring_setup`; a kernel without io_uring or with it switched off; a limit), or cannot

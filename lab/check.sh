@@ -1144,6 +1144,24 @@ check_submission_on_the_ring() {
   [ -z "$left" ] || { echo "containers left behind: ${left//$'\n'/ }"; return 1; }
 }
 
+# The submission's ring is the lab's ring minus its hooks (lab/check/ring-sync.pl says by which rules, and what it does not look at): the two
+# files as they are agree, and a changed line of the ring's logic in either one makes them disagree. A reworded comment in the lab's file does not.
+check_submission_ring_is_the_labs() {
+  local tmp out ring="$LAB/servers/ring-server.php" header="$LAB/servers/ring-server.h" sub="$SUBMISSION/ring.php" mutate='s/\$this->tableSize - \$this->used - /\$this->tableSize + \$this->used - /'
+  command -v perl >/dev/null || { echo "perl is missing"; return 1; }
+  tmp="$(mktemp -d)"
+  out="$(perl "$LAB/check/ring-sync.pl" "$ring" "$header" "$sub" 2>&1)" || { rm -rf "$tmp"; echo "the two rings differ: ${out//$'\n'/ | }"; return 1; }
+  perl -pe "$mutate" "$ring" >"$tmp/lab.php"
+  cmp -s "$ring" "$tmp/lab.php" && { rm -rf "$tmp"; echo "the mutation changed nothing in the lab's ring"; return 1; }
+  perl "$LAB/check/ring-sync.pl" "$tmp/lab.php" "$header" "$sub" >/dev/null 2>&1 && { rm -rf "$tmp"; echo "a changed line of ring logic in the lab's file passed"; return 1; }
+  perl -pe "$mutate" "$sub" >"$tmp/ring.php"
+  perl "$LAB/check/ring-sync.pl" "$ring" "$header" "$tmp/ring.php" >/dev/null 2>&1 && { rm -rf "$tmp"; echo "a changed line of ring logic in the submission's file passed"; return 1; }
+  perl -pe 's{^(\s*)// Why the first ring decides.*}{$1// reworded}' "$ring" >"$tmp/lab.php"
+  cmp -s "$ring" "$tmp/lab.php" && { rm -rf "$tmp"; echo "the comment mutation changed nothing in the lab's ring"; return 1; }
+  out="$(perl "$LAB/check/ring-sync.pl" "$tmp/lab.php" "$header" "$sub" 2>&1)" || { rm -rf "$tmp"; echo "a reworded comment was refused: ${out//$'\n'/ | }"; return 1; }
+  rm -rf "$tmp"
+}
+
 # The submission as a container's first process, under Docker's default seccomp filter (which refuses io_uring, so it runs the epoll loop it falls
 # back to, and says so): the boot lines (2 workers, the soft limit per process, the pragmas as SQLite reads them
 # back, the loop, the socket), and 200 connections held open at once, each answered, with sockets in the process table of each worker (the
@@ -4283,6 +4301,7 @@ CHECKS=(
   check_submission_install_stops_on_wrong_sha256
   check_submission_passes_challenge_test
   check_submission_on_the_ring
+  check_submission_ring_is_the_labs
   check_submission_both_workers_answer
   check_submission_default_host_and_port
   check_soft_limit_closes_the_third_connection
