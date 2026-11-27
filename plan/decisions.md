@@ -728,6 +728,11 @@
   mismatches. Two lab checks (`check_ring_buffers_loop_line`, `check_rings_auto_chooses_legacy_buffers`) assume a
   kernel that takes the buffer ring and fail on 6.8; scope 5d makes them follow the kernel (project manager, phase 8,
   2026-11-27 01:19, from `lab/results/2026-11-26-x86-levers/`).
+- **D132:** the score boxes boot Ubuntu's generic 6.8 (`linux-image-generic`, by scope 6c's recipe: its initramfs, the
+  `GRUB_FORCE_PARTUUID` drop-in commented out, `GRUB_DEFAULT` to its entry), in the same reboot as `mem=2G`;
+  `lab/score/server-setup.sh --shape` defaults to `--kernel generic`. This replaces D126's AWS 6.8 for the score: the
+  ring's older provided buffers were proven and measured on the generic 6.8 only (D130, D131), and the bench most
+  likely runs that flavour (Jacob, Q29 = A, 2026-11-27 about 08:35).
 
 ## History
 
