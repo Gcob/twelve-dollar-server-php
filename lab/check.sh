@@ -3226,7 +3226,10 @@ boxes_fixture() {
   mkdir -p "$dir/boot"
   touch "$dir/boot/vmlinuz-6.8.0-1047-aws" "$dir/boot/vmlinuz-6.8.0-1048-aws" "$dir/boot/vmlinuz-7.0.0-1005-aws" "$dir/boot/config-6.8.0-1048-aws"
   boxes_stubs "$dir/bin" systemctl shutdown update-grub reboot useradd cloud-init apt-get php lsinitramfs update-initramfs
-  echo 'usr/lib/modules/6.8.0-151-generic/kernel/drivers/nvme/host/nvme.ko.zst' >"$dir/bin/lsinitramfs.out"
+  # A real initramfs lists about 2,000 files and the nvme driver is not the last: `lsinitramfs | grep -q nvme` under pipefail made lsinitramfs die of
+  # SIGPIPE and the pipeline fail. The stub lists the driver first, then 20,000 lines (more than a pipe holds), and ends as `cat` so that it dies the same way.
+  { echo 'usr/lib/modules/6.8.0-151-generic/kernel/drivers/nvme/host/nvme.ko.zst'; awk 'BEGIN { for (i = 0; i < 20000; i++) print "usr/lib/modules/6.8.0-151-generic/kernel/fs/ext4/ext4.ko.zst" }'; } >"$dir/bin/lsinitramfs.out"
+  printf '#!/usr/bin/env bash\necho "lsinitramfs $*" >>"%s/calls"\nexec cat "%s/lsinitramfs.out"\n' "$dir/bin" "$dir/bin" >"$dir/bin/lsinitramfs"
   echo '41.3 ns per iteration (1000 iterations, 6.1 s), Fixture CPU' >"$dir/bin/php.out"
 }
 
@@ -3659,8 +3662,8 @@ check_score_ctl_ssh() {
 }
 
 # boxes_k6_fixture <dir>: what k6-setup.sh reads, in <dir>: the challenge's real bench/load.js and a tokens file, the ephemeral range of a box that
-# was set up, no nf_conntrack module, and stubs for the instance metadata (a curl that answers the IMDSv2 paths with a primary and 3 secondary
-# addresses), `ip` (the default route and the interface's 4 addresses), ssh, sudo, sysctl, ping and ethtool.
+# was set up, no nf_conntrack module, and stubs for the instance metadata (a curl that answers the IMDSv2 paths with a primary and 4 secondary
+# addresses), `ip` (the default route and the interface's 5 addresses), ssh, sudo, sysctl, ping and ethtool.
 boxes_k6_fixture() {
   local dir="$1"
   mkdir -p "$dir/bin" "$dir/challenge/bench" "$dir/challenge/seed" "$dir/challenge/test"
@@ -3671,11 +3674,11 @@ boxes_k6_fixture() {
   boxes_stubs "$dir/bin" sysctl
   printf '%s\n' '#!/usr/bin/env bash' 'for last; do :; done' 'case "$last" in' \
     '  */latest/api/token) echo TOKEN ;;' '  */macs/) echo "02:aa:bb:cc:dd:ee/" ;;' \
-    '  */local-ipv4s) printf "192.0.2.5\n192.0.2.6\n192.0.2.7\n192.0.2.8" ;;' '  */subnet-ipv4-cidr-block) echo 192.0.2.0/24 ;;' '  *) exit 22 ;;' 'esac' >"$dir/bin/curl"
+    '  */local-ipv4s) printf "192.0.2.5\n192.0.2.6\n192.0.2.7\n192.0.2.8\n192.0.2.10" ;;' '  */subnet-ipv4-cidr-block) echo 192.0.2.0/24 ;;' '  *) exit 22 ;;' 'esac' >"$dir/bin/curl"
   printf '%s\n' '#!/usr/bin/env bash' 'echo "ip $*" >>"'"$dir"'/bin/calls"' 'case "$*" in' \
     '  "route show default") echo "default via 192.0.2.1 dev ens5 proto dhcp src 192.0.2.5 metric 100" ;;' \
     '  "-4 -o addr show dev ens5") cat "'"$dir"'/addrs" ;;' '  addr\ add*) ;;' '  *) exit 1 ;;' 'esac' >"$dir/bin/ip"
-  printf '2: ens5    inet 192.0.2.5/24 brd 192.0.2.255 scope global dynamic ens5\n2: ens5    inet 192.0.2.6/24 scope global secondary ens5\n2: ens5    inet 192.0.2.7/24 scope global secondary ens5\n2: ens5    inet 192.0.2.8/24 scope global secondary ens5\n' >"$dir/addrs"
+  printf '2: ens5    inet 192.0.2.5/24 brd 192.0.2.255 scope global dynamic ens5\n2: ens5    inet 192.0.2.6/24 scope global secondary ens5\n2: ens5    inet 192.0.2.7/24 scope global secondary ens5\n2: ens5    inet 192.0.2.8/24 scope global secondary ens5\n2: ens5    inet 192.0.2.10/24 scope global secondary ens5\n' >"$dir/addrs"
   printf '%s\n' '#!/usr/bin/env bash' 'exec "$@"' >"$dir/bin/sudo"
   printf '%s\n' '#!/usr/bin/env bash' 'echo "ssh $*" >>"'"$dir"'/bin/calls"' '[ ! -f "'"$dir"'/ssh.rc" ] || exit "$(cat "'"$dir"'/ssh.rc")"' \
     'while [ "$#" -gt 0 ]; do case "$1" in -n|-q) shift ;; -o|-i|-p) shift 2 ;; *) break ;; esac; done' 'shift' 'exec bash -c "$*"' >"$dir/bin/ssh"
@@ -3753,7 +3756,7 @@ check_score_k6_setup_modes() {
   [ "$BOXES_RC" = 0 ] && [ "$BOXES_OUT" = "$(printf 'ena bw_in_allowance_exceeded 0\nena pps_allowance_exceeded 2\nena conntrack_allowance_available 4294967295')" ] \
     || { echo "--allowance prints one line per allowance counter, and only those (exit $BOXES_RC): ${BOXES_OUT//$'\n'/ | }"; return 1; }
   boxes_k6_run "$dir" -- --print-ips
-  [ "$BOXES_RC" = 0 ] && [ "$BOXES_OUT" = "192.0.2.5,192.0.2.6,192.0.2.7,192.0.2.8" ] || { echo "--print-ips prints the interface's addresses, comma separated (exit $BOXES_RC): ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  [ "$BOXES_RC" = 0 ] && [ "$BOXES_OUT" = "192.0.2.5,192.0.2.6,192.0.2.7,192.0.2.8,192.0.2.10" ] || { echo "--print-ips prints the interface's addresses, comma separated (exit $BOXES_RC): ${BOXES_OUT//$'\n'/ | }"; return 1; }
   seed="$dir/seed.db"
   head -c 100000 /dev/urandom >"$seed"
   mkdir -p "$dir/remote"

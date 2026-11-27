@@ -113,9 +113,11 @@ install_kernel() { # prints the menu entry of the newest 6.8 build, or says why 
 # have an initramfs that carries nvme (the package ships one; one is built when it is missing), and the force-PARTUUID line is commented out.
 # A kernel whose initramfs has no nvme is not booted: the box stays on its own kernel, and says so.
 install_generic_kernel() { # install_generic_kernel <version>: 0 when the kernel will boot, else says why on an `info kernel:` line and returns 1
-  local version="$1" initrd="$BOOT_DIR/initrd.img-$1" file
+  local version="$1" initrd="$BOOT_DIR/initrd.img-$1" file listing=""
   [ -e "$initrd" ] || update-initramfs -c -k "$version" >&2 || true
-  if [ ! -e "$initrd" ] || ! lsinitramfs "$initrd" 2>/dev/null | grep -q nvme; then
+  # Why the listing is read whole: `lsinitramfs | grep -q nvme` under pipefail fails when grep leaves at the first match and lsinitramfs dies of SIGPIPE.
+  [ ! -e "$initrd" ] || listing="$(lsinitramfs "$initrd" 2>/dev/null)" || listing=""
+  if [ ! -e "$initrd" ] || ! grep -q nvme <<<"$listing"; then
     info kernel "generic $version not used (no initramfs with the nvme driver in $BOOT_DIR), staying on $KERNEL_RELEASE" >&2
     return 1
   fi

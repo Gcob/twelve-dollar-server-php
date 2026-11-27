@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Sets up the load box of the score search: a fresh Ubuntu 24.04 EC2 box (m5.4xlarge, three secondary private addresses) that runs
+# Sets up the load box of the score search: a fresh Ubuntu 24.04 EC2 box (m5.8xlarge, four secondary private addresses) that runs
 # lab/score/search.sh against the server box. Runs from a copy of this repo's tree (`git archive`) on the load box only.
 #
 #   sudo bash lab/score/k6-setup.sh                      the setup (below); prints the box's ssh public key last
@@ -45,7 +45,7 @@ SEED="${K6_SETUP_SEED:-$LAB/data/feed.db}"
 REMOTE_SEED_DIR="${K6_SETUP_REMOTE_SEED_DIR:-/srv/seed}"
 REMOTE_SUDO="${K6_SETUP_REMOTE_SUDO:-sudo}"
 CONNTRACK_MAX=1048576
-SECONDARY_ADDRESSES=3
+SECONDARY_ADDRESSES=4
 
 usage() { sed -n '3,15p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
