@@ -250,7 +250,6 @@ Rule: a variant is beyond the noise when it has at least 2 pairs, every paired d
 - **tuned SQLite:** reference 33.48 µs/req, tuned SQLite 29.98 µs/req over 3 pair(s); paired differences -3, -3.64, -3.52, **median -3.52 µs/req** (-10.53 %) against the floor 0.855: **beyond the floor**. Mac estimate, arm64, not the bench: 86800 x 33.48 / 29.98 = **96919 users**.
 - **ring:** reference 33.34 µs/req, ring 31.26 µs/req over 3 pair(s); paired differences -2.15, -2.13, -1.98, **median -2.13 µs/req** (-6.39 %) against the floor 0.855: **beyond the floor**. Mac estimate, arm64, not the bench: 86800 x 33.34 / 31.26 = **92575 users**.
 - **ring on the tuned SQLite:** reference 32.74 µs/req, ring on the tuned SQLite 27.8 µs/req over 1 pair(s); paired differences -4.94, **median -4.94 µs/req** (-15.09 %) against the floor 0.855: **one pair: a screen that beats the floor, no verdict**. Mac estimate, arm64, not the bench: 86800 x 32.74 / 27.8 = **102230 users**.
-
 <!-- END summarize -->
 
 ## The reading
