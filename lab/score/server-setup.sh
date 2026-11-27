@@ -4,9 +4,9 @@
 # tree (`git archive`), on the server box only.
 #
 #   sudo bash lab/score/server-setup.sh --shape [--kernel aws|generic]  installs Ubuntu's GA 6.8 kernel and makes it grub's default, adds mem=2G to the
-#                                                                       boot line, updates grub once, reboots. Nothing else. The kernel is the `aws` flavour
-#                                                                       (linux-image-aws-lts-24.04, the default) or the `generic` one (linux-image-generic,
-#                                                                       with the initramfs it needs on EC2: see install_generic_kernel).
+#                                                                       boot line, updates grub once, reboots. Nothing else. The kernel is the `generic` one
+#                                                                       (linux-image-generic, the default, with the initramfs it needs on EC2: see
+#                                                                       install_generic_kernel) or the `aws` flavour (linux-image-aws-lts-24.04).
 #   sudo bash lab/score/server-setup.sh --launch-epoch <epoch>          after the reboot: everything below
 #   sudo bash lab/score/server-setup.sh --check                         only the checks, no install (and the CPU-only micro, lab/score/cpu-micro.php)
 #   sudo bash lab/score/server-setup.sh --cap-only --launch-epoch <e>   only re-arms the 240-minute shutdown
@@ -39,9 +39,9 @@ GRUB_DIR="${SCORE_GRUB_DIR:-/etc/default/grub.d}"
 BOOT_DIR="${SCORE_BOOT_DIR:-/boot}"
 KERNEL_RELEASE="${SCORE_KERNEL_RELEASE:-$(uname -r)}"
 PHP="${SCORE_PHP:-/opt/php-gcob/bin/php}"
-# FIXME(pending): Jacob must confirm the kernel flavour of the score boxes (Q29 in plan/plan.md). Assumes aws, the flavour the score session was
-# planned on; `generic` is the flavour of a droplet. Switching the default is this one line.
-KERNEL_FLAVOUR=aws
+# The score boxes boot the generic 6.8 by default: it is the flavour a droplet runs, which is what the score is meant to stand for. The aws 6.8
+# stays one flag away (`--kernel aws`).
+KERNEL_FLAVOUR=generic
 CAP_MINUTES=240
 MEM_LIMIT_MIB=2048
 # CAP_NET_BIND_SERVICE is capability 10: the bit 0x400.

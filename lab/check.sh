@@ -3331,7 +3331,7 @@ check_score_server_setup_modes() {
   dir="$(mktemp -d)"
   boxes_fixture "$dir"
   mkdir "$dir/grub.d"
-  boxes_setup_run "$dir" -- --shape
+  boxes_setup_run "$dir" -- --shape --kernel aws
   [ "$BOXES_RC" = 0 ] || { echo "--shape exits $BOXES_RC: ${BOXES_OUT//$'\n'/ | }"; return 1; }
   [ "$(grep -c '^apt-get .*install .*linux-image-aws-lts-24.04' "$dir/bin/calls")" = 1 ] || { echo "--shape installs linux-image-aws-lts-24.04 once: $(tr '\n' ';' <"$dir/bin/calls")"; return 1; }
   [ "$(grep -v '^apt-get \|^cloud-init ' "$dir/bin/calls" | tr '\n' ';')" = "update-grub ;reboot ;" ] || { echo "--shape runs update-grub then reboot, after the kernel and nothing else: $(tr '\n' ';' <"$dir/bin/calls")"; return 1; }
@@ -3349,7 +3349,7 @@ check_score_server_setup_modes() {
   mkdir "$dir/grub.d"
   echo 100 >"$dir/bin/apt-get.rc"
   echo 'E: Unable to locate package linux-image-aws-lts-24.04' >"$dir/bin/apt-get.out"
-  boxes_setup_run "$dir" SCORE_KERNEL_RELEASE=7.0.0-1005-aws -- --shape
+  boxes_setup_run "$dir" SCORE_KERNEL_RELEASE=7.0.0-1005-aws -- --shape --kernel aws
   [ "$BOXES_RC" = 0 ] || { echo "--shape must go on when the kernel install fails (exit $BOXES_RC): ${BOXES_OUT//$'\n'/ | }"; return 1; }
   grep -qxF 'info  kernel: 6.8 not installed (apt-get failed: E: Unable to locate package linux-image-aws-lts-24.04), staying on 7.0.0-1005-aws' <<<"$BOXES_OUT" \
     || { echo "no 'info  kernel: 6.8 not installed' line: ${BOXES_OUT//$'\n'/ | }"; return 1; }
@@ -3363,7 +3363,7 @@ check_score_server_setup_modes() {
   boxes_fixture "$dir"
   mkdir "$dir/grub.d"
   rm "$dir/boot"/vmlinuz-6.8.*
-  boxes_setup_run "$dir" -- --shape
+  boxes_setup_run "$dir" -- --shape --kernel aws
   grep -q '^info  kernel: 6.8 not installed (no vmlinuz-6.8 in .*), staying on 6.8.0-1048-aws$' <<<"$BOXES_OUT" && ! grep -q GRUB_DEFAULT "$dir/grub.d/99-twelve-dollar-mem.cfg" \
     || { echo "an install that leaves no 6.8 kernel is the same fallback: ${BOXES_OUT//$'\n'/ | }"; return 1; }
   rm -rf "$dir"
@@ -3380,21 +3380,38 @@ boxes_generic_fixture() {
   printf 'GRUB_CMDLINE_LINUX_DEFAULT="console=tty1 console=ttyS0 nvme_core.io_timeout=4294967295"\n' >"$dir/grub.d/50-cloudimg-settings.cfg"
 }
 
-# --shape --kernel <aws|generic>: the flavour is a choice (aws is the default) and --check says which one was chosen and which one runs.
+# --shape --kernel <aws|generic>: the flavour is a choice (generic is the default: it is the kernel a droplet runs, and the aws one is the
+# flavour of the earlier sessions) and --check says which one was chosen and which one runs.
 # The generic kernel boots only with an initramfs that carries nvme, and with the image's forced root=PARTUUID taken out; a kernel that cannot
 # have that is not booted (the box stays on its own kernel, mem=2G and the one update-grub and reboot still happen). Nothing is booted here: the
 # GRUB edits are read back as text from a fixture tree.
 check_score_server_setup_kernels() {
   local dir out cloudimg kind
+  # No --kernel: the generic flavour.
   dir="$(mktemp -d)"
   boxes_generic_fixture "$dir"
   boxes_setup_run "$dir" -- --shape
   [ "$BOXES_RC" = 0 ] || { echo "--shape exits $BOXES_RC: ${BOXES_OUT//$'\n'/ | }"; return 1; }
-  grep -qx '# kernel flavour: aws (what --shape was asked for; --check says which one runs)' "$dir/grub.d/99-twelve-dollar-mem.cfg" \
-    || { echo "the default flavour is aws and the drop-in says so: $(cat "$dir/grub.d/99-twelve-dollar-mem.cfg")"; return 1; }
-  ! grep -q 'linux-image-generic' "$dir/bin/calls" || { echo "the default installs the aws kernel only: $(tr '\n' ';' <"$dir/bin/calls")"; return 1; }
+  grep -qx '# kernel flavour: generic (what --shape was asked for; --check says which one runs)' "$dir/grub.d/99-twelve-dollar-mem.cfg" \
+    || { echo "the default flavour is generic and the drop-in says so: $(cat "$dir/grub.d/99-twelve-dollar-mem.cfg")"; return 1; }
+  [ "$(grep -c '^apt-get .*install .*linux-image-generic' "$dir/bin/calls")" = 1 ] && ! grep -q 'linux-image-aws' "$dir/bin/calls" \
+    || { echo "the default installs linux-image-generic once and not the aws kernel: $(tr '\n' ';' <"$dir/bin/calls")"; return 1; }
   out="$(GRUB_DEFAULT=0 bash -c '. "$1"; echo "$GRUB_DEFAULT"' _ "$dir/grub.d/99-twelve-dollar-mem.cfg")"
-  [ "$out" = "Advanced options for Ubuntu>Ubuntu, with Linux 6.8.0-1048-aws" ] || { echo "with both flavours in /boot the aws one is chosen by default, got '$out'"; return 1; }
+  [ "$out" = "Advanced options for Ubuntu>Ubuntu, with Linux 6.8.0-151-generic" ] || { echo "with both flavours in /boot the generic one is chosen by default, got '$out'"; return 1; }
+  boxes_setup_run "$dir" SCORE_CURL=bash SCORE_KERNEL_RELEASE=6.8.0-151-generic -- --check
+  grep -qx 'info  kernel-flavour: generic chosen, generic running' <<<"$BOXES_OUT" || { echo "--check names the flavour chosen and the one running: ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  rm -rf "$dir"
+
+  # --kernel aws: the aws kernel, the image's drop-ins left alone.
+  dir="$(mktemp -d)"
+  boxes_generic_fixture "$dir"
+  boxes_setup_run "$dir" -- --shape --kernel aws
+  [ "$BOXES_RC" = 0 ] || { echo "--shape --kernel aws exits $BOXES_RC: ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  grep -qx '# kernel flavour: aws (what --shape was asked for; --check says which one runs)' "$dir/grub.d/99-twelve-dollar-mem.cfg" \
+    || { echo "--kernel aws: the drop-in says aws: $(cat "$dir/grub.d/99-twelve-dollar-mem.cfg")"; return 1; }
+  ! grep -q 'linux-image-generic' "$dir/bin/calls" || { echo "--kernel aws installs the aws kernel only: $(tr '\n' ';' <"$dir/bin/calls")"; return 1; }
+  out="$(GRUB_DEFAULT=0 bash -c '. "$1"; echo "$GRUB_DEFAULT"' _ "$dir/grub.d/99-twelve-dollar-mem.cfg")"
+  [ "$out" = "Advanced options for Ubuntu>Ubuntu, with Linux 6.8.0-1048-aws" ] || { echo "with both flavours in /boot the aws one is chosen when asked for, got '$out'"; return 1; }
   grep -qx 'GRUB_FORCE_PARTUUID=0a1b2c3d-01' "$dir/grub.d/40-force-partuuid.cfg" || { echo "the aws flavour leaves the image's drop-ins alone"; return 1; }
   boxes_setup_run "$dir" SCORE_CURL=bash -- --check
   grep -qx 'info  kernel-flavour: aws chosen, aws running' <<<"$BOXES_OUT" || { echo "--check names the flavour chosen and the one running: ${BOXES_OUT//$'\n'/ | }"; return 1; }
