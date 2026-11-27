@@ -728,11 +728,23 @@
   mismatches. Two lab checks (`check_ring_buffers_loop_line`, `check_rings_auto_chooses_legacy_buffers`) assume a
   kernel that takes the buffer ring and fail on 6.8; scope 5d makes them follow the kernel (project manager, phase 8,
   2026-11-27 01:19, from `lab/results/2026-11-26-x86-levers/`).
+
 - **D132:** the score boxes boot Ubuntu's generic 6.8 (`linux-image-generic`, by scope 6c's recipe: its initramfs, the
   `GRUB_FORCE_PARTUUID` drop-in commented out, `GRUB_DEFAULT` to its entry), in the same reboot as `mem=2G`;
   `lab/score/server-setup.sh --shape` defaults to `--kernel generic`. This replaces D126's AWS 6.8 for the score: the
   ring's older provided buffers were proven and measured on the generic 6.8 only (D130, D131), and the bench most
   likely runs that flavour (Jacob, Q29 = A, 2026-11-27 about 08:35).
+
+- **D133:** the ring stays in the submission only if it gains CPU on the score's `c5.large`. The ring-only pair runs on
+  `server-b` alone, at the fixed load of 101,000 users, A B B A: A with io_uring turned off by
+  `kernel.io_uring_disabled=2`, which makes the submission take its own epoll fallback, the tuned SQLite still in; B
+  the ring. The sysctl goes back to 0 before the searches. It is a test switch, not a tuning of the score. The pair's
+  floor is the larger gap between the two runs of the same variant (|A1 − A2|, |B1 − B2|). If the ring's gain (mean A
+  − mean B, µs/req) is within that floor or has the wrong sign, the submission ships the tuned SQLite only, without
+  the ring: same score, much simpler code. Removing the ring is then a local scope under the standing go (42/42 and
+  its proofs again, then the reviews). If the ring gains beyond the floor, it stays. Why: on x86 the ring gains −4.49
+  µs/req (−8.1 %, D131), but p95 is about 3 ms worse and p99 about 4 ms, and it depends on the kernel. The cross-server
+  pair (D127) can't isolate it: `server-b` also has the tuned SQLite. Recorded at 08:39, before any pair was read (Jacob's rule, "W12 yes", 2026-11-27; the pair's form chosen by the project manager).
 
 ## History
 
