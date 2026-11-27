@@ -22,8 +22,9 @@
 // APP_RING=1 (off by default): the app is served by our own io_uring loop in PHP through FFI instead of ext-event's (lab/servers/ring-server.php),
 // one process and APP_RINGS rings (1 to 4, default 1; each ring's table of connections is as large as the process's open-file limit, 65,535 at
 // most, so three rings hold about 196,000 connections with a handful of file descriptors). It runs only where Docker's seccomp filter is
-// lifted (`--seccomp-unconfined`) and the kernel has io_uring, prints `loop: ring, 1 ring` (`ring, 3 rings`), and with APP_TELEMETRY=1 a `ring:`
-// line a second. It replaces S1-b's processes and the loop's own switches, so it is refused at boot with APP_WORKERS of 2 or more,
+// lifted (`--seccomp-unconfined`) and the kernel has io_uring, prints `loop: ring, 1 ring, buffer ring` (`ring, 3 rings, legacy buffers`), and with APP_TELEMETRY=1 a `ring:`
+// line a second. URING_BUFFERS=auto|ring|legacy (default auto) picks the receive buffers: the buffer ring, or the older PROVIDE_BUFFERS that Ubuntu's 6.8 kernels
+// still take when they refuse the buffer ring (auto tries the ring first, on EINVAL goes on with the legacy buffers, one choice for the whole process). It replaces S1-b's processes and the loop's own switches, so it is refused at boot with APP_WORKERS of 2 or more,
 // APP_GROUP_COMMIT=1, APP_CHECKPOINTER, APP_PROFILE and APP_LOOP. APP_SOFT_CONN_LIMIT counts the connections of all the rings together.
 // When the kernel refuses a step of the ring's boot (EPERM under Docker's default filter, ENOSYS, EINVAL, EMFILE) the server prints
 // `loop: epoll (io_uring refused: <step> <errno>)` and runs the DIY loop as S1-b does with APP_WORKERS=2 (what phase 7 ships: two processes,

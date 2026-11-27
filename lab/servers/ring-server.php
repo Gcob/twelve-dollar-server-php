@@ -16,8 +16,8 @@
 //   turn: counted as `flushes`. Nothing newer than kernel 6.8 (the bench's) is used: no min_wait_usec, no batching knob.
 // - Connections are direct descriptors: accept into a sparse table of fixed files (IORING_FILE_INDEX_ALLOC), as large as
 //   RLIMIT_NOFILE allows (the kernel refuses a bigger one with EMFILE, and the lab's limit is 65,535), so a connection takes no file
-//   descriptor of the process. A table is per ring: APP_RINGS rings (1 to 4) in the one process hold that many tables of connections. Receive is multishot from a provided buffer ring (a pool shared by all connections, nothing held per idle
-//   connection), send is one SEND of the response copied into a pooled slot, and a server-side close is a shutdown linked to the close
+//   descriptor of the process. A table is per ring: APP_RINGS rings (1 to 4) in the one process hold that many tables of connections. Receive is multishot from a pool of
+//   provided buffers shared by all connections, nothing held per idle connection (a buffer ring, or the older PROVIDE_BUFFERS: see below), send is one SEND of the response copied into a pooled slot, and a server-side close is a shutdown linked to the close
 //   of the descriptor (the multishot receive keeps the socket alive until the shutdown ends it).
 // - SQEs are written in place in the ring's mapped memory, field by field; CQEs are read once per turn: one FFI::string, one unpack().
 // - Accepts are single, a window of at most ACCEPT_WINDOW waiting and never more than the table has free slots for (topUpAccepts()): no
@@ -26,6 +26,11 @@
 //   The loop blocks on the ring that had completions in its last turn (never always the first: connections fill the first ring and the
 //   traffic that comes after lands on the next), and in the same turn enters every other ring that has work (its IORING_SQ_TASKRUN flag
 //   is set: only an io_uring_enter of its own runs its deferred work) or SQEs queued (only its own enter submits them).
+// - The receive buffers, URING_BUFFERS: `ring` registers a buffer ring (kernel 5.19); `legacy` gives the same pool to buffer group 0 with one
+//   IORING_OP_PROVIDE_BUFFERS (kernel 5.7), and a turn gives back the buffers its receives consumed, copied out already, with one PROVIDE_BUFFERS SQE
+//   for each run of consecutive ids, submitted with the turn's one io_uring_enter (their completions are not read, unless one failed); `auto` (the
+//   default) tries the buffer ring and goes on with `legacy` when the kernel answers EINVAL to its registration, which Ubuntu's 6.8 kernels do. One
+//   choice for the whole process, made by the first ring at boot, and said in the `loop:` line (`ring, 3 rings, legacy buffers`).
 // - At boot every ring is built before the server listens. A step the kernel refuses (setup, mapping, the table, the buffer ring) is a
 //   RingRefused with the step and the errno: the caller falls back to the DIY loop (lab/app/server.php) and says so.
 //
@@ -46,8 +51,9 @@
 // Port: PORT (default 8080), host: HOST (an IPv4 address). Test knobs, unset by default: URING_RECV_BUFFERS (a power of two, 2 to 32768; default
 // 4096 buffers of 2048 bytes) and URING_SEND_SLOTS (1 to 8192; default 2048 slots of 8 KiB), to make a pool run dry or full with a few
 // connections; URING_TABLE_SIZE (32 to 65535: a table smaller than RLIMIT_NOFILE gives), to fill a ring's table with a few connections and make
-// the next ring take the rest; URING_FAIL_STEP (files or buffer_ring: that step of the boot of the last ring is asked for something the kernel
-// refuses, to see the fallback to the DIY loop of lab/app/server.php). Docker's default seccomp filter refuses io_uring (EPERM): the lab's scripts take --seccomp-unconfined for this server.
+// the next ring take the rest; URING_FAIL_STEP (files, buffer_ring or provide_buffers: that step of the boot of the last ring is asked for something the
+// kernel refuses, to see the fallback to the DIY loop of lab/app/server.php; buffer_ring_all: the buffer ring's registration, on every ring, which is what
+// a kernel that refuses it does). Docker's default seccomp filter refuses io_uring (EPERM): the lab's scripts take --seccomp-unconfined for this server.
 
 if (!extension_loaded('FFI')) {
     fwrite(STDERR, "ring-server: FFI is not loaded\n");
@@ -98,6 +104,7 @@ final class AppRing
     private const OP_CLOSE = 19;
     private const OP_SEND = 26;
     private const OP_RECV = 27;
+    private const OP_PROVIDE_BUFFERS = 31;
     private const OP_SHUTDOWN = 34;
     private const SQE_FIXED_FILE = 1;
     private const SQE_IO_LINK = 4;
@@ -117,6 +124,7 @@ final class AppRing
     private const EINTR = 4;
     private const EAGAIN = 11;
     private const EBUSY = 16;
+    private const EINVAL = 22;
     private const ETIME = 62;
 
     // What a user_data holds: the kind of operation in bits 0 to 2, the direct descriptor in bits 3 to 18, its generation (how many
@@ -126,6 +134,7 @@ final class AppRing
     private const T_SEND = 2;
     private const T_CLOSE = 3;
     private const T_SHUTDOWN = 4;
+    private const T_PROVIDE = 5;
 
     private const SQ_TASKRUN = 1 << 2;
     private const SQ_ENTRIES = 4096;
@@ -169,11 +178,18 @@ final class AppRing
     public int $stalls = 0;
     /** Responses that said `Connection: close` because more than the soft limit of connections were open (the client had not asked). */
     public int $limitCloses = 0;
+    /** The re-provide SQEs of the legacy buffers (one per run of consecutive buffer ids returned in a turn), and the ones the kernel answered with an error. */
+    public int $provides = 0;
+    public int $provideErrors = 0;
 
     public readonly int $tableSize;
     public readonly int $ringFd;
     public readonly int $recvBuffers;
     public readonly int $sendSlots;
+    /** True when the receive buffers are the older provided buffers (PROVIDE_BUFFERS), false for the buffer ring. Decided once, at boot. */
+    public readonly bool $legacy;
+    /** The errno the buffer ring's registration answered when `auto` went on to the legacy buffers because of it, else null. */
+    public readonly ?int $ringRefusedErrno;
     private readonly ?int $softLimit;
     private readonly FFI\CData $params;
     private readonly FFI\CData $sqHeadP;
@@ -183,8 +199,8 @@ final class AppRing
     private readonly FFI\CData $cqTailP;
     private readonly FFI\CData $cqes0;
     private readonly FFI\CData $sqes;
-    private readonly FFI\CData $bufRing;
-    private readonly FFI\CData $bufTailP;
+    private ?FFI\CData $bufRing = null;
+    private ?FFI\CData $bufTailP = null;
     private readonly FFI\CData $bufBase;
     private readonly FFI\CData $arg;
     private readonly FFI\CData $ts;
@@ -195,6 +211,7 @@ final class AppRing
     private readonly int $bufAddr;
     private readonly ?AppRing $previous;
     private readonly ?string $failStep;
+    private readonly string $buffersMode;
     private int $listenFd = -1;
     /** @var list<array{int, int}> the mappings this ring made (address, bytes), unmapped by release() */
     private array $maps = [];
@@ -208,6 +225,9 @@ final class AppRing
     private int $sqHeadSeen = 0;
     private int $cqHead = 0;
     private int $bufTail = 0;
+    /** @var list<int> legacy buffers: the ids of the buffers the receives consumed and the loop has copied out, to be provided again at the end of the turn */
+    private array $returned = [];
+    private bool $provideErrorReported = false;
     /** @var list<int> free send slots, a stack */
     private array $freeSlots = [];
     private int $freeCount = 0;
@@ -251,11 +271,12 @@ final class AppRing
      * @param FFI $ffi the declarations of ring-server.h
      * @param FFI $ffiAddr an FFI whose mmap() and munmap() take and return addresses as integers (see map())
      * @param RingTotals $totals the open connections of every ring, shared by them
-     * @param array{recv_buffers?: int, send_slots?: int, table_size?: int, soft_limit?: ?int, fail_step?: ?string, previous?: ?AppRing} $options
+     * @param array{recv_buffers?: int, send_slots?: int, table_size?: int, soft_limit?: ?int, fail_step?: ?string, previous?: ?AppRing, buffers?: string} $options
      *        the ring before this one (it accepts first: see topUpAccepts()), pool sizes (a power of
      *        two of receive buffers, the table of direct descriptors that RLIMIT_NOFILE does not already make smaller), the soft connection limit (a response built while more connections than this are open, on all the rings, says
-     *        `Connection: close` and ends its connection), and a test hook: the step ('files' or 'buffer_ring') to ask the kernel for something
-     *        it refuses
+     *        `Connection: close` and ends its connection), the receive buffers ('ring': the buffer ring, 'legacy': PROVIDE_BUFFERS, 'auto': the buffer
+     *        ring, and the legacy buffers when the kernel answers EINVAL to its registration), and a test hook: the step ('files', 'buffer_ring',
+     *        'buffer_ring_all' or 'provide_buffers') to ask the kernel for something it refuses
      * @throws RingRefused when the kernel refuses a step of the boot (every resource taken until then is given back)
      */
     public function __construct(private readonly FFI $ffi, private readonly FFI $ffiAddr, private readonly string $name, private readonly RingTotals $totals, array $options = [])
@@ -265,6 +286,7 @@ final class AppRing
         $this->softLimit = $options['soft_limit'] ?? null;
         $this->errnoP = $ffi->__errno_location();
         $this->failStep = $options['fail_step'] ?? null;
+        $this->buffersMode = $options['buffers'] ?? 'auto';
         $rl = $ffi->new('rlimit_t');
         if ($ffi->getrlimit(7, FFI::addr($rl)) !== 0) {
             throw new RuntimeException('getrlimit(RLIMIT_NOFILE) failed');
@@ -322,27 +344,27 @@ final class AppRing
             throw new RingRefused('files', $this->errno(), "a sparse table of {$this->tableSize} files");
         }
 
-        // The receive buffers and their ring.
+        // The receive buffers: one pool, and the way the kernel is told about it.
         $bufAddr = $this->map($this->recvBuffers * self::BUF_SIZE, 0x02 | 0x20, -1, 0);
         $this->bufAddr = $bufAddr;
         // Why a local: FFI::cast() takes its second argument by reference, which a readonly property refuses.
         $this->bufBase = $ffi->cast('uint8_t*', $bufAddr);
-        $bufRingMem = $this->map($this->recvBuffers * 16, 0x02 | 0x20, -1, 0);
-        $this->bufRing = $ffi->cast('buf_t*', $bufRingMem);
-        // The ring's tail is the last two bytes of its first entry.
-        $this->bufTailP = $ffi->cast('uint16_t*', $bufRingMem + 14);
-        $reg = $ffi->new('buf_reg_t');
-        $reg->ring_addr = $bufRingMem;
-        // Why 0 entries for the test hook: the kernel answers EINVAL, a real refusal of this step.
-        $reg->ring_entries = $this->failStep === 'buffer_ring' ? 0 : $this->recvBuffers;
-        $reg->bgid = 0;
-        if ($ffi->syscall(self::SYS_REGISTER, $fd, self::REGISTER_PBUF_RING, FFI::addr($reg), 1) < 0) {
-            throw new RingRefused('buffer_ring', $this->errno());
+        $legacy = $this->buffersMode === 'legacy';
+        $ringRefusedErrno = null;
+        if (!$legacy) {
+            $refused = $this->registerBufferRing($fd);
+            if ($refused !== null) {
+                // Why EINVAL only: Ubuntu's 6.8 kernels answer it to the registration of a buffer ring (the 6.12 and 7.0 kernels take it); any other
+                // refusal (a limit, memory) is not a sign that the older buffers would work, and falls back to the DIY loop as it always did.
+                if ($this->buffersMode !== 'auto' || $refused !== self::EINVAL) {
+                    throw new RingRefused('buffer_ring', $refused);
+                }
+                $legacy = true;
+                $ringRefusedErrno = $refused;
+            }
         }
-        for ($bid = 0; $bid < $this->recvBuffers; $bid++) {
-            $this->putBuffer($bid);
-        }
-
+        $this->legacy = $legacy;
+        $this->ringRefusedErrno = $ringRefusedErrno;
         // The send slots.
         $slots = $this->map($this->sendSlots * self::SLOT_SIZE, 0x02 | 0x20, -1, 0);
         for ($s = 0; $s < $this->sendSlots; $s++) {
@@ -359,6 +381,63 @@ final class AppRing
         $this->argAddr = $misc;
         $this->ts = $ffi->cast('timespec_t*', $misc + 64);
         $this->arg->ts = $misc + 64;
+
+        // Why last: the legacy buffers are given with an io_uring_enter, which needs the wait's argument above.
+        if ($legacy) {
+            $this->provideAll($fd);
+        } else {
+            for ($bid = 0; $bid < $this->recvBuffers; $bid++) {
+                $this->putBuffer($bid);
+            }
+        }
+    }
+
+    /** Registers the buffer ring of group 0 with the kernel. Null when it took it, else the errno of its refusal. */
+    private function registerBufferRing(int $fd): ?int
+    {
+        $ffi = $this->ffi;
+        $bufRingMem = $this->map($this->recvBuffers * 16, 0x02 | 0x20, -1, 0);
+        $reg = $ffi->new('buf_reg_t');
+        $reg->ring_addr = $bufRingMem;
+        // Why 0 entries for the test hooks: the kernel answers EINVAL, a real refusal of this step.
+        $reg->ring_entries = $this->failStep === 'buffer_ring_all' || $this->failStep === 'buffer_ring' ? 0 : $this->recvBuffers;
+        $reg->bgid = 0;
+        if ($ffi->syscall(self::SYS_REGISTER, $fd, self::REGISTER_PBUF_RING, FFI::addr($reg), 1) < 0) {
+            return $this->errno();
+        }
+        $this->bufRing = $ffi->cast('buf_t*', $bufRingMem);
+        // The ring's tail is the last two bytes of its first entry.
+        $this->bufTailP = $ffi->cast('uint16_t*', $bufRingMem + 14);
+        return null;
+    }
+
+    /**
+     * Legacy buffers: one PROVIDE_BUFFERS gives the whole pool to group 0 (fd: how many, addr: the first, len: the size of each, off: the first
+     * id), and its completion is read here, before anything else is submitted: a refusal is a RingRefused like any other step of the boot.
+     * The kernel's answer is 0 or the count of buffers, by its version: both are a success.
+     */
+    private function provideAll(int $fd): void
+    {
+        $count = $this->failStep === 'provide_buffers' ? 0 : $this->recvBuffers;
+        $this->prep(self::OP_PROVIDE_BUFFERS, 0, 0, $count, 0, $this->bufAddr, self::BUF_SIZE, 0, self::T_PROVIDE, 0, 0);
+        $this->enter(1000000000);
+        $tail = $this->cqTailP[0];
+        if ($tail === $this->cqHead) {
+            throw new RingRefused('provide_buffers', self::ETIME, 'no completion within a second');
+        }
+        $words = unpack('P2', FFI::string($this->cqes0 + ($this->cqHead & ($this->cqEntries - 1)) * 16, 16));
+        $this->cqHead++;
+        $this->cqHeadP[0] = $this->cqHead;
+        $res = $words[2] & 0xFFFFFFFF;
+        if ($res >= 0x80000000) {
+            $res -= 0x100000000;
+        }
+        if ($res < 0) {
+            throw new RingRefused('provide_buffers', -$res);
+        }
+        if ($res !== 0 && $res !== $this->recvBuffers) {
+            throw new RingRefused('provide_buffers', 95, "the kernel took $res of {$this->recvBuffers} buffers");
+        }
     }
 
     private function errno(): int
@@ -416,9 +495,16 @@ final class AppRing
             . ' send_slots=' . $this->sendSlots . 'x' . self::SLOT_SIZE;
     }
 
-    /** Hands a receive buffer back to the kernel: its entry at the ring's tail (published once per turn). */
+    /**
+     * Hands a receive buffer back to the kernel: its entry at the buffer ring's tail (published once per turn), or, with the legacy buffers, its id
+     * in the list the end of the turn provides again.
+     */
     private function putBuffer(int $bid): void
     {
+        if ($this->legacy) {
+            $this->returned[] = $bid;
+            return;
+        }
         $b = $this->bufRing[$this->bufTail & ($this->recvBuffers - 1)];
         $b->addr = $this->bufAddr + $bid * self::BUF_SIZE;
         $b->len = self::BUF_SIZE;
@@ -426,11 +512,62 @@ final class AppRing
         $this->bufTail++;
     }
 
+    /**
+     * Legacy buffers: gives the buffers this turn's receives consumed back to group 0, one PROVIDE_BUFFERS SQE for each run of consecutive ids
+     * (their bytes are copied out already). Queued after the turn's completions and before the next turn's SQEs, so a receive armed again
+     * after the pool ran dry finds them: the SQEs are submitted in order.
+     */
+    private function provideReturned(): void
+    {
+        $n = count($this->returned);
+        if ($n === 0) {
+            return;
+        }
+        $ids = $this->returned;
+        $this->returned = [];
+        if ($n > 1) {
+            sort($ids);
+        }
+        $start = $ids[0];
+        $len = 1;
+        for ($i = 1; $i < $n; $i++) {
+            if ($ids[$i] === $start + $len) {
+                $len++;
+                continue;
+            }
+            $this->provideRun($start, $len);
+            $start = $ids[$i];
+            $len = 1;
+        }
+        $this->provideRun($start, $len);
+    }
+
+    private function provideRun(int $first, int $count): void
+    {
+        $this->provides++;
+        $this->prep(self::OP_PROVIDE_BUFFERS, 0, 0, $count, $first, $this->bufAddr + $first * self::BUF_SIZE, self::BUF_SIZE, 0, self::T_PROVIDE, 0, 0);
+    }
+
+    /** The completion of a PROVIDE_BUFFERS: nothing to do when it worked (0 or the count), an error is counted and said once. */
+    private function onProvide(int $res): void
+    {
+        if ($res >= 0) {
+            return;
+        }
+        $this->provideErrors++;
+        if (!$this->provideErrorReported) {
+            $this->provideErrorReported = true;
+            fwrite(STDERR, "ring-server[{$this->name}]: giving receive buffers back failed with " . -$res . ": the pool shrinks by that many buffers\n");
+        }
+    }
+
     /** Submits what is queued, and waits for at least one completion for at most $timeoutNs (0: does not wait). */
     private function enter(int $timeoutNs): void
     {
         $this->sqTailP[0] = $this->sqTail;
-        $this->bufTailP[0] = $this->bufTail;
+        if (!$this->legacy) {
+            $this->bufTailP[0] = $this->bufTail;
+        }
         $toSubmit = ($this->sqTail - $this->sqHeadSeen) & 0xFFFFFFFF;
         if ($timeoutNs > 0) {
             $this->ts->tv_sec = intdiv($timeoutNs, 1000000000);
@@ -453,7 +590,9 @@ final class AppRing
     {
         $this->flushes++;
         $this->sqTailP[0] = $this->sqTail;
-        $this->bufTailP[0] = $this->bufTail;
+        if (!$this->legacy) {
+            $this->bufTailP[0] = $this->bufTail;
+        }
         $this->ffi->syscall(self::SYS_ENTER, $this->ringFd, ($this->sqTail - $this->sqHeadSeen) & 0xFFFFFFFF, 0, 0, 0, 0);
         $this->sqHeadSeen = $this->sqHeadP[0];
         if ($this->sqTail - $this->sqHeadSeen >= self::SQ_ENTRIES) {
@@ -609,7 +748,12 @@ final class AppRing
                 $this->onAccept($res);
             } elseif ($kind === self::T_CLOSE) {
                 $this->onClose($ud, $res);
+            } elseif ($kind === self::T_PROVIDE) {
+                $this->onProvide($res);
             }
+        }
+        if ($this->legacy) {
+            $this->provideReturned();
         }
         $this->topUpAccepts();
         return true;
@@ -620,7 +764,8 @@ final class AppRing
     {
         return ['turns' => $this->turns, 'flushes' => $this->flushes, 'cqes' => $this->cqes, 'requests' => $this->requests, 'accepted' => $this->accepted,
             'accept_pauses' => $this->acceptPauses, 'short_sends' => $this->shortSends, 'big_sends' => $this->bigSends, 'send_waits' => $this->sendWaits,
-            'recv_dry' => $this->recvDry, 'stalls' => $this->stalls, 'limit_closes' => $this->limitCloses];
+            'recv_dry' => $this->recvDry, 'stalls' => $this->stalls, 'limit_closes' => $this->limitCloses,
+            'provides' => $this->provides, 'provide_errors' => $this->provideErrors];
     }
 
     /** Send slots in use now (a value, not a count). */
@@ -986,11 +1131,24 @@ final class RingLoop
         return count($this->rings);
     }
 
-    /** The `loop:` line's text, from the number of rings (`ring, 1 ring`, `ring, 3 rings`). */
+    /** The `loop:` line's text: the number of rings and the receive buffers (`ring, 1 ring, buffer ring`, `ring, 3 rings, legacy buffers`). */
     public function loopLine(): string
     {
         $n = count($this->rings);
-        return "ring, $n ring" . ($n > 1 ? 's' : '');
+        return "ring, $n ring" . ($n > 1 ? 's' : '') . ($this->legacy() ? ', legacy buffers' : ', buffer ring');
+    }
+
+    /** True when the rings take the older provided buffers (one choice for all of them). */
+    public function legacy(): bool
+    {
+        return $this->rings[0]->legacy;
+    }
+
+    /** A boot line that says why `auto` chose the legacy buffers, or null when nothing needs saying. */
+    public function buffersNote(): ?string
+    {
+        $errno = $this->rings[0]->ringRefusedErrno;
+        return $errno === null ? null : "buffers: the kernel refused the buffer ring (errno $errno), the receives use PROVIDE_BUFFERS";
     }
 
     /** The pools of a ring, for the boot line (every ring has the same ones). */
@@ -1084,10 +1242,14 @@ final class RingLoop
             $slots += $ring->slotsInUse();
         }
         $busy = $d['requests'] > 0 ? $d['turns'] : 0;
+        $legacy = $this->legacy();
         $line = sprintf('ring: turns=%d requests=%d cqes=%d flushes=%d accepted=%d open=%d accept_pauses=%d short_sends=%d big_sends=%d send_waits=%d recv_dry=%d stalls=%d limit_closes=%d slots_in_use=%d requests_per_turn=%s cqes_per_turn=%s',
             $d['turns'], $d['requests'], $d['cqes'], $d['flushes'], $d['accepted'], $this->totals->open, $d['accept_pauses'], $d['short_sends'], $d['big_sends'],
             $d['send_waits'], $d['recv_dry'], $d['stalls'], $d['limit_closes'], $slots,
             $busy > 0 ? sprintf('%.2f', $d['requests'] / $busy) : 'n/a', $d['turns'] > 0 ? sprintf('%.2f', $d['cqes'] / $d['turns']) : 'n/a');
+        if ($legacy) {
+            $line .= sprintf(' provides=%d provide_errors=%d', $d['provides'], $d['provide_errors']);
+        }
         if (count($this->rings) > 1) {
             foreach ($this->rings as $i => $ring) {
                 $r = $perRing[$i];
@@ -1160,11 +1322,18 @@ function ring_open(int $count, ?int $softLimit): RingLoop
     }
     $sendSlots = ring_env_int('URING_SEND_SLOTS', 2048, 1, 8192);
     $tableSize = ring_env_int('URING_TABLE_SIZE', 65535, 32, 65535);
+    $buffers = getenv('URING_BUFFERS');
+    if ($buffers === false || $buffers === '') {
+        $buffers = 'auto';
+    } elseif (!in_array($buffers, ['auto', 'ring', 'legacy'], true)) {
+        fwrite(STDERR, "ring-server: URING_BUFFERS must be auto, ring or legacy, got '$buffers'\n");
+        exit(1);
+    }
     $failStep = getenv('URING_FAIL_STEP');
     if ($failStep === false || $failStep === '') {
         $failStep = null;
-    } elseif (!in_array($failStep, ['files', 'buffer_ring'], true)) {
-        fwrite(STDERR, "ring-server: URING_FAIL_STEP must be files or buffer_ring, got '$failStep'\n");
+    } elseif (!in_array($failStep, ['files', 'buffer_ring', 'buffer_ring_all', 'provide_buffers'], true)) {
+        fwrite(STDERR, "ring-server: URING_FAIL_STEP must be files, buffer_ring, buffer_ring_all or provide_buffers, got '$failStep'\n");
         exit(1);
     }
     $ffi = FFI::cdef(file_get_contents(__DIR__ . '/ring-server.h'), 'libc.so.6');
@@ -1180,7 +1349,11 @@ function ring_open(int $count, ?int $softLimit): RingLoop
     try {
         for ($i = 0; $i < $count; $i++) {
             $rings[] = new AppRing($ffi, $ffiAddr, 'ring' . $i, $totals, ['recv_buffers' => $recvBuffers, 'send_slots' => $sendSlots, 'table_size' => $tableSize,
-                'soft_limit' => $softLimit, 'fail_step' => $i === $count - 1 ? $failStep : null, 'previous' => $rings[$i - 1] ?? null]);
+                'soft_limit' => $softLimit, 'buffers' => $buffers, 'previous' => $rings[$i - 1] ?? null,
+                'fail_step' => $i === $count - 1 || $failStep === 'buffer_ring_all' ? $failStep : null]);
+            // Why the first ring decides: `auto` is one choice for the whole process, made at boot. A ring after the first is built the way the first
+            // was, so a refusal there is a refusal of the kernel, not a second choice.
+            $buffers = $rings[0]->legacy ? 'legacy' : 'ring';
         }
     } catch (RingRefused $e) {
         foreach ($rings as $built) {
@@ -1220,6 +1393,9 @@ function ring_serve(RingLoop $loop, string $host, int $port, bool $telemetry, ?C
     echo "listening on $host:$port\n";
     if ($afterListening !== null) {
         $afterListening();
+    }
+    if (($note = $loop->buffersNote()) !== null) {
+        echo "$note\n";
     }
     echo 'loop: ' . $loop->loopLine() . "\n";
     echo 'ring-settings: ' . $loop->describe() . "\n";

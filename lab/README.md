@@ -1335,7 +1335,7 @@ unset the app runs as it always did (the DIY files are not even loaded when it i
 
 - **Refused at boot** (a message, exit 1): `APP_WORKERS` of 2 or more (the ring replaces the processes), `APP_GROUP_COMMIT=1`, `APP_CHECKPOINTER`,
   `APP_PROFILE`, `APP_LOOP`, and an `APP_RING` that is not 0 or 1. `APP_SOFT_CONN_LIMIT` works as on the DIY loop (across rings: see below).
-- **Boot lines:** `loop: ring, 1 ring` (what `lab/steplab.sh --expect-loop` and the run's `server.loop` read), `ring-settings: ...` (the pools), `socket: ...`.
+- **Boot lines:** `loop: ring, 1 ring, buffer ring` (`legacy buffers` for the older ones: see below; what `lab/steplab.sh --expect-loop` and the run's `server.loop` read, `--expect-loop 'ring=ring, 1 ring'` matches both), `ring-settings: ...` (the pools), `socket: ...`.
   With `APP_TELEMETRY=1` a `ring:` line a second: turns, requests, CQEs, flushes, accepted, open, `short_sends`, `big_sends`, `send_waits`, `recv_dry`, `stalls`,
   `limit_closes`, `slots_in_use`, `requests_per_turn`, `cqes_per_turn`. No `telemetry` JSON line: the DIY loop's timers are not on the ring.
 - **What it does under pressure:** a request split over receives is assembled; pipelined requests are answered in order; a short send is resubmitted from
@@ -1354,11 +1354,26 @@ unset the app runs as it always did (the DIY files are not even loaded when it i
   the connections fill the first ring, then the next; a slot is free again when its close completes. Three rings held 150,000 connections with 12 file descriptors in the process (`results/2026-11-26-three-rings/`).
   The loop blocks on the ring that had completions in its last turn (500 µs at most, so a ring that is not the active one is looked at twice a millisecond when
   everything is idle) and, in the same turn, enters every other ring whose `IORING_SQ_TASKRUN` flag is set or that has SQEs queued: only an `io_uring_enter` of its
-  own submits a ring's SQEs and runs its deferred work. `APP_SOFT_CONN_LIMIT` counts the open connections of all the rings together. `loop: ring, 3 rings`; with
+  own submits a ring's SQEs and runs its deferred work. `APP_SOFT_CONN_LIMIT` counts the open connections of all the rings together. `loop: ring, 3 rings, buffer ring`; with
   `APP_TELEMETRY=1` the `ring:` line adds `ring0_open=`, `ring0_turns=`, `ring0_requests=`, `ring0_requests_per_turn=` for each ring, and the run's JSON has
   `server.ring.per_ring`. `lab/realistic.sh --server-nofile <n>` (in a pair: `--variant-args ring='--server-nofile 32768'`) sets the server's open-file limit for
   that run, so 60,000 idle connections span two rings; the JSON's `server.nofile` says what it was. Test knobs: `URING_TABLE_SIZE` (32 to 65535: a smaller table
   than `RLIMIT_NOFILE` gives) and `URING_FAIL_STEP` (`files` or `buffer_ring`: that step of the last ring's boot asks the kernel for something it refuses).
+- **The receive buffers, `URING_BUFFERS=auto|ring|legacy` (default `auto`, another value is refused at boot):** `ring` registers a buffer ring (kernel 5.19, the
+  ring's own path); `legacy` gives the same pool (same count, same 2,048-byte buffers) to buffer group 0 with one `IORING_OP_PROVIDE_BUFFERS` at boot (kernel 5.7)
+  and the same multishot receive with `IOSQE_BUFFER_SELECT` takes from it. A buffer a receive consumed goes back once its bytes are copied out, batched: at the
+  end of each turn the ids returned are sorted and each run of consecutive ids becomes one `PROVIDE_BUFFERS` SQE, submitted with the turn's one `io_uring_enter`
+  (their completions are ignored unless one is an error, which is counted as `provide_errors` and logged once). A dry pool ends the receive with `ENOBUFS` and
+  re-arms once buffers are back, as with the buffer ring. `auto` tries the buffer ring and, when its registration answers `EINVAL` (Ubuntu's `6.8.0-1070-aws`
+  and `6.8.0-151-generic` do; mainline 6.12 and the 7.0 take it), goes on with the legacy buffers on every ring: one choice for the whole process, made by the first
+  ring at boot, never mid-run, and the boot says so (`buffers: the kernel refused the buffer ring (errno 22), the receives use PROVIDE_BUFFERS`). Any other refusal is
+  the fallback to the DIY loop as before. The `loop:` line ends `, buffer ring` or `, legacy buffers`, and with `APP_TELEMETRY=1` the legacy buffers add
+  `provides=` (the re-provide SQEs of the second) and `provide_errors=` to the `ring:` line. On the Mac's 6.12 the completion of the boot's `PROVIDE_BUFFERS` says 0,
+  not the count: both are taken as success. Test hooks: `URING_FAIL_STEP=buffer_ring_all` (the registration asks for a buffer ring of 0 entries on every ring:
+  EINVAL, like those kernels), `provide_buffers` (the boot's `PROVIDE_BUFFERS` asks for 0 buffers: E2BIG).
+  The tests: `check_ring_buffers_refusal`, `check_ring_buffers_loop_line`, `check_rings_auto_chooses_legacy_buffers`, `check_ring_legacy_buffers_recover_from_a_dry_pool`,
+  `check_ring_legacy_buffers_go_back_in_runs`, and `check_ring_legacy_buffers` (every other ring check again with `URING_BUFFERS=legacy`; the checks otherwise run
+  with `URING_BUFFERS=ring`, so what they see does not depend on the kernel).
 - **The fallback:** the server builds every ring (setup with its flags, the mappings, the table, the buffer ring) before it opens the database or a socket. If the
   kernel refuses a step (`EPERM` under Docker's default filter, `ENOSYS`, `EINVAL`, `EMFILE`) the rings built so far are given back, it prints `loop: epoll
   (io_uring refused: <step> <errno>)` and runs the DIY loop as `APP_WORKERS=2` does (two processes on `SO_REUSEPORT`, the soft limit 64,000 each or

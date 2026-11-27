@@ -3702,12 +3702,23 @@ check_steplab_expect_loop() {
   rm -rf "$dir"
 }
 
+# ring_buffers: the receive buffers the ring checks run with: CHECK_RING_BUFFERS (`ring`, the default, or `legacy`: check_ring_legacy_buffers runs the
+# ring's checks again with it). Never `auto`: which one that picks depends on the kernel the lab runs on, and a check wants the one it is about.
+ring_buffers() {
+  echo "${CHECK_RING_BUFFERS:-ring}"
+}
+
+# ring_loop_text: what the `loop:` line says after the number of rings, for the buffers the checks run with.
+ring_loop_text() {
+  if [ "$(ring_buffers)" = legacy ]; then echo ', legacy buffers'; else echo ', buffer ring'; fi
+}
+
 # ring_start <name> <port> [K=V]...: the challenge app on the ring (APP_RING=1, telemetry on so that its `ring:` lines come out), on a fresh copy of the
 # seed, without Docker's seccomp filter (io_uring needs it lifted); waited on until it listens or exits. Prints the failure and returns 1 otherwise.
 ring_start() {
   local name="$1" port="$2"
   shift 2
-  LAB_SERVER_SECCOMP_UNCONFINED=1 start_app_for_check "$name" "$port" 0 APP_RING=1 APP_TELEMETRY=1 "$@"
+  LAB_SERVER_SECCOMP_UNCONFINED=1 start_app_for_check "$name" "$port" 0 APP_RING=1 APP_TELEMETRY=1 "URING_BUFFERS=$(ring_buffers)" "$@"
 }
 
 # ring_sum <container> <field>: the sum of a counter over the `ring:` lines the server printed (each holds one second's counts).
@@ -3757,7 +3768,7 @@ check_ring_boot() {
   local name=lab-check-ring log out
   ring_start "$name" 18177 || { docker rm -f "$name" >/dev/null 2>&1; return 1; }
   log="$(docker logs "$name" 2>&1)"
-  grep -qx 'loop: ring, 1 ring' <<<"$log" || { docker rm -f "$name" >/dev/null 2>&1; echo "the loop line is not 'loop: ring, 1 ring': ${log//$'\n'/ | }"; return 1; }
+  grep -qx "loop: ring, 1 ring$(ring_loop_text)" <<<"$log" || { docker rm -f "$name" >/dev/null 2>&1; echo "the loop line is not 'loop: ring, 1 ring$(ring_loop_text)': ${log//$'\n'/ | }"; return 1; }
   grep -q '^ring-settings: table=[0-9]* sq=4096 cq=32768 recv_buffers=4096x2048 send_slots=2048x8192$' <<<"$log" || { docker rm -f "$name" >/dev/null 2>&1; echo "the settings line is missing: ${log//$'\n'/ | }"; return 1; }
   grep -qx 'socket: backlog=4096 tcp_nodelay=1' <<<"$log" || { docker rm -f "$name" >/dev/null 2>&1; echo "the socket line is missing: ${log//$'\n'/ | }"; return 1; }
   out="$(docker exec "$name" php -r '
@@ -3850,22 +3861,22 @@ check_ring_loop_line_in_runs() {
   local out rc=0 dir
   dir="$(mktemp -d)"
   out="$(bash "$LAB/steplab.sh" --image 8.5 --rate 200 --think-scale 0.1 --seconds 5 --pairs 1 --warmup 20,5 --seccomp-unconfined --ext sockets --ext event \
-    --variant ref= --variant ring=APP_RING=1,APP_TELEMETRY=1 --expect-loop ref=epoll --expect-loop 'ring=ring, 1 ring' --out "$dir/right" 2>&1)" || rc=$?
-  [ "$rc" = 0 ] && [ "$(jq -r '.server.loop' "$dir/right/ref-1.json")" = epoll ] && [ "$(jq -r '.server.loop' "$dir/right/ring-1.json")" = 'ring, 1 ring' ] \
+    --variant ref= --variant "ring=APP_RING=1,APP_TELEMETRY=1,URING_BUFFERS=$(ring_buffers)" --expect-loop ref=epoll --expect-loop 'ring=ring, 1 ring' --out "$dir/right" 2>&1)" || rc=$?
+  [ "$rc" = 0 ] && [ "$(jq -r '.server.loop' "$dir/right/ref-1.json")" = epoll ] && [ "$(jq -r '.server.loop' "$dir/right/ring-1.json")" = "ring, 1 ring$(ring_loop_text)" ] \
     && jq -e '.server.ring.requests > 0 and .server.ring.turns > 0 and .server.ring.requests_per_turn > 0' "$dir/right/ring-1.json" >/dev/null \
     || { rm -rf "$dir"; echo "the right loop lines did not pass, or are not in the JSON (exit $rc): ${out//$'\n'/ | }"; return 1; }
   rc=0
   out="$(bash "$LAB/steplab.sh" --image 8.5 --rate 200 --think-scale 0.1 --seconds 5 --pairs 1 --warmup 20,5 --seccomp-unconfined --ext sockets --ext event \
-    --variant ref= --variant ring=APP_RING=1,APP_TELEMETRY=1 --expect-loop ref=epoll --expect-loop ring=epoll --out "$dir/wrong" 2>&1)" || rc=$?
+    --variant ref= --variant "ring=APP_RING=1,APP_TELEMETRY=1,URING_BUFFERS=$(ring_buffers)" --expect-loop ref=epoll --expect-loop ring=epoll --out "$dir/wrong" 2>&1)" || rc=$?
   rm -rf "$dir"
-  [ "$rc" = 1 ] && grep -q "the server's loop line is 'ring, 1 ring', which does not contain 'epoll'" <<<"$out" || { echo "a wrong loop line for the ring did not stop the run (exit $rc): ${out//$'\n'/ | }"; return 1; }
+  [ "$rc" = 1 ] && grep -q "the server's loop line is 'ring, 1 ring$(ring_loop_text)', which does not contain 'epoll'" <<<"$out" || { echo "a wrong loop line for the ring did not stop the run (exit $rc): ${out//$'\n'/ | }"; return 1; }
 }
 
 # lab/stress.sh --path /posts/{id} on the app on the ring: random posts of the seed, one request at a time and pipelined, each response the one of its
 # request, in order, 0 lost; and against a server that answers the wrong post it finds the mismatches (exit 1) and removes its containers.
 check_ring_stress_posts() {
   local out rc=0 left
-  out="$(bash "$LAB/stress.sh" --image 8.5 --server "$LAB/app/server.php" --ext sockets --seccomp-unconfined --app --env APP_RING=1 --env APP_TELEMETRY=1 --path '/posts/{id}' \
+  out="$(bash "$LAB/stress.sh" --image 8.5 --server "$LAB/app/server.php" --ext sockets --seccomp-unconfined --app --env APP_RING=1 --env APP_TELEMETRY=1 --env "URING_BUFFERS=$(ring_buffers)" --path '/posts/{id}' \
     --connections 100 --requests 20000 --procs 2 --pipelines 1,16 2>&1)" || rc=$?
   [ "$rc" = 0 ] || { echo "lab/stress.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
   [ "$(grep -c '^ok    pipeline=.*"matched":20000,"mismatches":0,"lost":0' <<<"$out")" = 2 ] || { echo "not two clean runs of 20,000: ${out//$'\n'/ | }"; return 1; }
@@ -3913,7 +3924,7 @@ check_rings_soft_limit_across_rings() {
   seq="$(docker exec "$name" php /lab/check/conn-client.php 18177 seq 101 --keep --hold 2.5)"
   log="$(docker logs "$name" 2>&1)"
   docker rm -f "$name" >/dev/null 2>&1
-  grep -qx 'loop: ring, 2 rings' <<<"$log" || { echo "the loop line is not 'loop: ring, 2 rings': ${log//$'\n'/ | }"; return 1; }
+  grep -qx "loop: ring, 2 rings$(ring_loop_text)" <<<"$log" || { echo "the loop line is not 'loop: ring, 2 rings$(ring_loop_text)': ${log//$'\n'/ | }"; return 1; }
   jq -e '.answered == 101 and .errors == [] and (.connections | length) == 101
     and ([.connections[:100][] | .close_header or .server_closed] | any | not) and .connections[100] == {close_header: true, server_closed: true}' <<<"$seq" >/dev/null \
     || { echo "expected 100 kept open and the 101st closed with the header, no errors: $(jq -c '{answered, close_header, server_closed, kept_alive, errors}' <<<"$seq")"; return 1; }
@@ -3923,10 +3934,11 @@ check_rings_soft_limit_across_rings() {
 
 # The loop blocks on the ring that had completions in its last turn, not always on the first. 90 idle connections over 2 rings of 80 (the first fills to
 # its accept limit of 64) put the last connection on the second ring; 30,000 requests one at a time over it must be answered, each by its own
-# post's answer, while the first ring is hardly entered: on any `ring:` line of a second that served 1,000 requests or more on ring 1, ring 0 had
-# at most 100 turns (a loop that waits on ring 0 enters it 2,000 times a second, once per 500 µs of its wait).
+# post's answer, while the first ring is hardly entered: in the quietest of the seconds that served 1,000 requests or more on ring 1, ring 0 had at most
+# 100 turns (a loop that waits on ring 0 enters it 2,000 times a second, once per 500 µs of its wait; the first busy second still has the wait it made before
+# it moved to ring 1, about 200 turns on a loaded machine, so it is not the one to read).
 check_rings_loop_follows_the_active_ring() {
-  local name=lab-check-rings out line busy=0 turns0
+  local name=lab-check-rings out line busy=0 turns0 quietest="" quiet_line=""
   ring_start "$name" 18177 APP_RINGS=2 URING_TABLE_SIZE=80 || { docker rm -f "$name" >/dev/null 2>&1; return 1; }
   out="$(docker exec "$name" php -d extension=sockets /lab/check/ring-client.php 18177 follow 90 30000 2>&1)" || { docker rm -f "$name" >/dev/null 2>&1; echo "ring-client follow failed: ${out//$'\n'/ | }"; return 1; }
   while IFS= read -r line; do
@@ -3935,11 +3947,12 @@ check_rings_loop_follows_the_active_ring() {
     [[ "$line" =~ ring0_turns=([0-9]+) ]] || continue
     turns0="${BASH_REMATCH[1]}"
     busy=$((busy + 1))
-    [ "$turns0" -le 100 ] || { docker rm -f "$name" >/dev/null 2>&1; echo "ring 0 had $turns0 turns in a second that served ring 1: $line"; return 1; }
+    if [ -z "$quietest" ] || [ "$turns0" -lt "$quietest" ]; then quietest="$turns0"; quiet_line="$line"; fi
   done < <(docker logs "$name" 2>&1 | grep '^ring: ')
   [ "$(ring_max "$name" ring0_open)" -gt 0 ] && [ "$(ring_max "$name" ring1_open)" -gt 0 ] && [ "$(ring_sum "$name" ring0_requests)" = 0 ] || { docker rm -f "$name" >/dev/null 2>&1; echo "the idle connections did not span both rings, or ring 0 served requests"; return 1; }
   docker rm -f "$name" >/dev/null 2>&1
   [ "$busy" -gt 0 ] && grep -q '^ok    ' <<<"$out" || { echo "no second of the statistics served 1,000 requests on ring 1 ($busy), or the client failed: ${out//$'\n'/ | }"; return 1; }
+  [ "$quietest" -le 100 ] || { echo "ring 0 had $quietest turns in its quietest second that served ring 1: $quiet_line"; return 1; }
 }
 
 # A burst at a full table loses no connection. 2 rings with tables of 80; the server is stopped (SIGSTOP from outside the container) while 150
@@ -3968,26 +3981,36 @@ check_rings_burst_at_a_full_table() {
   [ "$r0" -le 80 ] && [ "$r1" -le 80 ] && [ $((r0 + r1)) = 150 ] || { echo "the two rings did not hold the 150 connections between them, 80 at most each: ring 0 $r0, ring 1 $r1"; return 1; }
 }
 
+# ring_refused_steps: the steps whose test hook the fallback check refuses, for the buffers the checks run with.
+ring_refused_steps() {
+  if [ "$(ring_buffers)" = legacy ]; then echo 'provide_buffers files'; else echo 'buffer_ring files'; fi
+}
+
+# ring_refused_errno <step>: the errno the kernel answers to the test hook of that step (`provide_buffers` asks for 0 buffers: E2BIG).
+ring_refused_errno() {
+  if [ "$1" = provide_buffers ]; then echo 7; else echo 22; fi
+}
+
 # The fallback. Under Docker's default seccomp filter the kernel refuses io_uring_setup (EPERM): the server prints `loop: epoll (io_uring refused:
 # setup 1)` and serves on the DIY loop with 2 worker processes and a soft limit of 64,000 each (what the submission is), and passes the challenge's
 # 42 checks there. Then the same fallback for a step after the setup, on the last of 3 rings (a test hook asks the kernel for a buffer ring of 0
-# entries, which it refuses with EINVAL; and likewise a table of 0 files): the line names the step and 22, the rings built before are given back
+# entries, which it refuses with EINVAL; and likewise a table of 0 files; with the legacy buffers, for 0 buffers to provide, which it refuses with E2BIG): the line names the step and the errno, the rings built before are given back
 # (no ring left in the process), and it serves.
 check_rings_fall_back_to_epoll() {
   local name=lab-check-rings log out step
-  CHECK_APP_EXT_EXTRA=pcntl LAB_SERVER_SECCOMP_UNCONFINED="" start_app_for_check "$name" 18177 0 APP_RING=1 APP_RINGS=3 || { docker rm -f "$name" >/dev/null 2>&1; return 1; }
+  CHECK_APP_EXT_EXTRA=pcntl LAB_SERVER_SECCOMP_UNCONFINED="" start_app_for_check "$name" 18177 0 APP_RING=1 APP_RINGS=3 "URING_BUFFERS=$(ring_buffers)" || { docker rm -f "$name" >/dev/null 2>&1; return 1; }
   log="$(docker logs "$name" 2>&1)"
   docker rm -f "$name" >/dev/null 2>&1
   grep -qx 'loop: epoll (io_uring refused: setup 1)' <<<"$log" && grep -q '^workers: 2 ' <<<"$log" && grep -qx 'soft connection limit: 64000 per process' <<<"$log" \
     || { echo "under the default seccomp filter the boot lines are not the fallback's: ${log//$'\n'/ | }"; return 1; }
-  out="$(bash "$LAB/challenge-test.sh" --image 8.5 --ext pcntl --ext sockets --ext event --env APP_RING=1 --env APP_RINGS=3 2>&1)" || { echo "the challenge's suite did not pass on the fallback: $(tail -n 5 <<<"$out" | tr '\n' ' ')"; return 1; }
+  out="$(bash "$LAB/challenge-test.sh" --image 8.5 --ext pcntl --ext sockets --ext event --env APP_RING=1 --env APP_RINGS=3 --env "URING_BUFFERS=$(ring_buffers)" 2>&1)" || { echo "the challenge's suite did not pass on the fallback: $(tail -n 5 <<<"$out" | tr '\n' ' ')"; return 1; }
   grep -qx 'passed=42 failed=0' <<<"$out" || { echo "not 42 of 42 on the fallback: $(tail -n 3 <<<"$out" | tr '\n' ' ')"; return 1; }
-  for step in buffer_ring files; do
-    CHECK_APP_EXT_EXTRA=pcntl LAB_SERVER_SECCOMP_UNCONFINED=1 start_app_for_check "$name" 18177 0 APP_RING=1 APP_RINGS=3 URING_FAIL_STEP=$step || { docker rm -f "$name" >/dev/null 2>&1; return 1; }
+  for step in $(ring_refused_steps); do
+    CHECK_APP_EXT_EXTRA=pcntl LAB_SERVER_SECCOMP_UNCONFINED=1 start_app_for_check "$name" 18177 0 APP_RING=1 APP_RINGS=3 "URING_BUFFERS=$(ring_buffers)" URING_FAIL_STEP=$step || { docker rm -f "$name" >/dev/null 2>&1; return 1; }
     log="$(docker logs "$name" 2>&1)"
     out="ring descriptors: $(docker exec "$name" sh -c 'ls -l /proc/1/fd | grep -c anon_inode:.io_uring.' || true)"
     docker rm -f "$name" >/dev/null 2>&1
-    grep -qx "loop: epoll (io_uring refused: $step 22)" <<<"$log" || { echo "a refused $step is not the fallback's line: ${log//$'\n'/ | }"; return 1; }
+    grep -qx "loop: epoll (io_uring refused: $step $(ring_refused_errno "$step"))" <<<"$log" || { echo "a refused $step is not the fallback's line: ${log//$'\n'/ | }"; return 1; }
     [ "$out" = 'ring descriptors: 0' ] || { echo "the rings built before the refused $step are still open in the supervisor: $out"; return 1; }
   done
 }
@@ -3999,13 +4022,112 @@ check_rings_in_steplab() {
   local out rc=0 dir
   dir="$(mktemp -d)"
   out="$(bash "$LAB/steplab.sh" --image 8.5 --rate 200 --think-scale 0.1 --seconds 5 --pairs 1 --warmup 20,5 --seccomp-unconfined --ext sockets --ext event \
-    --variant ref= --variant ring=APP_RING=1,APP_RINGS=2,APP_TELEMETRY=1 --variant-args 'ring=--server-nofile 32768' \
+    --variant ref= --variant "ring=APP_RING=1,APP_RINGS=2,APP_TELEMETRY=1,URING_BUFFERS=$(ring_buffers)" --variant-args 'ring=--server-nofile 32768' \
     --expect-loop ref=epoll --expect-loop 'ring=ring, 2 rings' --out "$dir/pair" 2>&1)" || rc=$?
-  [ "$rc" = 0 ] && [ "$(jq -r '.server.loop' "$dir/pair/ring-1.json")" = 'ring, 2 rings' ] && [ "$(jq -r '.server.nofile' "$dir/pair/ring-1.json")" = 32768 ] \
+  [ "$rc" = 0 ] && [ "$(jq -r '.server.loop' "$dir/pair/ring-1.json")" = "ring, 2 rings$(ring_loop_text)" ] && [ "$(jq -r '.server.nofile' "$dir/pair/ring-1.json")" = 32768 ] \
     && [ "$(jq -r '.server.nofile' "$dir/pair/ref-1.json")" = 65535 ] \
     && jq -e '(.server.ring.per_ring | length == 2) and ((.server.ring.per_ring | map(.requests) | add) > 0)' "$dir/pair/ring-1.json" >/dev/null \
     || { echo "the pair's JSON do not show 2 rings and the variant's nofile (exit $rc): ${out//$'\n'/ | }"; rm -rf "$dir"; return 1; }
   rm -rf "$dir"
+}
+
+# URING_BUFFERS is auto, ring or legacy: another value is refused at boot with a message that says so and exit code 1, before anything starts.
+check_ring_buffers_refusal() {
+  local out
+  out="$(bash "$LAB/run.sh" 8.5 sh -c '
+    env SQLITE_PATH=/nonexistent JWT_SECRET=x APP_RING=1 URING_BUFFERS=both php -d extension=sockets /lab/app/server.php 2>&1
+    echo "exit $?"' 2>&1)" || { echo "the run failed: ${out//$'\n'/ | }"; return 1; }
+  grep -qx "ring-server: URING_BUFFERS must be auto, ring or legacy, got 'both'" <<<"$out" && grep -qx 'exit 1' <<<"$out" || { echo "URING_BUFFERS=both is not refused with a reason: ${out//$'\n'/ | }"; return 1; }
+}
+
+# The `loop:` line says the receive buffers, in each mode: `ring, 1 ring, buffer ring` for URING_BUFFERS=ring, `ring, 1 ring, legacy buffers` for legacy,
+# one of the two for auto (the kernel decides); only the legacy buffers print the re-provide counters on the `ring:` line, and with them the pool is
+# the same: the `ring-settings:` line is the same text.
+check_ring_buffers_loop_line() {
+  local name=lab-check-ring mode log
+  for mode in ring legacy auto; do
+    CHECK_RING_BUFFERS=$mode ring_start "$name" 18177 || { docker rm -f "$name" >/dev/null 2>&1; return 1; }
+    docker exec "$name" php -r 'foreach ([1, 2, 3] as $i) { $c = stream_socket_client("tcp://127.0.0.1:18177"); fwrite($c, "GET /nope HTTP/1.1\r\n\r\n"); fgets($c); }'
+    sleep 2.5
+    log="$(docker logs "$name" 2>&1)"
+    docker rm -f "$name" >/dev/null 2>&1
+    case "$mode" in
+      ring) grep -qx 'loop: ring, 1 ring, buffer ring' <<<"$log" || { echo "URING_BUFFERS=ring: the loop line is not 'ring, 1 ring, buffer ring': ${log//$'\n'/ | }"; return 1; } ;;
+      legacy) grep -qx 'loop: ring, 1 ring, legacy buffers' <<<"$log" || { echo "URING_BUFFERS=legacy: the loop line is not 'ring, 1 ring, legacy buffers': ${log//$'\n'/ | }"; return 1; } ;;
+      auto) grep -qx 'loop: ring, 1 ring, \(buffer ring\|legacy buffers\)' <<<"$log" || { echo "URING_BUFFERS=auto: the loop line says neither buffers: ${log//$'\n'/ | }"; return 1; } ;;
+    esac
+    grep -qx 'ring-settings: table=[0-9]* sq=4096 cq=32768 recv_buffers=4096x2048 send_slots=2048x8192' <<<"$log" || { echo "$mode: the settings line changed: ${log//$'\n'/ | }"; return 1; }
+    if grep -qx 'loop: ring, 1 ring, legacy buffers' <<<"$log"; then
+      grep '^ring: ' <<<"$log" | grep -Eq ' provides=[1-9][0-9]* provide_errors=0( |$)' || { echo "$mode: the ring: line has no provides count: ${log//$'\n'/ | }"; return 1; }
+    else
+      ! grep '^ring: ' <<<"$log" | grep -q ' provides=' || { echo "$mode: the buffer ring's ring: line has a provides count: ${log//$'\n'/ | }"; return 1; }
+    fi
+  done
+}
+
+# `auto` when the kernel refuses the buffer ring (a test hook asks for a buffer ring of 0 entries on every ring, the kernel answers EINVAL, as Ubuntu's 6.8
+# does): the three rings all take the legacy buffers (one choice for the whole process), the boot says so, and the server serves. The same refusal with
+# URING_BUFFERS=ring is the fallback to the DIY loop, `buffer_ring 22`. And one ring's refusal after the first took the buffer ring is a refusal, not a
+# second choice: auto on 3 rings with the hook on the last ring only falls back to the DIY loop too.
+check_rings_auto_chooses_legacy_buffers() {
+  local name=lab-check-rings log out
+  ring_start "$name" 18177 APP_RINGS=3 URING_BUFFERS=auto URING_FAIL_STEP=buffer_ring_all || { docker rm -f "$name" >/dev/null 2>&1; return 1; }
+  out="$(ring_client_ok "$name" 18177 pipeline 2)" || { docker rm -f "$name" >/dev/null 2>&1; echo "$out"; return 1; }
+  sleep 2.5
+  log="$(docker logs "$name" 2>&1)"
+  docker rm -f "$name" >/dev/null 2>&1
+  grep -qx 'loop: ring, 3 rings, legacy buffers' <<<"$log" || { echo "auto did not choose the legacy buffers on a refused buffer ring: ${log//$'\n'/ | }"; return 1; }
+  grep -qx 'buffers: the kernel refused the buffer ring (errno 22), the receives use PROVIDE_BUFFERS' <<<"$log" || { echo "the boot does not say why auto chose the legacy buffers: ${log//$'\n'/ | }"; return 1; }
+  grep '^ring: ' <<<"$log" | grep -Eq ' provides=[1-9][0-9]* provide_errors=0( |$)' || { echo "no re-provide on the ring: lines of the legacy buffers: ${log//$'\n'/ | }"; return 1; }
+  CHECK_APP_EXT_EXTRA=pcntl LAB_SERVER_SECCOMP_UNCONFINED=1 start_app_for_check "$name" 18177 0 APP_RING=1 APP_RINGS=3 URING_BUFFERS=ring URING_FAIL_STEP=buffer_ring_all || { docker rm -f "$name" >/dev/null 2>&1; return 1; }
+  log="$(docker logs "$name" 2>&1)"
+  docker rm -f "$name" >/dev/null 2>&1
+  grep -qx 'loop: epoll (io_uring refused: buffer_ring 22)' <<<"$log" || { echo "URING_BUFFERS=ring on a refused buffer ring is not the fallback: ${log//$'\n'/ | }"; return 1; }
+  CHECK_APP_EXT_EXTRA=pcntl LAB_SERVER_SECCOMP_UNCONFINED=1 start_app_for_check "$name" 18177 0 APP_RING=1 APP_RINGS=3 URING_BUFFERS=auto URING_FAIL_STEP=buffer_ring || { docker rm -f "$name" >/dev/null 2>&1; return 1; }
+  log="$(docker logs "$name" 2>&1)"
+  docker rm -f "$name" >/dev/null 2>&1
+  grep -qx 'loop: epoll (io_uring refused: buffer_ring 22)' <<<"$log" || { echo "auto with the last ring refused is not the fallback: ${log//$'\n'/ | }"; return 1; }
+}
+
+# The legacy buffers' pool, 2 buffers and 1 send slot, 300 connections sending 3 requests at once, twice over and then one more pipelined round: the pool
+# runs dry (receives end with ENOBUFS), the loop arms them again once the buffers are given back, every answer comes in order each time (a buffer that
+# is never given back shrinks a pool of 2 to nothing and the server goes quiet), and no re-provide failed.
+check_ring_legacy_buffers_recover_from_a_dry_pool() {
+  local name=lab-check-ring out
+  CHECK_RING_BUFFERS=legacy ring_start "$name" 18177 URING_RECV_BUFFERS=2 URING_SEND_SLOTS=1 || { docker rm -f "$name" >/dev/null 2>&1; return 1; }
+  out="$(ring_client_ok "$name" 18177 many 1)" || { docker rm -f "$name" >/dev/null 2>&1; echo "the first round: $out"; return 1; }
+  out="$(ring_client_ok "$name" 18177 many 1)" || { docker rm -f "$name" >/dev/null 2>&1; echo "the second round: $out"; return 1; }
+  out="$(ring_client_ok "$name" 18177 pipeline 2)" || { docker rm -f "$name" >/dev/null 2>&1; echo "after the dry pool: $out"; return 1; }
+  sleep 2.5
+  out="recv_dry=$(ring_sum "$name" recv_dry) provides=$(ring_sum "$name" provides) provide_errors=$(ring_sum "$name" provide_errors) requests=$(ring_sum "$name" requests)"
+  docker rm -f "$name" >/dev/null 2>&1
+  [[ "$out" =~ recv_dry=([0-9]+)\ provides=([0-9]+)\ provide_errors=([0-9]+)\ requests=([0-9]+) ]] || { echo "the ring: lines are missing: $out"; return 1; }
+  [ "${BASH_REMATCH[1]}" -gt 0 ] || { echo "the legacy pool never ran dry: $out"; return 1; }
+  [ "${BASH_REMATCH[2]}" -gt 0 ] && [ "${BASH_REMATCH[3]}" = 0 ] || { echo "the buffers were not given back, or the kernel refused it: $out"; return 1; }
+}
+
+# With the default pool of 4,096 buffers and 300 connections that each send 3 requests at once, a turn consumes a run of consecutive buffer ids
+# (the kernel hands them out in the order they were provided): they go back in a tenth as many PROVIDE_BUFFERS as there are requests, or fewer (about 5 for the 900 requests, 300 or more with one each).
+check_ring_legacy_buffers_go_back_in_runs() {
+  local name=lab-check-ring out
+  CHECK_RING_BUFFERS=legacy ring_start "$name" 18177 || { docker rm -f "$name" >/dev/null 2>&1; return 1; }
+  out="$(ring_client_ok "$name" 18177 many 1)" || { docker rm -f "$name" >/dev/null 2>&1; echo "$out"; return 1; }
+  sleep 2.5
+  out="provides=$(ring_sum "$name" provides) requests=$(ring_sum "$name" requests)"
+  docker rm -f "$name" >/dev/null 2>&1
+  [[ "$out" =~ provides=([0-9]+)\ requests=([0-9]+) ]] || { echo "the ring: lines are missing: $out"; return 1; }
+  [ "${BASH_REMATCH[2]}" -ge 900 ] && [ "${BASH_REMATCH[1]}" -gt 0 ] && [ $((BASH_REMATCH[1] * 10)) -lt "${BASH_REMATCH[2]}" ] || { echo "the buffers did not go back in runs (expected under a tenth as many PROVIDE_BUFFERS as requests): $out"; return 1; }
+}
+
+# Every check of the ring above, again with the legacy buffers (URING_BUFFERS=legacy): the same cases, the same answers. The two refusal checks are
+# left out: no ring starts in them, the legacy buffers change nothing there.
+check_ring_legacy_buffers() {
+  local c out
+  for c in check_ring_boot check_ring_splits_and_pipelines check_ring_oversize_responses check_ring_pools_run_dry check_ring_soft_limit check_ring_answers_like_diy \
+    check_ring_loop_line_in_runs check_ring_stress_posts check_rings_soft_limit_across_rings check_rings_loop_follows_the_active_ring \
+    check_rings_burst_at_a_full_table check_rings_fall_back_to_epoll check_rings_in_steplab; do
+    out="$(CHECK_RING_BUFFERS=legacy "$c")" || { echo "$c with the legacy buffers: $out"; return 1; }
+  done
 }
 
 CHECKS=(
@@ -4143,6 +4265,12 @@ CHECKS=(
   check_rings_burst_at_a_full_table
   check_rings_fall_back_to_epoll
   check_rings_in_steplab
+  check_ring_buffers_refusal
+  check_ring_buffers_loop_line
+  check_rings_auto_chooses_legacy_buffers
+  check_ring_legacy_buffers_recover_from_a_dry_pool
+  check_ring_legacy_buffers_go_back_in_runs
+  check_ring_legacy_buffers
   check_score
   check_score_unit
   check_score_server_setup_checks

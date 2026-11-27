@@ -17,7 +17,7 @@
 #
 # --pair: 200 users for 20 s, A B B A, 3 s between runs, a 10 s ramp, against two lab containers on two ports: the submission as A, the app on three
 # rings of io_uring (APP_RING=1 APP_RINGS=3, no seccomp filter) as B. It checks the four runs, pair.json's shape and that each run recorded
-# its server's `loop:` line (the ring's reads `ring, 3 rings`, so a fall back to epoll is seen).
+# its server's `loop:` line (the ring's starts with `ring, 3 rings`, then names its receive buffers, so a fall back to epoll is seen).
 #
 # --k6-memory: the challenge's bench/load.js once at 1, 2,000 and 5,000 users, with its real think time and its own 60 s ramp, 1 minute of plateau,
 # against the local server; prints the k6 container's memory peak of each, and the peak a VU at 2,000 and 5,000 users with and without the memory
@@ -111,7 +111,7 @@ smoke_pair() {
   jq -e '(.runs | length) == 4 and (.runs | all(.us_per_req != null and .service_share != null and .p99_ms != null)) and (.means.A.us_per_req != null) and (.means.B.us_per_req != null)
          and (.pairs | length) == 2 and (.pairs | all(.us_per_req_b_minus_a != null))' "$out/pair.json" >/dev/null || fail "pair.json lacks a number: $(jq -c . "$out/pair.json")"
   [ "$(jq -r '[.runs[] | select(.server == "A") | .loop] | unique | join(",")' "$out/pair.json")" = epoll ] || fail "A's loop lines: $(jq -c '[.runs[] | select(.server == "A") | .loop]' "$out/pair.json")"
-  [ "$(jq -r '[.runs[] | select(.server == "B") | .loop] | unique | join(",")' "$out/pair.json")" = "ring, 3 rings" ] || fail "B's loop lines are not 'ring, 3 rings': $(jq -c '[.runs[] | select(.server == "B") | .loop]' "$out/pair.json")"
+  jq -e '[.runs[] | select(.server == "B") | .loop] | unique | length == 1 and (.[0] | startswith("ring, 3 rings"))' "$out/pair.json" >/dev/null || fail "B's loop lines are not 'ring, 3 rings': $(jq -c '[.runs[] | select(.server == "B") | .loop]' "$out/pair.json")"
   [ "$halves" = 1 ] || { for f in "$out"/[0-9]*/run.json; do smoke_check_halves "$f"; done; }
   echo "smoke: ok, the folder is $out"
 }
