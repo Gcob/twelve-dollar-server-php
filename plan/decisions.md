@@ -712,6 +712,13 @@
   older buffers before it can be measured (project manager, phase 8, 2026-11-26 23:05, under Jacob's go for the x86
   session).
 
+- **D130:** the ring gets the older provided buffers: on Ubuntu's 6.8 kernels (`6.8.0-1070-aws` and
+  `6.8.0-151-generic`, scope 6c) `IORING_REGISTER_PBUF_RING` answers EINVAL while `IORING_OP_PROVIDE_BUFFERS` with the
+  multishot receive works, and the bench is stock Ubuntu 24.04 on 6.8. `URING_BUFFERS=auto` (the default) tries the
+  buffer ring and uses the older buffers when its registration is refused, before any fallback to epoll; the `loop:`
+  line names the buffers. The ring's x86 pairs then run on 6.8-generic with the older buffers, what the bench would
+  run (project manager, phase 8, 2026-11-26 23:20, under Jacob's standing go: local code, easy to undo).
+
 ## History
 
 Nothing yet.
