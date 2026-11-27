@@ -33,6 +33,8 @@ and the feed micro called for it (−16.4 %; the bar is 4.56 µs/req). **The rin
 `IORING_REGISTER_PBUF_RING` answers `EINVAL` to a C program on liburing 2.5 as well as to our FFI call, so the app does
 not boot on it. The attempt to move to Ubuntu's generic 6.8 kernel (`linux-image-generic`, what a droplet runs) ended in a
 kernel panic at boot (root device not found), so the session was torn down. No ring pair, no pair of the winners together.
+A second session booted the generic 6.8 properly (with its initramfs): it refuses `IORING_REGISTER_PBUF_RING` too, while the
+older buffers (`PROVIDE_BUFFERS` and a multishot receive) work; see "The ring on the 6.8 kernels, second session".
 
 ## Plan of the runs
 
@@ -90,6 +92,34 @@ The stage scripts are kept in the private factory repository.
   address, 8 entries, bgid 0, flags 0, reserved fields 0) with `nr_args` 1; even `IORING_UNREGISTER_PBUF_RING` of a group
   that does not exist answers `EINVAL` (it should be `ENOENT`), while `IORING_REGISTER_PERSONALITY` works on the same ring.
   The ring's other calls (setup, the sparse file table) work; only the provided buffer ring is refused.
+
+## The ring on the 6.8 kernels, second session (the generic 6.8, and the older buffers)
+
+A second short session (one `c5.2xlarge`, about 7 minutes) asked whether Ubuntu's **generic** 6.8 kernel, the one a droplet
+runs, accepts the provided buffer ring, and whether the older buffer path works on 6.8. The generic kernel now boots: the
+first try panicked because the cloud image boots without an initramfs and `-generic` has its NVMe driver as a module. This
+time `linux-image-generic` (6.8.0-151) came with its initramfs (carrying the `nvme` modules), the
+`GRUB_FORCE_PARTUUID` line of the image's `40-force-partuuid.cfg` drop-in in `/etc/default/grub.d/` was commented out
+(the generated entry then reads `root=UUID=...` and has an `initrd` line), `GRUB_DEFAULT` pointed at the generic entry,
+`update-grub`, reboot: back in under a minute on `6.8.0-151-generic`.
+
+| Probe (C, liburing 2.5, a bare ring) | `7.0.0-1018-aws` (the AMI's own) | `6.8.0-1070-aws` | `6.8.0-151-generic` |
+|---|---|---|---|
+| `IORING_REGISTER_PBUF_RING` (`io_uring_setup_buf_ring`, 8 entries; and `io_uring_register_buf_ring` on an aligned page) | **accepted** | **`EINVAL`** (first session) | **`EINVAL`** |
+| `IORING_OP_PROVIDE_BUFFERS` (bgid 1, 8 buffers of 4 KiB), then a multishot receive with `IOSQE_BUFFER_SELECT` on a socketpair: one write of 100 bytes gives a CQE of 100 bytes with `IORING_CQE_F_BUFFER` and `IORING_CQE_F_MORE` | works | not probed | **works** (`res=100 flags=0x3`) |
+
+On `6.8.0-151-generic` the opcode probe (`probe/opcodes.c`) shows the same pattern as in the AWS 6.8 kernel: `IORING_UNREGISTER_PBUF_RING`
+of an absent group and `IORING_REGISTER_PBUF_STATUS` also answer `EINVAL` (a kernel that knew them would answer `ENOENT`), while
+`IORING_REGISTER_FILE_ALLOC_RANGE` and `IORING_REGISTER_PERSONALITY` work, and the kernel's config has `CONFIG_IO_URING=y`. So
+both 6.8 kernels Ubuntu ships refuse the provided buffer ring, and the AMI's 7.0 accepts it. The older buffers (`PROVIDE_BUFFERS`
+and the multishot receive) work on the generic 6.8.
+
+Where the session stopped: the brief said that a refusal here ends the session (the ring as built needs `PBUF_RING`), so the
+box was torn down after the probes. **No lab image was built, no ring check and no pair ran on `6.8.0-151-generic`: there is
+no `aa-generic-7500/`, `ring-7500/` or `together-7500/`.** The kernel each step ran on: the SQLite steps (A/A floor, feed micro,
+tuned SQLite pairs) on `6.8.0-1070-aws`; nothing was timed on `6.8.0-151-generic`; the probes above ran on all three kernels.
+That box's CPU was an Intel Xeon Platinum 8124M (3.00 GHz, 8 vCPUs), not the 8275CL of the first session.
+The probe sources and logs are in `probe/`.
 
 ## Tables
 
