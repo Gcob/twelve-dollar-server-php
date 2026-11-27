@@ -7,8 +7,8 @@ set -euo pipefail
 cd "$(dirname "$0")"
 LAB="$(cd ../.. && pwd)"
 AA="$PWD/aa-7500"
-# Two numbers no file of this folder holds: the users the reference holds on the bench (the figure the phase's plan carries) and the feeds a request
-# costs (a bench loop makes one feed in about 2.17 requests: D109's bar).
+# Two numbers no file of this folder holds: the users the reference holds on the bench (the base of every bench estimate in the README) and the feeds a request
+# costs (a bench loop makes one feed in about 2.17 requests, which is what turns the feed micro's gain into a gain per request).
 REF_USERS=86800
 FEEDS_PER_REQUEST=0.46
 

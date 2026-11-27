@@ -112,7 +112,7 @@ lever sqlite-7500 "The tuned SQLite against the reference (\`8.5-sqlite\`, same 
   lever together-7500 "The ring on the tuned SQLite against the reference (1 pair)"
 }
 
-# The pairs on 6.8.0-151-generic (scope 6d): their own A/A (3 pairs, aa-generic-7500/) and a floor that is the larger of that floor and the
+# The pairs on 6.8.0-151-generic (the third session): their own A/A (3 pairs, aa-generic-7500/) and a floor that is the larger of that floor and the
 # 6.8.0-1070-aws one (0.603), typed with --floor.
 if [ -d aa-generic-7500 ]; then
   echo

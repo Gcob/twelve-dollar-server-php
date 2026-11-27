@@ -32,7 +32,7 @@ On the AWS kernel 6.8 (`6.8.0-1070-aws`) the reference holds a floor of **0.60 �
 and the feed micro called for it (−16.4 %; the bar is 4.56 µs/req). **The ring could not be measured:** on this kernel
 `IORING_REGISTER_PBUF_RING` answers `EINVAL` to a C program on liburing 2.5 as well as to our FFI call, so the app does
 not boot on it. The attempt to move to Ubuntu's generic 6.8 kernel (`linux-image-generic`, what a droplet runs) ended in a
-kernel panic at boot (root device not found), so the session was torn down. No ring pair, no pair of the winners together.
+kernel panic at boot (root device not found), so the session was torn down. That first session made no ring pair and no pair of the winners together (the third session did, below).
 A second session booted the generic 6.8 properly (with its initramfs): it refuses `IORING_REGISTER_PBUF_RING` too, while the
 older buffers (`PROVIDE_BUFFERS` and a multishot receive) work; see "The ring on the 6.8 kernels, second session".
 
@@ -125,9 +125,10 @@ both 6.8 kernels Ubuntu ships refuse the provided buffer ring, and the AMI's 7.0
 and the multishot receive) work on the generic 6.8.
 
 Where the session stopped: the brief said that a refusal here ends the session (the ring as built needs `PBUF_RING`), so the
-box was torn down after the probes. **No lab image was built, no ring check and no pair ran on `6.8.0-151-generic`: there is
-no `aa-generic-7500/`, `ring-7500/` or `together-7500/`.** The kernel each step ran on: the SQLite steps (A/A floor, feed micro,
-tuned SQLite pairs) on `6.8.0-1070-aws`; nothing was timed on `6.8.0-151-generic`; the probes above ran on all three kernels.
+box was torn down after the probes. **In this second session no lab image was built, no ring check and no pair ran on `6.8.0-151-generic`**
+(the third session made `aa-generic-7500/`, `ring-7500/` and `together-7500/`, below). The kernel each step ran on, as of this session: the SQLite
+steps (A/A floor, feed micro, tuned SQLite pairs) on `6.8.0-1070-aws`; nothing was timed yet on `6.8.0-151-generic`; the probes above ran on all
+three kernels.
 That box's CPU was an Intel Xeon Platinum 8124M (3.00 GHz, 8 vCPUs), not the 8275CL of the first session.
 The probe sources and logs are in `probe/`.
 
@@ -181,11 +182,18 @@ below). The tables are below.
   one more than 4 times the floor. It is below the prediction (−6 to −12): the older buffers hand a buffer back with a `PROVIDE_BUFFERS`
   submission, which the buffer ring does not need. How much that costs against the buffer ring on the same hardware was not measured
   (the only kernel that takes the buffer ring here is the AMI's 7.0, not tried in this session): the Mac, on 6.12, read 0 to about 1 µs/req.
+- **The ring's p95 and p99 are worse than the reference's in every pair:** p95 9.4 to 10.1 ms against 6.3 to 6.7, p99 21.6 to 23.3 ms against
+  17.6 to 18.9 (with the tuned SQLite, the three pairs of the ring on the tuned SQLite read p95 8.6 to 9.3 against 6.1 to 6.5 and p99 21.3 to 22.3 against
+  17.3 to 18.4). It does not enter the choice, which is about CPU per request, and the challenge's thresholds (p95 under 500 ms, p99 under 1,000 ms) are far above these latencies; it is the
+  price to know about.
+- **The ring pairs ran with tables of 32,768 descriptors** (`--server-nofile 32768`: each ring's table is as large as the open-files limit
+  allows), not the 65,535 the shipped server uses, so the 60,000 idle connections spread over two rings here, where the shipped tables would
+  hold most of them on the first. The pairs do not price that difference; the table size is not the bench's.
 - **Chosen on x86: yes**, by the rule (3 of 3 pairs beyond the floor, valid runs, loop line as expected). The caveats are the usual ones (a
   shared host, not the bench) and one of kernel: the gain exists on the generic 6.8, whose path is the older buffers; on a kernel that takes
   the buffer ring the code takes it (`auto`), a path timed only on the Mac.
 - **Together** is **−11.59 µs/req** (−21.0 %): about the sum of the ring (−4.49) and the tuned SQLite (−7.57 on this kernel, −7.33 on the
-  first), so the two levers add up. This pair is what the submission would ship (D128's SQLite plus the ring): bench estimate 109,766 users
+  first), so the two levers add up. This pair is what the submission would ship (the tuned SQLite plus the ring): bench estimate 109,766 users
   by the rule, against 86,800.
 - **The tuned SQLite's gain holds on the generic kernel:** −7.57 µs/req against −7.33 (3 pairs, `6.8.0-1070-aws`); one pair here, a screen.
 - The reference costs the same on the three kernels' boxes: 55.3 (`6.8.0-1070-aws`), 55.4 to 55.5 (`6.8.0-151-generic`).
@@ -470,7 +478,7 @@ Rule: a variant is beyond the noise when it has at least 2 pairs, every paired d
 |---|---|---|---|---|
 | Tuned SQLite (`8.5-sqlite`, 3.54.1, PGO) | **−7.33** (47.77 against 55.21; pairs −7.72, −7.02, −7.33) | yes, 3 of 3 pairs, every one more than 11 times the floor | **chosen**: the micro said 16.4 % on the feed (bar 4.56 µs/req, above the floor), the pairs gave 13.3 % of the request; it is a gain of the version, the compile options, `-march=native` and the profile together | 100,325 users (x86 on a shared host, not the bench) |
 | Ring (`APP_RING=1 APP_RINGS=3`), on `6.8.0-151-generic` (floor 0.918) | **−4.49** (50.91 against 55.4; pairs −4.49, −5.18, −3.83) | yes, 3 of 3 pairs, every one more than 4 times the floor | **chosen** on this kernel: it runs there on the older provided buffers (the buffer ring is refused by both Ubuntu 6.8 kernels); on `6.8.0-1070-aws` it was not timed (it refuses the buffer ring too, and `PROVIDE_BUFFERS` was not probed there; the box is gone) | 94,454 users (x86 on a shared host, not the bench) |
-| Both together (the ring on the tuned SQLite), on `6.8.0-151-generic` | **−11.59** (43.67 against 55.23; pairs −11.54, −11.60, −11.59) | yes, 3 of 3 pairs, more than 12 times the floor | **chosen**: what the submission would ship (D128's SQLite plus the ring); about the sum of the two | 109,766 users (x86 on a shared host, not the bench) |
+| Both together (the ring on the tuned SQLite), on `6.8.0-151-generic` | **−11.59** (43.67 against 55.23; pairs −11.54, −11.60, −11.59) | yes, 3 of 3 pairs, more than 12 times the floor | **chosen**: what the submission would ship (the tuned SQLite plus the ring); about the sum of the two | 109,766 users (x86 on a shared host, not the bench) |
 | Tuned SQLite again, on `6.8.0-151-generic` | −7.57 (48.17 against 55.73) | one pair: a screen, beats the floor | confirms the first kernel's −7.33 | 100,433 users |
 
 The bar's arithmetic: the micro's saving on `feed/reference/assoc` is 60,361.4 − 50,442.9 = 9,918.6 ns a feed
