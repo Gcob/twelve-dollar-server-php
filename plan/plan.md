@@ -1,15 +1,50 @@
 # $12 server challenge in PHP
 
-**Status:** 🔄 Phase 8: both levers in the submission (the tuned SQLite, D128; the ring on the older provided buffers,
-D130, D131); the score session runs now on the generic 6.8 (D132, scope 9), then the README's results and the reviews
-**Round:** 9
-**Since your last read:** your Q29 answer is D132: the score boxes boot the generic 6.8, where the ring was proven.
-The review's small fixes are in (scope 7c). The score session runs under your go.
+**Status:** ⏸️ Phase 8: both levers in the submission (the tuned SQLite, D128; the ring on the older provided buffers,
+D130, D131); the score session stopped this morning on an AWS refusal before any measurement, and relaunches with your
+next go (scope 9, Q30), then the README's results and the reviews
+**Round:** 10
+**Since your last read:** the score session launched at 08:45 and stopped at 08:53: AWS refused the call that opens
+port 80, because it also tagged the new rule, which the policy can't allow. Everything was torn down (`TEARDOWN CLEAN`, 9.5
+minutes, about 0.28 USD). Both boxes had booted the generic 6.8 (D132), and two harness bugs the real boxes showed
+are fixed. Your rule on the ring is D133, recorded before any pair. Not today, as you said: the relaunch waits for your
+go and Q30.
 **Project:** this repo, `plan/` · **Submission:** `submissions/php-Gcob/` (D80) · **Jira:** none
 
 ## 👉 Your turn
 
-Nothing waits on you: the score session runs under your go of 2026-11-27 (scope 9).
+When you want the score session relaunched: answer Q30 and give a new go (the score policy attached, port 80 by
+Q30). Meanwhile the score policy can be detached: nothing runs on AWS.
+
+### Q30/30 [run, score] : at the relaunch, who opens port 80, the agent by D100 or you in the console?
+
+D100 opens port 80 to `0.0.0.0/0` on the session's group when the server box's connection-tracking allowance reads
+under 220,000 (phase 7's `c5.large` read 136,801, so it will open). This morning the developer called it early, before
+reading the allowance, and with `--tag-specifications` (a tag on the new rule): AWS refused it, because the policy
+allows `AuthorizeSecurityGroupIngress` only on resources that already carry the project tag, and tags only at launch.
+The same call without the tag option, on the same tagged group, is what `launch.sh` already makes (port 22, the
+group's own traffic), so it fits the policy as written. In phase 7 you opened it yourself during the search.
+
+**Question:** who opens port 80 at the relaunch?
+
+- **A.** The developer, as D100 says: the allowance read first, then the call without the tag option, closed with the
+  group at teardown. A refusal is still a stop, never retried another way.
+  **Aims at:** a session that runs to its end without you at the keyboard.
+  **For:** the search runs untracked from its first probe, as D100 meant; no waiting on you. **Against:** an agent
+  opens a port to the world (for the session only, on a box serving the challenge's API).
+- **B.** You, in the console, when the developer asks (as in phase 7); the search runs tracked until then.
+  **Aims at:** a human hand on anything open to the world.
+  **For:** the same control as phase 7. **Against:** you must be there at the right moment; tracked probes near
+  135,000 can hit EC2's table (phase 7's 142,000 did), which costs a rerun.
+
+**Confidence:** A 70 % · B 30 %
+
+**Recommendation:** A, because the call is the one the policy already allows for the group's other rules, and D100
+already set when it opens; the session no longer depends on your timing.
+
+**Flips if:** you'd rather no agent open a port to the world, even for one session (then B).
+
+**Answer:**
 
 ---
 
