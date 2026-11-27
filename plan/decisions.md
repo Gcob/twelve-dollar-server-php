@@ -699,6 +699,19 @@
   If the two boxes land on different CPU models, there is no cross-box reading (each server's µs/req is a per-box
   number) and the README says so ([Q28](questions/2026-11-26-2035.ronde-8.md)).
 
+- **D128:** the tuned SQLite (3.54.1 from the amalgamation, D111's options, `-march=native`, PGO) is chosen: on x86
+  (scope 6b, `c5.2xlarge`, kernel 6.8.0-1070-aws) −7.33 µs/req against the reference's 55.21 in 3 pairs of 3, 12 times
+  the A/A floor of 0.603 (−13.3 %, bench estimate 100,325); on the Mac −3.52 in 3 pairs. It goes into the submission
+  (scope 7, D115) (project manager, phase 8, 2026-11-26 23:05, from `lab/results/2026-11-26-x86-levers/`).
+
+- **D129:** the ring has no x86 verdict yet: Ubuntu's 6.8.0-1070-aws kernel refuses `IORING_REGISTER_PBUF_RING`
+  (EINVAL, from liburing's own C as from our FFI), so on that kernel the ring falls back to epoll, phase 7's loop. A
+  short session tonight (scope 6c, same policy) tests the -generic 6.8 kernel (the droplet's flavour; its first boot
+  panicked without an initramfs) and the older way to provide buffers (`IORING_OP_PROVIDE_BUFFERS`, kernel 5.7), and
+  runs the ring's pairs if the generic kernel accepts the buffer ring. If neither kernel takes it, the ring needs the
+  older buffers before it can be measured (project manager, phase 8, 2026-11-26 23:05, under Jacob's go for the x86
+  session).
+
 ## History
 
 Nothing yet.

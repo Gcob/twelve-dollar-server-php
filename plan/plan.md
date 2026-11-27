@@ -1,7 +1,7 @@
 # $12 server challenge in PHP
 
-**Status:** 🔄 Phase 8: scope 6's Mac series running tonight (D123), on the Mac's quiet VM; the x86 series and every
-AWS step wait for your go · local scopes 1 to 5 and 8's shared part done (`phase-8-claude`, pushed)
+**Status:** 🔄 Phase 8: the tuned SQLite chosen on x86 (D128, −7.33 µs/req) and going into the submission (scope 7);
+the ring refused by Ubuntu's 6.8 aws kernel (D129), a short session on the generic 6.8 kernel tonight (scope 6c)
 **Round:** 8
 **Since your last read:** your answers to Q24 to Q28 are in D123 to D127. Tonight the pairs run on the Mac (its own
 A/A floor, then the tuned SQLite and the ring against phase 7's server), arm64 numbers that close nothing alone; the
