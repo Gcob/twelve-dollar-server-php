@@ -1,8 +1,9 @@
 <?php
 // The server's event loop on io_uring rings driven through PHP's FFI (no C is compiled, no liburing: raw system calls), as an alternative to
 // the epoll loop of loop.php. server.php boots it first and falls back to loop.php when the machine cannot run it (see ring_unavailable() and
-// RingRefused). It is the lab's ring (lab/servers/ring-server.php at 8617faf in
-// https://github.com/Gcob/twelve-dollar-server-php) with its test hooks, its environment knobs and its statistics line taken out, and the
+// RingRefused). It is the lab's ring (lab/servers/ring-server.php as of phase 8, in
+// https://github.com/Gcob/twelve-dollar-server-php) with its test hooks, its environment knobs, its statistics line and two members nothing
+// here reads taken out (check_submission_ring_is_the_labs in lab/check.sh keeps the two in step), and the
 // HTTP/1.1 parser and answers of connection.php (DiyConnection::parse() and respond()) built in.
 //
 // The memory-ordering design that makes plain FFI reads and writes safe:
@@ -366,7 +367,6 @@ final class AppRing
     private int $acceptsOut = 0;
     /** Slots of the table taken: connections open, and closed ones whose descriptor has not been given back yet (its close has not completed). */
     private int $used = 0;
-    private bool $tableFull = false;
     /** An accept failed for a reason that is not the table: no more are armed until a connection closes. */
     private bool $acceptPaused = false;
     private bool $pauseReported = false;
@@ -756,12 +756,8 @@ final class AppRing
         }
         $room = $this->tableSize - $this->used - $this->acceptsOut;
         if ($room <= 0) {
-            if (!$this->tableFull) {
-                $this->tableFull = true;
-            }
             return;
         }
-        $this->tableFull = false;
         if ($this->previous !== null && !$this->previous->isFull()) {
             return;
         }
@@ -1196,11 +1192,6 @@ final class RingLoop
     /** @param list<AppRing> $rings */
     public function __construct(public readonly FFI $ffi, public readonly FFI $ffiAddr, private readonly array $rings, private readonly RingTotals $totals)
     {
-    }
-
-    public function count(): int
-    {
-        return count($this->rings);
     }
 
     /** The `loop:` line's text: the number of rings and the receive buffers (`ring, 1 ring, buffer ring`, `ring, 3 rings, legacy buffers`). */

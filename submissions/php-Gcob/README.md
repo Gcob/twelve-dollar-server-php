@@ -21,13 +21,13 @@ SQLITE_PATH=... JWT_SECRET=... HOST=0.0.0.0 PORT=80 bash start.sh
   `-d extension=`, and passes the OPcache and JIT settings the same way.
 - **FFI is built in** (`--with-ffi`, against Ubuntu's libffi) and needs no setting: PHP's default, `ffi.enable=preload`, allows it in a CLI
   script, which is how `start.sh` runs the server. `install.sh` ends by calling libc through it, and fails if it cannot.
-- **`install.sh` took 262 s** (267 s, 258 s and 258 s on three other runs of the same script) in a clean Ubuntu 24.04 container limited to 1 CPU
-  and 2 GiB, on an arm64 core (Docker on an M3 Pro). The ring added nothing to it but a call to libc through FFI at the end (it was 285 s
-  before): FFI was already built into PHP, and `ring.php` is a PHP file. It took 222 s before it built its own SQLite: the two builds of the library
-  and the training are the difference. The droplet's x86 vCPU is not measured yet (the same install ran 425 s on a one-core AWS `c5.large`, before
+- **`install.sh` took 258 to 267 s** in four runs of `bash lab/submission-test.sh` (with and without Docker's default seccomp filter, and the two
+  runs of `--ci`), in a clean Ubuntu 24.04 container limited to 1 CPU and 2 GiB, on an arm64 core (Docker on an M3 Pro). The ring adds nothing
+  to it but a call to libc through FFI at the end: FFI was already built into PHP, and `ring.php` is a PHP file. It took 222 s before it built its
+  own SQLite: the two builds of the library and the training are the difference. The droplet's x86 vCPU is not measured yet (the same install ran 425 s on a one-core AWS `c5.large`, before
   the SQLite build).
 - **`start.sh` was healthy after 0.1 s** in the same container (the poll step is 0.1 s), with 42 of 42 checks passing
-  there, on the ring (the container without Docker's default seccomp filter, which refuses io_uring) and on the epoll fallback (with it).
+  there (`lab/submission-test.sh` prints both), on the ring (the container without Docker's default seccomp filter, which refuses io_uring) and on the epoll fallback (with it).
   `bash lab/submission-test.sh --seccomp-unconfined` and `bash lab/submission-test.sh` repeat these runs, as root then `deploy`, and each says
   which loop booted:
   [lab/submission-test.sh](https://github.com/Gcob/twelve-dollar-server-php/blob/main/lab/submission-test.sh).
@@ -56,13 +56,14 @@ hyperthread sibling left idle). Neither is the droplet.
   floor of 0.92 µs)**, and together with the tuned SQLite **11.59 µs less (21.0 %, 3 pairs of 3)**:
   [lab/results/2026-11-26-x86-levers](https://github.com/Gcob/twelve-dollar-server-php/tree/main/lab/results/2026-11-26-x86-levers). Why the ring is not
   Swoole's or ext-mrloop's: [lab/results/2026-11-26-off-the-shelf-uring](https://github.com/Gcob/twelve-dollar-server-php/tree/main/lab/results/2026-11-26-off-the-shelf-uring).
-  `ring.php` is a copy of the lab's ring, `lab/servers/ring-server.php` at commit `8617faf`, with its test hooks, its environment knobs and its
-  statistics line taken out
-  ([lab/servers/ring-server.php](https://github.com/Gcob/twelve-dollar-server-php/blob/main/lab/servers/ring-server.php)).
+  `ring.php` is a copy of the lab's ring, `lab/servers/ring-server.php` as of phase 8, with its test hooks, its environment knobs, its
+  statistics line and two members nothing in the submission reads taken out
+  ([lab/servers/ring-server.php](https://github.com/Gcob/twelve-dollar-server-php/blob/main/lab/servers/ring-server.php)). An idle server is not at 0 % CPU: with
+  nothing to do the loop wakes every 500 µs on the active ring, and the pairs above were measured with it.
 - **The fallback, decided once at boot.** Before it opens the database or listens, `server.php` builds the three rings. If the machine refuses a step
   (Docker's default seccomp filter, which answers `EPERM` to `io_uring_setup`; a kernel without io_uring or with it switched off; a limit), or cannot
-  run the ring at all (no FFI, `ffi.enable` off, a `HOST` that is not an IPv4 address), the server runs the epoll loop below and says why in
-  its `loop:` boot line: `loop: epoll (io_uring refused: setup 1)`. A ring that runs never switches later: a refusal after the boot is a crash.
+  run the ring at all (no FFI, `ffi.enable` off, a `HOST` that is not an IPv4 address, any error while the rings are being built), the server runs
+  the epoll loop below and says why in its `loop:` boot line: `loop: epoll (io_uring refused: setup 1)`, `loop: epoll (ring unavailable: <the reason>)`. A ring that runs never switches later: a refusal after the boot is a crash.
 - **The epoll loop, our own on ext-event, one request at a time, no framework.** A readable event reads, parses, runs the handler
   and writes the answer in one callback: no coroutine, no thread, no request or response object. In the
   runtime bake-off (7,000 req/s) it cost 21.88 µs per request on a trivial route and 29.14 on a post read from the
@@ -83,7 +84,7 @@ hyperthread sibling left idle). Neither is the droplet.
   for one process, so two processes were kept. The cost is memory: about 1.0 GiB at 150,000 users (1,026 MiB)
   against 615 MiB, half of the 2 GiB box. The 150,000-user figures are computed from the 60,000-connection runs,
   not measured at 150,000. The ring has no such wall (its tables hold up to 3 x 65,535 connections with no descriptor each, and 150,000 held
-  connections measured 844 MiB for the whole container): one process with a soft limit of 192,000 over its three rings, with the same rule, a
+  connections measured 844 MiB for the whole container with `lab/conns.sh`): one process with a soft limit of 192,000 over its three rings, with the same rule, a
   response built while more are open says `Connection: close` and an idle connection is never closed.
 - **The fallback's supervisor.** The parent forks the two processes and opens nothing itself. It never restarts one: if one ends,
   however it ends, it stops the other and exits 1, so a crash shows instead of leaving a half server (systemd decides

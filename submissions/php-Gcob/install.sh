@@ -46,7 +46,8 @@ SQLITE_SHA256=926ef8d3eab93fbf6e06011901273eec076b25594a4e1cdadd50c987f4f6d64e  
 
 # build-essential, autoconf, pkg-config: the compiler and what `configure` and `phpize` need.
 # libxml2-dev, libonig-dev, libsodium-dev, libffi-dev: what PHP's own configure flags below link against. There is no libsqlite3-dev:
-# PHP links the SQLite built below, and with no other one to find it cannot link the wrong one.
+# PHP links the SQLite built below (a machine that has one anyway finds the tuned one first, through PKG_CONFIG_PATH, and the check at the
+# end of this script fails the install if the php binary does not load /opt/sqlite-tuned).
 # libevent-dev: what PECL event builds against.
 apt-get -o DPkg::Lock::Timeout=120 update
 apt-get -o DPkg::Lock::Timeout=120 install -y --no-install-recommends \

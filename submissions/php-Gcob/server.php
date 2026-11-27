@@ -49,19 +49,23 @@ if (!is_file($path)) {
     exit(1);
 }
 // Why the whole init before anything else: a refusal must decide the loop before the database is opened and before a socket listens. Why the
-// try around nothing but the init: a refusal after the server runs is a crash, never a silent switch of loop.
-$ringFallback = ring_unavailable();
-if ($ringFallback !== null) {
-    $ringFallback = "ring unavailable: $ringFallback";
-} elseif (ip2long($host) === false) {
-    // Why: the ring listens on an IPv4 address; the epoll loop also takes a name or an IPv6 address.
-    $ringFallback = 'ring unavailable: HOST is not an IPv4 address';
-} else {
-    try {
+// try around nothing but the init: a refusal after the server runs is a crash, never a silent switch of loop. Why any Throwable: a machine we
+// did not foresee (a C library that is not Ubuntu's, an error while the rings are built) is a reason to run the epoll loop, not to die.
+$ringFallback = null;
+try {
+    $ringFallback = ring_unavailable();
+    if ($ringFallback !== null) {
+        $ringFallback = "ring unavailable: $ringFallback";
+    } elseif (ip2long($host) === false) {
+        // Why: the ring listens on an IPv4 address; the epoll loop also takes a name or an IPv6 address.
+        $ringFallback = 'ring unavailable: HOST is not an IPv4 address';
+    } else {
         $ringLoop = ring_open(SERVER_RINGS, SERVER_RING_SOFT_CONN_LIMIT);
-    } catch (RingRefused $e) {
-        $ringFallback = 'io_uring refused: ' . $e->step . ' ' . $e->errnoValue;
     }
+} catch (RingRefused $e) {
+    $ringFallback = 'io_uring refused: ' . $e->step . ' ' . $e->errnoValue;
+} catch (Throwable $e) {
+    $ringFallback = 'ring unavailable: ' . str_replace("\n", ' ', $e->getMessage());
 }
 if (isset($ringLoop)) {
     app_boot($path, $secret);
