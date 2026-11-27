@@ -98,7 +98,8 @@ An unknown variant exits non-zero and lists the known ones. `lab/run.sh` runs a 
 no swap, 65535 file descriptors, on the host network, pinned to CPU 2; `lab/` is mounted at `/lab` (read-only, except
 `lab/results/` and `lab/data/`). The CPU layout and the limits live in `lab/lib.sh`, shared by every lab script.
 A server file may also be under the repo's `submissions/` folder (`--server submissions/php-Gcob/server.php`): it is mounted read-only at
-`/submissions`, and only in a container that starts such a file (`LAB_RUN_SUBMISSIONS=1 bash lab/run.sh ...` mounts it for a check).
+`/submissions`, and only in a container that starts such a file (`LAB_RUN_SUBMISSIONS=1 bash lab/run.sh ...` mounts it for a check, and `LAB_MOUNT_SUBMISSIONS=1`
+does for a server container: `lab/conformance.sh --with-submissions`).
 `php-info` prints the PHP, Swoole and SQLite versions, OPcache and JIT, and which extensions are present (`swoole:
 not built` when the image has no Swoole), then `pcntl`, `sockets`, `event` (its version, or `not built`), `excimer` (the same) and the
 Workerman version of its two trees (`workerman: 5.2.4 (stock, nocache)`).
@@ -1347,6 +1348,9 @@ unset the app runs as it always did (the DIY files are not even loaded when it i
 - **`lab/stress.sh --app --path '/posts/{id}'`:** random posts of the seed (1 to 500,000), each response a 200 whose `"id"` is the request's, in order on its
   connection, one at a time and pipelined. `--app` starts the server as the app on a fresh seed copy. `/noop?id={id}` (the default) is the spike's echo.
 - **`lab/servers/bake-ring.php`** is the ring on the bake-off's handler, so `lab/conformance.sh --server lab/servers/bake-ring.php --ext sockets --seccomp-unconfined` runs.
+  `lab/servers/bake-submission-ring.php` is the same for the submission's own copy of the ring (`submissions/php-Gcob/ring.php`): `lab/conformance.sh --server
+  lab/servers/bake-submission-ring.php --ext sockets --seccomp-unconfined --with-submissions`. `lab/stress.sh` and `lab/conns.sh` print the `loop:` line the server booted on,
+  and take the submission's own `server.php` (`--server submissions/php-Gcob/server.php --ext pcntl --ext sockets --ext event --seccomp-unconfined --app`).
 - **Several rings, `APP_RINGS=<n>` (1 to 4, default 1; refused otherwise, and refused without `APP_RING=1`):** n rings in the one process, each with its own table
   of direct descriptors as large as `RLIMIT_NOFILE` gives (65,535 at most), all accepting from the one listening socket. Accepts are single (not multishot): a ring keeps at most 64 waiting and never more than its table has free slots for, so no connection is
   taken that has no slot, whatever burst the 4,096-connection backlog holds (a multishot accept drains the backlog in one go: with a margin of 16 slots a burst of 90 against a table of 80 lost one
@@ -1529,11 +1533,12 @@ One line per check, `ok` or `FAIL`, non-zero exit if any fails. To add one, writ
 script and list it in `CHECKS`.
 
 **The submission** (`submissions/php-Gcob`, the chosen variants in a clean copy with no switch) has its own checks:
-`check_submission` (it reads only `SQLITE_PATH`, `JWT_SECRET`, `HOST` and `PORT`, holds none of the lab's switch names or instruments,
+`check_submission` (it reads only `SQLITE_PATH`, `JWT_SECRET`, `HOST` and `PORT`, holds none of the lab's switch names or instruments, and uses FFI
+only in `ring.php`, where every `FFI::cdef()` names `libc.so.6`: an FFI driver to SQLite is still refused,
 `start.sh` passes the three extensions then the lab's `LAB_SERVER_PHP_FLAGS` in order, `php -l` passes in `php-lab:8.5`, and the folder holds
 only the allowed files) with `check_submission_catches_violations` (a fixture for each rule), `check_submission_passes_challenge_test`
-(42/42, no `--env`), `check_submission_both_workers_answer` (the boot lines, and 200 held connections that grow the socket table of each
-worker), `check_submission_default_host_and_port` (0.0.0.0:80 in a container with a network of its own) and `check_submission_cases`
+(42/42, no `--env`, under Docker's default seccomp filter: the server falls back to the epoll loop and says so), `check_submission_both_workers_answer`
+(the boot lines of that fallback, and 200 held connections that grow the socket table of each worker), `check_submission_default_host_and_port` (0.0.0.0:80 in a container with a network of its own) and `check_submission_cases`
 (`lab/check/submission-test.php`: the configuration refusals, SIGTERM, a killed worker, and the soft limit on socket pairs and through the loop). It also runs `lab/check/post-insert-test.php` (a new post is committed when `post_insert()` returns, and a commit made to fail with a deferred foreign key is an exception).
 `check_submission` also reads `install.sh` (every `curl` followed by a `sha256sum -c` of its file, every `phpize`, `php-config` and `php` by its full
 `/opt/php-gcob/bin/` path, the PHP and ext-event pins equal to the lab's images) and runs the pinned shellcheck on `install.sh`, `build.sh` and
@@ -1541,11 +1546,14 @@ worker), `check_submission_default_host_and_port` (0.0.0.0:80 in a container wit
 It reads `README.md` too: each link to this repo must be a `/tree/main/` or `/blob/main/` link to a path that exists in the tree (the README is read in the
 challenge's repo, where `lab/` does not exist), no link may be relative, and it holds no home path and no e-mail address.
 
-`lab/submission-test.sh [--ci] [--keep]` installs and tests the submission in a clean Ubuntu 24.04 container the way the bench does (`install.sh`
+`lab/submission-test.sh [--ci | --seccomp-unconfined] [--keep]` installs and tests the submission in a clean Ubuntu 24.04 container the way the bench does (`install.sh`
 as root, `build.sh` and `test/run.sh` as `deploy` on port 80, a second start on `0.0.0.0:80`, the processes' user and open-files limit, port 80
 refused without the capability) or, with `--ci`, the way the challenge's own CI does (Ubuntu's PHP 8.3 first on the `PATH`, `sudo bash install.sh`,
-`test/run.sh` on `127.0.0.1:3000`). One CPU, 2 GiB, a network of its own. It takes about 5 minutes on the arm64 VM (the compiles are most of it) and is
-not part of `lab/check.sh`.
+`test/run.sh` on `127.0.0.1:3000`). One CPU, 2 GiB, a network of its own. By default the container keeps Docker's default seccomp filter, which refuses
+io_uring, so the submission's ring cannot start and its server falls back to the epoll loop: the run prints the `loop:` line of the server's boot lines
+and checks it (`epoll (io_uring refused: setup 1)`, a parent and two workers). `--seccomp-unconfined` lifts the filter for the run: the loop must be
+`ring, 3 rings, ...` and one process. `--ci` runs both, one after the other, each with its own container and its own install. A run takes about 5 minutes
+on the arm64 VM (the compiles are most of it) and is not part of `lab/check.sh`.
 
 `check_results_regenerate` keeps the results folders honest: it runs every `lab/results/*/summarize.sh` (from its
 folder, reading only the raw files next to it) and checks the folder's `README.md` against it, byte for byte, so a

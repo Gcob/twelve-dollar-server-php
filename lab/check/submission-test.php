@@ -1,7 +1,8 @@
 <?php
 // The submission (submissions/php-Gcob), apart from the challenge's 42 checks.
 //
-// The server as a process: the boot lines in their order, SQLITE_PATH or JWT_SECRET unset or empty and a missing database each stop it with exit
+// The server as a process, on the epoll loop it falls back to when io_uring is refused (the lab's containers run under Docker's default seccomp filter):
+// the boot lines in their order, SQLITE_PATH or JWT_SECRET unset or empty and a missing database each stop it with exit
 // code 1, a message and nothing listening, SIGTERM to the parent ends both workers with exit code 0, and a worker killed with SIGKILL ends the
 // parent with exit code 1 and the other worker.
 //
@@ -392,7 +393,8 @@ check_case('the boot lines, in order: workers, listening, soft limit per process
         "#^listening on 127\\.0\\.0\\.1:$port\$#",
         '#^soft connection limit: 64000 per process$#',
         '#^sqlite: journal_mode=wal synchronous=1 mmap_size=0 cache_size=-65536$#',
-        '#^loop: [a-z]+$#',
+        // Why this text: the lab's containers run under Docker's default seccomp filter, which refuses io_uring, so the ring's first step fails and the server falls back.
+        '#^loop: epoll \(io_uring refused: setup \d+\)$#',
         '#^socket: backlog=4096 tcp_nodelay=1$#',
     ];
     if (count($lines) !== count($expected)) {

@@ -189,6 +189,8 @@ for e in "${LAB_EXT[@]}"; do
   [ "$e" != swoole ] || swoole_version="$(docker exec "$PROBE" php -d extension=swoole -r 'echo phpversion("swoole") ?: "";' 2>/dev/null || true)"
 done
 socket_line="$(lab_socket_line "$SERVER")"
+loop_line="$(lab_loop_line "$SERVER")"
+echo "conns: the server's loop line: ${loop_line:-(none printed)}" >&2
 server_pid="$(docker inspect -f '{{.State.Pid}}' "$SERVER")"
 # The soft limit the server runs under, read from outside (the probe sees every process).
 server_limit="$(docker exec "$PROBE" awk '/^Max open files/ {print $4}' "/proc/$server_pid/limits")"

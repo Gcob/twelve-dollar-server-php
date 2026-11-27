@@ -12,8 +12,9 @@
 # random posts of the seed (1 to 500,000) and each response must be a 200 whose post has that id. --app starts the server as the challenge
 # app, on a fresh copy of the seed with SQLITE_PATH and JWT_SECRET (lab_start_app), like lab/challenge-test.sh does.
 #
-# One line per pipeline setting, `ok    pipeline=<n>: <totals>` or `FAIL  pipeline=<n>: <totals>`; then the last `ring:` line the server
-# printed (its turns, requests and requests per turn). Exit 0 when every setting finds 0 mismatches and 0 lost, 1 when one does not or
+# The first line says the loop the server printed at boot (`event loop the server printed at boot: ring, 3 rings, ...`); then one line per
+# pipeline setting, `ok    pipeline=<n>: <totals>` or `FAIL  pipeline=<n>: <totals>`; then the last `ring:` line the server printed (its turns,
+# requests and requests per turn). Exit 0 when every setting finds 0 mismatches and 0 lost, 1 when one does not or
 # the run could not be done, 2 on a usage error. Both containers are removed at the end, whatever happens.
 set -euo pipefail
 
@@ -108,6 +109,9 @@ for _ in $(seq 1 150); do
   sleep 0.2
 done
 [ -n "$ready" ] || { docker logs "$SERVER" >&2 || true; fail "the server did not listen on port $port within 30 s"; }
+# The loop the server booted on (a server that falls back to another loop says so here).
+loop="$(lab_loop_line "$SERVER")"
+echo "event loop the server printed at boot: ${loop:-(none printed)}"
 
 rc=0
 IFS=, read -r -a settings <<<"$pipelines"

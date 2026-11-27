@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Runs once, as root, on a clean Ubuntu 24.04: builds SQLite 3.54.1, PHP 8.5.13 and the three extensions start.sh loads (pcntl,
 # sockets and PECL event) from their source tarballs. PHP and its extensions go into /opt/php-gcob, SQLite into /opt/sqlite-tuned.
+# PHP is built with its FFI extension (--with-ffi, against Ubuntu's libffi): the io_uring loop of ring.php calls the kernel through it, and
+# FFI is enabled for the CLI by PHP's own default (ffi.enable=preload allows it in a CLI script), so no setting is written or passed.
 # Nothing else on the machine is touched: Ubuntu's own libsqlite3 stays as it is, no php.ini is written and nothing is enabled
 # globally, start.sh loads the extensions with `-d extension=`.
 #
@@ -19,8 +21,8 @@
 # Every PHP tool is called by its full path: the machine may have another PHP first on its PATH (the challenge's CI
 # runner has Ubuntu's 8.3), and `sudo` resets the PATH. A bare `phpize` would build the extensions for the wrong PHP.
 #
-# On one CPU the install takes about 5 minutes (277 and 285 s measured on one arm64 core, 222 s before the SQLite build; the droplet was
-# not measured): the SQLite is compiled twice and trained in between. The last line it prints says what was installed.
+# On one CPU the install takes about 5 minutes (see the README for the times measured on one arm64 core; the droplet was not measured): the
+# SQLite is compiled twice and trained in between. The last line it prints says what was installed.
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 
@@ -190,7 +192,8 @@ build_sqlite -fprofile-use="$SQLITE_PGO" -fprofile-correction
 rm -rf "$SQLITE_SRC" "$SQLITE_PGO"
 
 # Load order: sockets before event (event declares sockets as a dependency). The JIT only starts with OPcache enabled in the
-# CLI, so the probe turns it on like start.sh does. Everything the server needs at runtime must be there, or the build fails.
+# CLI, so the probe turns it on like start.sh does. Everything the server needs at runtime must be there, or the build fails: FFI too, which
+# is proved by calling libc through it, with no -d setting (the way start.sh runs the server).
 # php must load the SQLite built above and nothing else, and that library must be the build with its options.
 # (ldd's output is read whole: `grep -q` closing the pipe early would make ldd fail under pipefail.)
 loaded="$(ldd "$PREFIX/bin/php")"
@@ -199,19 +202,20 @@ grep -q "libsqlite3.so.0 => $SQLITE_PREFIX/lib/" <<<"$loaded" \
 PHP_FLAGS=(-d extension=pcntl -d extension=sockets -d extension=event -d opcache.enable_cli=1 -d opcache.jit=tracing -d opcache.jit_buffer_size=32M)
 libevent="$("$PREFIX/bin/php" "${PHP_FLAGS[@]}" --ri event | sed -n 's/^libevent2 headers version => //p')"
 "$PREFIX/bin/php" "${PHP_FLAGS[@]}" -r '
-$missing = array_filter(["pcntl", "posix", "sockets", "event", "pdo_sqlite", "mbstring", "ctype", "hash", "json", "Zend OPcache"],
+$missing = array_filter(["pcntl", "posix", "sockets", "event", "pdo_sqlite", "mbstring", "ctype", "hash", "json", "Zend OPcache", "FFI"],
     fn ($name) => !extension_loaded($name));
+$ffi = in_array("FFI", $missing, true) ? false : FFI::cdef("int getpid(void);", "libc.so.6")->getpid() === getmypid();
 $jit = function_exists("opcache_get_status") ? (opcache_get_status(false)["jit"]["on"] ?? false) : false;
 $db = new PDO("sqlite::memory:");
 $sqlite = $db->query("select sqlite_version()")->fetchColumn();
 $options = $db->query("pragma compile_options")->fetchAll(PDO::FETCH_COLUMN);
 $single = in_array("THREADSAFE=0", $options, true);
-if ($missing || !$jit || $sqlite !== $argv[2] || !$single) {
-    fwrite(STDERR, "install: missing " . implode(", ", $missing) . ($jit ? "" : " (JIT is off)") . ($sqlite === $argv[2] ? "" : " (SQLite is $sqlite, not $argv[2])")
+if ($missing || !$jit || !$ffi || $sqlite !== $argv[2] || !$single) {
+    fwrite(STDERR, "install: missing " . implode(", ", $missing) . ($jit ? "" : " (JIT is off)") . ($ffi ? "" : " (FFI cannot call libc)") . ($sqlite === $argv[2] ? "" : " (SQLite is $sqlite, not $argv[2])")
         . ($single ? "" : " (SQLite is not built with THREADSAFE=0)") . "\n");
     exit(1);
 }
 echo "sqlite compile options: ", implode(" ", $options), "\n";
 echo "installed: PHP ", PHP_VERSION, ", SQLite ", $sqlite, " (THREADSAFE=0), libevent ", $argv[1], ", ext-event ", phpversion("event"),
-    ", OPcache with JIT, pcntl posix sockets event pdo_sqlite mbstring ctype hash json\n";
+    ", OPcache with JIT, FFI (calls libc), pcntl posix sockets event pdo_sqlite mbstring ctype hash json\n";
 ' -- "$libevent" "$SQLITE_VERSION"

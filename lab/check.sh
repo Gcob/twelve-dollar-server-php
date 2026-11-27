@@ -885,7 +885,8 @@ SUBMISSION_SWITCHES='APP_WORKERS|APP_PRAGMAS|APP_SOFT_CONN_LIMIT|APP_TELEMETRY|A
 # submission_static_problems <folder>: one line per rule the folder breaks, none when it keeps them all (no Docker: the lint is apart).
 #  getenv     the PHP reads only SQLITE_PATH, JWT_SECRET, HOST and PORT (getenv with one of the four, no $_ENV, no $_SERVER)
 #  switch     none of the lab's switch names, matched as words: a constant like APP_JSON_FLAGS is not one
-#  instrument none of the lab's instruments (FFI, Excimer, the telemetry and the profiler, the checkpointer, group commit)
+#  instrument none of the lab's instruments (Excimer, the telemetry and the profiler, the checkpointer, group commit), and FFI only in ring.php,
+#             where every FFI::cdef() names libc.so.6 (the ring's own system calls; an FFI driver to SQLite is still refused)
 #  flags      start.sh runs /opt/php-gcob/bin/php with the three extensions, then LAB_SERVER_PHP_FLAGS, in that order (read from lib.sh)
 #  folder     only install.sh, build.sh, start.sh, README.md, .gitignore and *.php files
 #  install    install.sh exists; every curl or wget in it is followed by a `sha256sum -c` of the file it fetched; every phpize, php-config and
@@ -903,7 +904,15 @@ submission_static_problems() {
     done < <(grep -o 'getenv([^)]*)' "$f")
     grep -q '\$_ENV\|\$_SERVER\|putenv(' "$f" && echo "getenv: $name reads or sets the environment another way (\$_ENV, \$_SERVER or putenv)"
     grep -nwE "$SUBMISSION_SWITCHES" "$f" | sed "s|^|switch: $name:|"
-    { grep -nE 'FFI|Excimer|DiyTelemetry|DiyProfile' "$f"; grep -niE 'checkpointer|group_commit' "$f"; } | sed "s|^|instrument: $name:|"
+    {
+      if [ "$name" = ring.php ]; then
+        grep -nE 'Excimer|DiyTelemetry|DiyProfile' "$f"
+        grep -E '^[[:space:]]*[^*/[:space:]].*FFI::cdef\(' "$f" | grep -v "'libc.so.6');\$" | sed 's|^|an FFI::cdef() that is not on libc.so.6: |'
+      else
+        grep -nE 'FFI|Excimer|DiyTelemetry|DiyProfile' "$f"
+      fi
+      grep -niE 'checkpointer|group_commit' "$f"
+    } | sed "s|^|instrument: $name:|"
   done
   submission_install_problems "$dir"
   submission_readme_problems "$dir"
@@ -1051,7 +1060,7 @@ check_submission_catches_violations() {
   printf '\n[a](%s/tree/main/lab/results/)\n[b](%s/blob/main/lab/README.md#the-lab)\n[c](https://example.org/x)\n' "$SUBMISSION_REPO_URL" "$SUBMISSION_REPO_URL" >>"$tmp/ok/README.md"
   problems="$(submission_static_problems "$tmp/ok")"
   [ -z "$problems" ] || { rm -rf "$tmp"; echo "constants named like a switch, getenv of PORT, and right links were refused: ${problems//$'\n'/ | }"; return 1; }
-  for kind in getenv getenv-all env-array switch instrument-ffi instrument-checkpointer flags flags-order folder subfolder lint \
+  for kind in getenv getenv-all env-array getenv-ring switch instrument-ffi instrument-ring-sqlite-ffi instrument-ring-telemetry instrument-checkpointer flags flags-order folder subfolder lint \
     no-install unpinned-download bare-phpize bare-php-config bare-php wrong-pin wrong-sqlite-pin wrong-sqlite-option wrong-sqlite-url \
     no-train wrong-train-mix wrong-schema shellcheck \
     no-readme readme-missing-path readme-missing-file readme-other-branch readme-relative-link readme-home-path readme-email; do
@@ -1061,8 +1070,11 @@ check_submission_catches_violations() {
       getenv) prefix=getenv; printf '<?php\n$x = getenv("APP_HOME");\n' >"$tmp/f/extra.php" ;;
       getenv-all) prefix=getenv; printf '<?php\n$x = getenv();\n' >"$tmp/f/extra.php" ;;
       env-array) prefix=getenv; printf '<?php\n$x = $_ENV["PORT"];\n' >"$tmp/f/extra.php" ;;
+      getenv-ring) prefix=getenv; printf '\n$x = getenv("URING_BUFFERS");\n' >>"$tmp/f/ring.php" ;;
       switch) prefix=switch; printf '<?php\n// APP_WORKERS=2 is built in\n' >"$tmp/f/extra.php" ;;
       instrument-ffi) prefix=instrument; printf '<?php\n// FFI\n' >"$tmp/f/extra.php" ;;
+      instrument-ring-sqlite-ffi) prefix=instrument; printf '\n$db = FFI::cdef("int sqlite3_open(const char *file, void **db);", "libsqlite3.so.0");\n' >>"$tmp/f/ring.php" ;;
+      instrument-ring-telemetry) prefix=instrument; printf '\n// DiyTelemetry\n' >>"$tmp/f/ring.php" ;;
       instrument-checkpointer) prefix=instrument; printf '<?php\nfunction run_checkpointer() {}\n' >"$tmp/f/extra.php" ;;
       flags) prefix=flags; sed 's/opcache.jit=tracing/opcache.jit=function/' "$SUBMISSION/start.sh" >"$tmp/f/start.sh" ;;
       flags-order) prefix=flags; sed 's/-d extension=sockets -d extension=event/-d extension=event -d extension=sockets/' "$SUBMISSION/start.sh" >"$tmp/f/start.sh"
@@ -1112,14 +1124,35 @@ check_submission_passes_challenge_test() {
   [ -z "$left" ] || { echo "containers left behind: ${left//$'\n'/ }"; return 1; }
 }
 
-# The submission as a container's first process: the boot lines (2 workers, the soft limit per process, the pragmas as SQLite reads them
+# The submission on its io_uring loop (Docker's seccomp filter lifted for the container): the boot lines (the soft limit over the three rings, the loop
+# line `ring, 3 rings, buffer ring` or `legacy buffers`, the pools), then the challenge's 42 checks, again with the filter lifted, and no container left.
+# A server that fell back to the epoll loop would say so in the loop line and fail here.
+check_submission_on_the_ring() {
+  local name=lab-check-submission-ring log out rc=0 left
+  LAB_SERVER_SECCOMP_UNCONFINED=1 CHECK_APP_SERVER=/submissions/php-Gcob/server.php CHECK_APP_EXT_EXTRA=pcntl start_app_for_check "$name" 18169 0 || return 1
+  sleep 1
+  log="$(docker logs "$name" 2>&1)"
+  docker rm -f "$name" >/dev/null 2>&1
+  grep -qx 'loop: ring, 3 rings, \(buffer ring\|legacy buffers\)' <<<"$log" || { echo "the loop line is not the ring's: ${log//$'\n'/ | }"; return 1; }
+  [ "$(grep -cE '^(listening on 0\.0\.0\.0:18169|soft connection limit: 192000|sqlite: journal_mode=wal synchronous=1 mmap_size=0 cache_size=-65536|ring-settings: table=65535 sq=4096 cq=32768 recv_buffers=4096x2048 send_slots=2048x8192|socket: backlog=4096 tcp_nodelay=1)$' <<<"$log")" = 5 ] \
+    || { echo "the boot lines are not the expected ones: ${log//$'\n'/ | }"; return 1; }
+  ! grep -q '^workers:' <<<"$log" || { echo "it started worker processes: ${log//$'\n'/ | }"; return 1; }
+  out="$(bash "$LAB/challenge-test.sh" --image 8.5 --server "$SUBMISSION/server.php" --ext pcntl --ext sockets --ext event --seccomp-unconfined 2>&1)" || rc=$?
+  [ "$rc" = 0 ] || { echo "lab/challenge-test.sh exited $rc: ${out//$'\n'/ | }"; return 1; }
+  grep -qx 'passed=42 failed=0' <<<"$out" || { echo "the summary is not 'passed=42 failed=0': ${out//$'\n'/ | }"; return 1; }
+  left="$(docker ps -a --format '{{.Names}}' | grep -e '^lab-challenge-' -e "^$name\$" || true)"
+  [ -z "$left" ] || { echo "containers left behind: ${left//$'\n'/ }"; return 1; }
+}
+
+# The submission as a container's first process, under Docker's default seccomp filter (which refuses io_uring, so it runs the epoll loop it falls
+# back to, and says so): the boot lines (2 workers, the soft limit per process, the pragmas as SQLite reads them
 # back, the loop, the socket), and 200 connections held open at once, each answered, with sockets in the process table of each worker (the
 # copy has no telemetry to name the process that answered). A socket the worker did not have before is a connection it accepted.
 check_submission_both_workers_answer() {
   local name=lab-check-submission log pids result
   CHECK_APP_SERVER=/submissions/php-Gcob/server.php CHECK_APP_EXT_EXTRA=pcntl start_app_for_check "$name" 18168 0 || return 1
   log="$(docker logs "$name" 2>&1)"
-  if [ "$(grep -cE '^(workers: 2 \(pids [0-9]+ [0-9]+\)|listening on 0\.0\.0\.0:18168|soft connection limit: 64000 per process|sqlite: journal_mode=wal synchronous=1 mmap_size=0 cache_size=-65536|loop: [a-z]+|socket: backlog=4096 tcp_nodelay=1)$' <<<"$log")" != 6 ]; then
+  if [ "$(grep -cE '^(workers: 2 \(pids [0-9]+ [0-9]+\)|listening on 0\.0\.0\.0:18168|soft connection limit: 64000 per process|sqlite: journal_mode=wal synchronous=1 mmap_size=0 cache_size=-65536|loop: epoll \(io_uring refused: setup [0-9]+\)|socket: backlog=4096 tcp_nodelay=1)$' <<<"$log")" != 6 ]; then
     docker rm -f "$name" >/dev/null 2>&1
     echo "the boot lines are not the six expected: ${log//$'\n'/ | }"
     return 1
@@ -1166,7 +1199,8 @@ check_submission_install_stops_on_wrong_sha256() {
     out="$(docker run --rm "${LAB_RESOURCE_FLAGS[@]}" -v "$tmp:/src:ro" "$(lab_base_image)" bash /src/install.sh 2>&1)" || rc=$?
     [ "$rc" != 0 ] || { rm -rf "$tmp"; echo "install.sh exited 0 on a wrong sha256 ($from)"; return 1; }
     grep -q "$file: FAILED" <<<"$out" || { rm -rf "$tmp"; echo "no '$file: FAILED' in the output: $(tail -5 <<<"$out" | tr '\n' ' ')"; return 1; }
-    [[ "$(tail -n 1 <<<"$out")" == *"did NOT match"* ]] || { rm -rf "$tmp"; echo "the script went on after the wrong sha256 of $file: $(tail -3 <<<"$out" | tr '\n' ' ')"; return 1; }
+    # Why the last two lines: sha256sum prints `<file>: FAILED` on stdout and its warning on stderr, and the container's two streams reach us in either order.
+    [[ "$(tail -n 2 <<<"$out")" == *"did NOT match"* ]] || { rm -rf "$tmp"; echo "the script went on after the wrong sha256 of $file: $(tail -3 <<<"$out" | tr '\n' ' ')"; return 1; }
   done
   rm -rf "$tmp"
 }
@@ -4197,6 +4231,7 @@ CHECKS=(
   check_submission_cases
   check_submission_install_stops_on_wrong_sha256
   check_submission_passes_challenge_test
+  check_submission_on_the_ring
   check_submission_both_workers_answer
   check_submission_default_host_and_port
   check_soft_limit_closes_the_third_connection

@@ -137,7 +137,8 @@ lab_build_php_flags() {
 # lab_run_server_container <container name> <variant> <port> <command...>: the `docker run` of every server container (1 CPU,
 # 2 GiB, the server CPU, host network, lab/ at /lab, the seed read-only at /lab/data), running <command> in php-lab:<variant>.
 # The repo's submissions/ folder is mounted read-only at /submissions only when an argument of <command> is a path under it (what
-# lab_in_container_path prints for a server file there): a bind mount of a folder that does not exist would make an empty one.
+# lab_in_container_path prints for a server file there), or when LAB_MOUNT_SUBMISSIONS=1 (a server file of the lab that loads a file of a
+# submission, lab/servers/bake-submission-ring.php): a bind mount of a folder that does not exist would make an empty one.
 # Needs LAB (the lab/ folder); LAB_ENV, an array of K=V, is passed with -e after PORT. Never mount lab/data writable here: a
 # server must copy feed.db, not open it (WAL files). LAB_SERVER_NOFILE, when set, replaces the container's `nofile` limit (a test
 # hook for lab/conns.sh: the later --ulimit of the same name wins). LAB_SERVER_SECCOMP_UNCONFINED=1 starts the container without
@@ -149,6 +150,7 @@ lab_run_server_container() {
   for arg in "$@"; do
     case "$arg" in /submissions/*) submissions_args=(-v "$(dirname "$LAB")/submissions:/submissions:ro"); break ;; esac
   done
+  [ "${LAB_MOUNT_SUBMISSIONS:-}" != 1 ] || submissions_args=(-v "$(dirname "$LAB")/submissions:/submissions:ro")
   for kv in "${LAB_ENV[@]+"${LAB_ENV[@]}"}"; do env_args+=(-e "$kv"); done
   [ -z "${LAB_SERVER_NOFILE:-}" ] || nofile_args=(--ulimit "nofile=$LAB_SERVER_NOFILE:$LAB_SERVER_NOFILE")
   [ "${LAB_SERVER_SECCOMP_UNCONFINED:-}" != 1 ] || seccomp_args=(--security-opt seccomp=unconfined)
