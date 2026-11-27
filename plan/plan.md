@@ -1,6 +1,6 @@
 # $12 server challenge in PHP
 
-**Status:** ⏸️ Phase 8: local scopes 1 to 5 done (branch `phase-8-claude` at `312cd4a`, pushed), stopped before scope 6, the first AWS session · approved for its local scopes on Jacob's standing go of 2026-11-26 15:10 · snapshot 2026-11-26-1537 · 🔴 Q24 and Q27, then his go
+**Status:** ⏸️ Phase 8: every local scope done (1 to 5, and 8's shared part; branch `phase-8-claude` at `62fc877`, pushed), stopped before scope 6, the first AWS session · approved for its local scopes on Jacob's standing go of 2026-11-26 15:10 · snapshot 2026-11-26-1537 · 🔴 Q24 and Q27, then his go
 **Round:** 8
 **Since your last read:** phase 8's plan is written: 10 scopes, D108 to D115, the predictions. The levers are judged by
 their µs per request on x86, against phase 7's submission, cheapest first: the single-post plan read (no timing if
@@ -214,7 +214,7 @@ step's choice backed by a measurement.
 **Decisions:** 122 active, in [decisions.md](decisions.md). D5 changes how to read the step lab: every prior-art number
 is a prediction we re-measure, not an answer.
 
-### Phase 8 scopes (1 to 5 done; 6 and 9 need your go)
+### Phase 8 scopes (1 to 5 and 8's shared part done; 6 and 9 need your go)
 
 Detail, seams, cases and the predictions in [details/phase-8.md](details/phase-8.md). One commit each, on branch
 `phase-8-claude` (D14). Scopes 6 and 9 are AWS sessions: each needs your go. Scope 7 is skipped if nothing wins.
