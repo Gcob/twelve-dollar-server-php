@@ -154,7 +154,7 @@ wait_for_second() { while [ "$(date +%s)" -lt "$1" ]; do sleep 0.05; done; }
 # start_half <n> <go epoch>: half <n>'s k6 and the load box's sampler for it, started at the second <go> (so every half starts together). Runs in the
 # background; leaves `.started` (epoch seconds with a fraction), `.layout` and the sampler's files in the half's folder, or `.error` and a non-zero
 # status. With the test hook the hook runs here, to its end, and its exit code is in `.exit`.
-# FIXME(pending): Q26 (plan.md) decides where the second half runs: one m5.8xlarge with two containers (A, coded) or a second m5.4xlarge started over SSH (B). Assumes A.
+# The second half runs as a second container on the same load box (one m5.8xlarge), not on a second machine over SSH.
 start_half() {
   local n="$1" go="$2" hd name sampler cg layout k6_args mounts create_args sampler_args ips hu
   hd="$(half_dir "$n")" name="$(half_name "$n" "$K6C")" sampler="$(half_name "$n" "$SAMPLER")" hu="$(half_users "$n")"
