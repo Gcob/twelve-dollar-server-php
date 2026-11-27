@@ -3225,7 +3225,8 @@ boxes_fixture() {
   # The kernels a successful `apt-get install linux-image-aws-lts-24.04` leaves in /boot: two 6.8 builds (the newest must be named) and 7.0.
   mkdir -p "$dir/boot"
   touch "$dir/boot/vmlinuz-6.8.0-1047-aws" "$dir/boot/vmlinuz-6.8.0-1048-aws" "$dir/boot/vmlinuz-7.0.0-1005-aws" "$dir/boot/config-6.8.0-1048-aws"
-  boxes_stubs "$dir/bin" systemctl shutdown update-grub reboot useradd cloud-init apt-get php
+  boxes_stubs "$dir/bin" systemctl shutdown update-grub reboot useradd cloud-init apt-get php lsinitramfs update-initramfs
+  echo 'usr/lib/modules/6.8.0-151-generic/kernel/drivers/nvme/host/nvme.ko.zst' >"$dir/bin/lsinitramfs.out"
   echo '41.3 ns per iteration (1000 iterations, 6.1 s), Fixture CPU' >"$dir/bin/php.out"
 }
 
@@ -3368,6 +3369,90 @@ check_score_server_setup_modes() {
   rm -rf "$dir"
 }
 
+# boxes_generic_fixture <dir>: boxes_fixture plus what `apt-get install linux-image-generic` leaves: two generic 6.8 builds (the newest must be
+# named) beside the aws ones, the newest's initramfs, and the image's drop-ins (one of them forces root=PARTUUID, which boots with no initramfs).
+boxes_generic_fixture() {
+  local dir="$1"
+  boxes_fixture "$dir"
+  touch "$dir/boot/vmlinuz-6.8.0-150-generic" "$dir/boot/vmlinuz-6.8.0-151-generic" "$dir/boot/initrd.img-6.8.0-151-generic"
+  mkdir -p "$dir/grub.d"
+  printf 'GRUB_FORCE_PARTUUID=0a1b2c3d-01\n' >"$dir/grub.d/40-force-partuuid.cfg"
+  printf 'GRUB_CMDLINE_LINUX_DEFAULT="console=tty1 console=ttyS0 nvme_core.io_timeout=4294967295"\n' >"$dir/grub.d/50-cloudimg-settings.cfg"
+}
+
+# --shape --kernel <aws|generic>: the flavour is a choice (aws is the default) and --check says which one was chosen and which one runs.
+# The generic kernel boots only with an initramfs that carries nvme, and with the image's forced root=PARTUUID taken out; a kernel that cannot
+# have that is not booted (the box stays on its own kernel, mem=2G and the one update-grub and reboot still happen). Nothing is booted here: the
+# GRUB edits are read back as text from a fixture tree.
+check_score_server_setup_kernels() {
+  local dir out cloudimg kind
+  dir="$(mktemp -d)"
+  boxes_generic_fixture "$dir"
+  boxes_setup_run "$dir" -- --shape
+  [ "$BOXES_RC" = 0 ] || { echo "--shape exits $BOXES_RC: ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  grep -qx '# kernel flavour: aws (what --shape was asked for; --check says which one runs)' "$dir/grub.d/99-twelve-dollar-mem.cfg" \
+    || { echo "the default flavour is aws and the drop-in says so: $(cat "$dir/grub.d/99-twelve-dollar-mem.cfg")"; return 1; }
+  ! grep -q 'linux-image-generic' "$dir/bin/calls" || { echo "the default installs the aws kernel only: $(tr '\n' ';' <"$dir/bin/calls")"; return 1; }
+  out="$(GRUB_DEFAULT=0 bash -c '. "$1"; echo "$GRUB_DEFAULT"' _ "$dir/grub.d/99-twelve-dollar-mem.cfg")"
+  [ "$out" = "Advanced options for Ubuntu>Ubuntu, with Linux 6.8.0-1048-aws" ] || { echo "with both flavours in /boot the aws one is chosen by default, got '$out'"; return 1; }
+  grep -qx 'GRUB_FORCE_PARTUUID=0a1b2c3d-01' "$dir/grub.d/40-force-partuuid.cfg" || { echo "the aws flavour leaves the image's drop-ins alone"; return 1; }
+  boxes_setup_run "$dir" SCORE_CURL=bash -- --check
+  grep -qx 'info  kernel-flavour: aws chosen, aws running' <<<"$BOXES_OUT" || { echo "--check names the flavour chosen and the one running: ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  rm -rf "$dir"
+
+  dir="$(mktemp -d)"
+  boxes_generic_fixture "$dir"
+  cloudimg="$(cat "$dir/grub.d/50-cloudimg-settings.cfg")"
+  boxes_setup_run "$dir" -- --shape --kernel generic
+  [ "$BOXES_RC" = 0 ] || { echo "--shape --kernel generic exits $BOXES_RC: ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  [ "$(grep -c '^apt-get .*install .*linux-image-generic' "$dir/bin/calls")" = 1 ] && ! grep -q 'linux-image-aws' "$dir/bin/calls" \
+    || { echo "--kernel generic installs linux-image-generic once and not the aws one: $(tr '\n' ';' <"$dir/bin/calls")"; return 1; }
+  [ "$(grep -v '^apt-get \|^cloud-init ' "$dir/bin/calls" | sed 's/^lsinitramfs .*/lsinitramfs/' | tr '\n' ';')" = "lsinitramfs;update-grub ;reboot ;" ] \
+    || { echo "generic: the initramfs is read, then one update-grub, then one reboot, and no initramfs is built when it exists: $(tr '\n' ';' <"$dir/bin/calls")"; return 1; }
+  out="$(GRUB_DEFAULT=0 bash -c '. "$1"; echo "$GRUB_DEFAULT"' _ "$dir/grub.d/99-twelve-dollar-mem.cfg")"
+  [ "$out" = "Advanced options for Ubuntu>Ubuntu, with Linux 6.8.0-151-generic" ] || { echo "GRUB_DEFAULT must name the newest generic 6.8 entry, got '$out'"; return 1; }
+  out="$(GRUB_CMDLINE_LINUX_DEFAULT='console=tty1' bash -c '. "$1"; echo "$GRUB_CMDLINE_LINUX_DEFAULT"' _ "$dir/grub.d/99-twelve-dollar-mem.cfg")"
+  [ "$out" = "console=tty1 mem=2G" ] || { echo "the generic flavour shares the reboot with mem=2G, got '$out'"; return 1; }
+  grep -qx '# GRUB_FORCE_PARTUUID=0a1b2c3d-01 (off: the generic kernel boots with an initramfs)' "$dir/grub.d/40-force-partuuid.cfg" \
+    || { echo "the image's forced root=PARTUUID must be commented out: $(cat "$dir/grub.d/40-force-partuuid.cfg")"; return 1; }
+  out="$(bash -c '. "$1"; echo "${GRUB_FORCE_PARTUUID-unset}"' _ "$dir/grub.d/40-force-partuuid.cfg")"
+  [ "$out" = unset ] || { echo "sourcing the drop-in must leave GRUB_FORCE_PARTUUID unset, got '$out'"; return 1; }
+  [ "$(cat "$dir/grub.d/50-cloudimg-settings.cfg")" = "$cloudimg" ] || { echo "a drop-in that forces nothing is left as it was"; return 1; }
+  grep -qx '# kernel flavour: generic (what --shape was asked for; --check says which one runs)' "$dir/grub.d/99-twelve-dollar-mem.cfg" \
+    || { echo "the drop-in names the flavour chosen: $(cat "$dir/grub.d/99-twelve-dollar-mem.cfg")"; return 1; }
+  boxes_setup_run "$dir" SCORE_CURL=bash SCORE_KERNEL_RELEASE=6.8.0-151-generic -- --check
+  [ "$BOXES_RC" = 0 ] && grep -qx 'info  kernel-flavour: generic chosen, generic running' <<<"$BOXES_OUT" && grep -qx 'ok    kernel: 6.8.0-151-generic' <<<"$BOXES_OUT" \
+    || { echo "--check on a generic box: ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  boxes_setup_run "$dir" SCORE_CURL=bash SCORE_KERNEL_RELEASE=7.0.0-1005-aws -- --check
+  grep -qx 'info  kernel-flavour: generic chosen, aws running' <<<"$BOXES_OUT" || { echo "--check names a box that stayed on the aws kernel: ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  rm -rf "$dir"
+
+  # No initramfs and none built (the stub builds nothing), then an initramfs with no nvme in it: the kernel is not booted, the drop-ins are left.
+  for kind in missing no-nvme; do
+    dir="$(mktemp -d)"
+    boxes_generic_fixture "$dir"
+    if [ "$kind" = missing ]; then rm "$dir/boot/initrd.img-6.8.0-151-generic"; else echo 'usr/lib/modules/6.8.0-151-generic/kernel/fs/ext4/ext4.ko.zst' >"$dir/bin/lsinitramfs.out"; fi
+    boxes_setup_run "$dir" -- --shape --kernel generic
+    [ "$BOXES_RC" = 0 ] && grep -qx 'info  kernel: generic 6.8.0-151-generic not used (no initramfs with the nvme driver in '"$dir"'/boot), staying on 6.8.0-1048-aws' <<<"$BOXES_OUT" \
+      || { echo "the '$kind' initramfs: the box stays on its kernel and says why (exit $BOXES_RC): ${BOXES_OUT//$'\n'/ | }"; return 1; }
+    ! grep -q GRUB_DEFAULT "$dir/grub.d/99-twelve-dollar-mem.cfg" && grep -qx 'GRUB_FORCE_PARTUUID=0a1b2c3d-01' "$dir/grub.d/40-force-partuuid.cfg" \
+      || { echo "the '$kind' initramfs: GRUB_DEFAULT and the forced root must be left alone"; return 1; }
+    [ "$(grep -v '^apt-get \|^cloud-init \|^lsinitramfs ' "$dir/bin/calls" | tr '\n' ';')" = "$([ "$kind" = missing ] && echo 'update-initramfs -c -k 6.8.0-151-generic;')update-grub ;reboot ;" ] \
+      || { echo "the '$kind' initramfs: it builds the initramfs when it is missing (and only then), then update-grub, then reboot: $(tr '\n' ';' <"$dir/bin/calls")"; return 1; }
+    rm -rf "$dir"
+  done
+
+  # A flavour that is neither, or --kernel with another mode, is a usage error.
+  dir="$(mktemp -d)"
+  boxes_generic_fixture "$dir"
+  boxes_setup_run "$dir" -- --shape --kernel debian
+  [ "$BOXES_RC" = 2 ] || { echo "an unknown flavour must be a usage error (exit $BOXES_RC)"; return 1; }
+  boxes_setup_run "$dir" -- --check --kernel generic
+  [ "$BOXES_RC" = 2 ] || { echo "--kernel outside --shape must be a usage error (exit $BOXES_RC)"; return 1; }
+  [ ! -s "$dir/bin/calls" ] || { echo "a usage error ran commands: $(tr '\n' ';' <"$dir/bin/calls")"; return 1; }
+  rm -rf "$dir"
+}
+
 # The 240-minute cap, re-armed after the reboot with the time left (its minutes round up; past the cap it arms one minute and fails).
 check_score_server_setup_cap() {
   local dir
@@ -3465,8 +3550,8 @@ check_score_server_ctl() {
   boxes_ctl_run "$dir" -- loop
   [ "$BOXES_RC" = 0 ] && [ -z "$BOXES_OUT" ] || { echo "a service that printed no loop line: loop prints nothing and exits 0 (exit $BOXES_RC): $BOXES_OUT"; return 1; }
   boxes_ctl_run "$dir" -- facts
-  [ "$BOXES_RC" = 0 ] && jq -e 'type == "object" and .nproc == 1 and .mem_total_mib == 1984 and .swap_mib == 0 and (.kernel | type == "string") and .cpu_model == "Fixture CPU"' <<<"$BOXES_OUT" >/dev/null \
-    || { echo "facts prints one JSON object (cpu_model, nproc, mem_total_mib, kernel, swap_mib) of the fixture's box (exit $BOXES_RC): ${BOXES_OUT//$'\n'/ | }"; return 1; }
+  [ "$BOXES_RC" = 0 ] && jq -e 'type == "object" and .nproc == 1 and .mem_total_mib == 1984 and .swap_mib == 0 and (.kernel | type == "string") and .kernel_flavour == (.kernel | split("-") | last) and .cpu_model == "Fixture CPU"' <<<"$BOXES_OUT" >/dev/null \
+    || { echo "facts prints one JSON object (cpu_model, nproc, mem_total_mib, kernel, kernel_flavour, swap_mib) of the fixture's box (exit $BOXES_RC): ${BOXES_OUT//$'\n'/ | }"; return 1; }
   rm -rf "$dir"
 }
 
@@ -4380,6 +4465,7 @@ CHECKS=(
   check_score_unit
   check_score_server_setup_checks
   check_score_server_setup_modes
+  check_score_server_setup_kernels
   check_score_server_setup_cap
   check_score_cpu_micro
   check_score_server_ctl

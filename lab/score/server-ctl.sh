@@ -9,7 +9,7 @@
 #   server-ctl.sh sample-start <dir>   start lab/score/server-sample.sh, detached, on the service's cgroup and processes, writing into <dir>
 #   server-ctl.sh sample-stop <dir>    stop it; <dir> then holds server.csv, server-start.txt, server-end.txt and sampler.txt, and
 #                                      server-died.txt when the service was not running (files stay readable for every user)
-#   server-ctl.sh facts                one JSON object: cpu_model, nproc, mem_total_mib, kernel, swap_mib
+#   server-ctl.sh facts                one JSON object: cpu_model, nproc, mem_total_mib, kernel, kernel_flavour (the release's last word), swap_mib
 #   server-ctl.sh died                 exit 0 when the service is not active, 1 when it is
 #   server-ctl.sh loop                 the text after the last `loop:` line the service printed (what its event loop runs on), from the unit's journal;
 #                                      nothing when it printed none
@@ -91,12 +91,13 @@ cmd_sample_stop() {
 }
 
 cmd_facts() {
-  local model nproc mem swap
+  local model nproc mem swap kernel
   model="$(grep -m1 '^model name' "$CPUINFO" | cut -d: -f2- | sed 's/^ *//; s/["\\]//g')"
   nproc="$(grep -c '^processor' "$CPUINFO")"
   mem="$(awk '/^MemTotal:/ {print int($2 / 1024)}' "$MEMINFO")"
   swap="$(awk '/^SwapTotal:/ {print int($2 / 1024)}' "$MEMINFO")"
-  printf '{"cpu_model":"%s","nproc":%s,"mem_total_mib":%s,"kernel":"%s","swap_mib":%s}\n' "${model:-unknown}" "$nproc" "$mem" "$(uname -r)" "${swap:-0}"
+  kernel="$(uname -r)"
+  printf '{"cpu_model":"%s","nproc":%s,"mem_total_mib":%s,"kernel":"%s","kernel_flavour":"%s","swap_mib":%s}\n' "${model:-unknown}" "$nproc" "$mem" "$kernel" "${kernel##*-}" "${swap:-0}"
 }
 
 cmd_died() {

@@ -3,8 +3,10 @@
 # with the submission installed the way the challenge's bench installs it and started by systemd. Runs as root, from a copy of this repo's
 # tree (`git archive`), on the server box only.
 #
-#   sudo bash lab/score/server-setup.sh --shape                         installs the 6.8 kernel (linux-image-aws-lts-24.04, the one the bench runs) and makes it
-#                                                                       grub's default, adds mem=2G to the boot line, updates grub once, reboots. Nothing else.
+#   sudo bash lab/score/server-setup.sh --shape [--kernel aws|generic]  installs Ubuntu's GA 6.8 kernel and makes it grub's default, adds mem=2G to the
+#                                                                       boot line, updates grub once, reboots. Nothing else. The kernel is the `aws` flavour
+#                                                                       (linux-image-aws-lts-24.04, the default) or the `generic` one (linux-image-generic,
+#                                                                       with the initramfs it needs on EC2: see install_generic_kernel).
 #   sudo bash lab/score/server-setup.sh --launch-epoch <epoch>          after the reboot: everything below
 #   sudo bash lab/score/server-setup.sh --check                         only the checks, no install (and the CPU-only micro, lab/score/cpu-micro.php)
 #   sudo bash lab/score/server-setup.sh --cap-only --launch-epoch <e>   only re-arms the 240-minute shutdown
@@ -22,7 +24,7 @@
 # checks read can be swapped (SCORE_CPUINFO, SCORE_MEMINFO, SCORE_SWAPS, SCORE_MODULES), and so can the unit's cgroup and /proc
 # (SCORE_UNIT_CGROUP, SCORE_PROC), the user the service must run as (SCORE_SETUP_USER), the clock (SCORE_SETUP_NOW) and the folder of grub's
 # drop-ins (SCORE_GRUB_DIR), /boot (SCORE_BOOT_DIR), the kernel release (SCORE_KERNEL_RELEASE) and the PHP that runs the micro (SCORE_PHP):
-# lab/check.sh feeds it fixtures that way, with a stub for apt-get.
+# lab/check.sh feeds it fixtures that way, with stubs for apt-get, lsinitramfs and the others.
 set -euo pipefail
 
 CPUINFO="${SCORE_CPUINFO:-/proc/cpuinfo}"
@@ -37,7 +39,9 @@ GRUB_DIR="${SCORE_GRUB_DIR:-/etc/default/grub.d}"
 BOOT_DIR="${SCORE_BOOT_DIR:-/boot}"
 KERNEL_RELEASE="${SCORE_KERNEL_RELEASE:-$(uname -r)}"
 PHP="${SCORE_PHP:-/opt/php-gcob/bin/php}"
-KERNEL_PACKAGE=linux-image-aws-lts-24.04
+# FIXME(pending): Jacob must confirm the kernel flavour of the score boxes (Q29 in plan/plan.md). Assumes aws, the flavour the score session was
+# planned on; `generic` is the flavour of a droplet. Switching the default is this one line.
+KERNEL_FLAVOUR=aws
 CAP_MINUTES=240
 MEM_LIMIT_MIB=2048
 # CAP_NET_BIND_SERVICE is capability 10: the bit 0x400.
@@ -49,20 +53,28 @@ TREE="$(cd "$(dirname "$0")/../.." && pwd)"
 SUBMISSION=/srv/php-Gcob
 SEED=/srv/seed/feed.db
 
-usage() { echo "usage: server-setup.sh --shape | --launch-epoch <epoch> | --check | --cap-only --launch-epoch <epoch>" >&2; exit 2; }
+usage() { echo "usage: server-setup.sh --shape [--kernel aws|generic] | --launch-epoch <epoch> | --check | --cap-only --launch-epoch <epoch>" >&2; exit 2; }
 
-mode="" launch_epoch=""
+mode="" launch_epoch="" kernel_given=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --shape) mode=shape ;;
     --check) mode=check ;;
     --cap-only) mode=cap ;;
     --launch-epoch) [ "$#" -ge 2 ] || usage; launch_epoch="$2"; shift ;;
+    --kernel) [ "$#" -ge 2 ] || usage; KERNEL_FLAVOUR="$2"; kernel_given=1; shift ;;
     *) usage ;;
   esac
   shift
 done
 [ -n "$mode" ] || mode=install
+{ [ "$KERNEL_FLAVOUR" = aws ] || [ "$KERNEL_FLAVOUR" = generic ]; } || usage
+{ [ "$kernel_given" = 0 ] || [ "$mode" = shape ]; } || usage
+case "$KERNEL_FLAVOUR" in
+  aws) KERNEL_PACKAGE=linux-image-aws-lts-24.04 ;;
+  generic) KERNEL_PACKAGE=linux-image-generic ;;
+esac
+SHAPE_DROPIN=99-twelve-dollar-mem.cfg
 [ -z "$launch_epoch" ] || [[ "$launch_epoch" =~ ^[0-9]+$ ]] || usage
 { [ "$mode" != install ] && [ "$mode" != cap ]; } || [ -n "$launch_epoch" ] || usage
 
@@ -72,9 +84,9 @@ bad() { echo "FAIL  $1: $2"; failed=1; }
 info() { echo "info  $1: $2"; }
 
 # --- --shape -----------------------------------------------------------------------------------------------------------------------
-# Why 6.8: the challenge's bench runs Ubuntu 24.04's own kernel, 6.8, and the AMI ships a newer one (7.0). The package pulls the 6.8 build in
-# beside the newer one; grub's menu entry for it is named in GRUB_DEFAULT, in the same drop-in as mem=2G, so there is one update-grub and one reboot.
-# A box that cannot get it stays on the AMI's kernel and says so: its facts print the kernel it ran.
+# Why 6.8: the challenge's bench runs Ubuntu 24.04's own kernel, 6.8 (its flavour is not known), and the AMI ships a newer one (7.0). The package
+# pulls the 6.8 build in beside the newer one; grub's menu entry for it is named in GRUB_DEFAULT, in the same drop-in as mem=2G, so there is one
+# update-grub and one reboot. A box that cannot get it stays on the AMI's kernel and says so: its facts print the kernel it ran.
 install_kernel() { # prints the menu entry of the newest 6.8 build, or says why not on a `info kernel:` line and prints nothing
   local out version
   wait_for_first_boot >&2
@@ -85,12 +97,35 @@ install_kernel() { # prints the menu entry of the newest 6.8 build, or says why 
     info kernel "6.8 not installed (apt-get failed: $(tail -n 1 <<<"$out")), staying on $KERNEL_RELEASE" >&2
     return 0
   fi
-  version="$(ls "$BOOT_DIR" 2>/dev/null | sed -n 's/^vmlinuz-\(6\.8\..*\)$/\1/p' | sort -V | tail -n 1)"
+  version="$(ls "$BOOT_DIR" 2>/dev/null | sed -n "s/^vmlinuz-\\(6\\.8\\..*-$KERNEL_FLAVOUR\\)\$/\\1/p" | sort -V | tail -n 1)"
   if [ -z "$version" ]; then
     info kernel "6.8 not installed (no vmlinuz-6.8 in $BOOT_DIR), staying on $KERNEL_RELEASE" >&2
     return 0
   fi
+  if [ "$KERNEL_FLAVOUR" = generic ]; then
+    install_generic_kernel "$version" || return 0
+  fi
   echo "Advanced options for Ubuntu>Ubuntu, with Linux $version"
+}
+
+# Why the generic kernel needs this: Ubuntu's EC2 image boots with no initramfs (a drop-in sets GRUB_FORCE_PARTUUID, so grub passes root=PARTUUID=...
+# and no initrd), and linux-image-generic has its NVMe driver as a module: booted that way it panics on "root device not found". So the kernel must
+# have an initramfs that carries nvme (the package ships one; one is built when it is missing), and the force-PARTUUID line is commented out.
+# A kernel whose initramfs has no nvme is not booted: the box stays on its own kernel, and says so.
+install_generic_kernel() { # install_generic_kernel <version>: 0 when the kernel will boot, else says why on an `info kernel:` line and returns 1
+  local version="$1" initrd="$BOOT_DIR/initrd.img-$1" file
+  [ -e "$initrd" ] || update-initramfs -c -k "$version" >&2 || true
+  if [ ! -e "$initrd" ] || ! lsinitramfs "$initrd" 2>/dev/null | grep -q nvme; then
+    info kernel "generic $version not used (no initramfs with the nvme driver in $BOOT_DIR), staying on $KERNEL_RELEASE" >&2
+    return 1
+  fi
+  for file in "$GRUB_DIR"/*.cfg; do
+    [ -f "$file" ] || continue
+    grep -q '^GRUB_FORCE_PARTUUID' "$file" || continue
+    sed 's/^\(GRUB_FORCE_PARTUUID.*\)$/# \1 (off: the generic kernel boots with an initramfs)/' "$file" >"$file.new"
+    cat "$file.new" >"$file"
+    rm -f "$file.new"
+  done
 }
 
 # Why 99-: Ubuntu's cloud image sets the boot line's options in /etc/default/grub.d/50-cloudimg-settings.cfg, and the drop-ins are read in
@@ -102,9 +137,9 @@ shape_boot() {
   mkdir -p "$GRUB_DIR"
   {
     printf '%s\n' '# The droplet has 2 GB: the kernel uses only that much of this box'"'"'s memory (lab/score/server-setup.sh --shape).' \
-      'GRUB_CMDLINE_LINUX_DEFAULT="$GRUB_CMDLINE_LINUX_DEFAULT mem=2G"'
-    [ -z "$entry" ] || printf '%s\n' '# The bench'"'"'s kernel, 6.8, instead of the newest the image ships.' "GRUB_DEFAULT=\"$entry\""
-  } >"$GRUB_DIR/99-twelve-dollar-mem.cfg"
+      'GRUB_CMDLINE_LINUX_DEFAULT="$GRUB_CMDLINE_LINUX_DEFAULT mem=2G"' "# kernel flavour: $KERNEL_FLAVOUR (what --shape was asked for; --check says which one runs)"
+    [ -z "$entry" ] || printf '%s\n' '# Ubuntu'"'"'s 6.8, instead of the newest kernel the image ships.' "GRUB_DEFAULT=\"$entry\""
+  } >"$GRUB_DIR/$SHAPE_DROPIN"
   update-grub
   echo "shape: mem=2G${entry:+ and $entry} on the boot line, rebooting"
   reboot
@@ -113,7 +148,7 @@ shape_boot() {
 # --- the shape checks ----------------------------------------------------------------------------------------------------------------
 # Each check says ok or FAIL. The CPUs are counted in cpuinfo (what nproc reads on a box that has no CPU restriction).
 check_shape() {
-  local cpus mem_kb swaps
+  local cpus mem_kb swaps chosen
   cpus="$(grep -c '^processor' "$CPUINFO" || true)"
   if [ "$cpus" = 1 ]; then ok cpus "1 CPU"; else bad cpus "$cpus CPUs, the droplet has 1 (launch with --cpu-options CoreCount=1,ThreadsPerCore=1)"; fi
   mem_kb="$(awk '/^MemTotal:/ {print $2}' "$MEMINFO")"
@@ -127,6 +162,8 @@ check_shape() {
     6.8.*) ok kernel "$KERNEL_RELEASE" ;;
     *) info kernel "$KERNEL_RELEASE (not 6.8: the box stayed on its own kernel)" ;;
   esac
+  chosen="$(sed -n 's/^# kernel flavour: \([a-z]*\) .*/\1/p' "$GRUB_DIR/$SHAPE_DROPIN" 2>/dev/null || true)"
+  info kernel-flavour "${chosen:-not set (--shape did not run here)} chosen, ${KERNEL_RELEASE##*-} running"
 }
 
 # --- the service checks ----------------------------------------------------------------------------------------------------------------
