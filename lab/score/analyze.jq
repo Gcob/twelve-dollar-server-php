@@ -147,15 +147,16 @@ csv($server) as $srv
 | ([$halves_in | to_entries[] | .key as $i | lb_report(.value; $pw) | .reason |= (if . != null and $nh > 1 then "half \($i + 1): " + . else . end)]) as $lbs
 | ([$lbs[].reason | select(. != null)] | .[0]) as $over_line
 
-# The order: k6, memory, the service's death, network, TCP memory, fds, CPU, else latency. Network is only the packets-a-second allowance
-# (`pps_allowance_exceeded`, a count of packets EC2 held back) and only on a run that failed: a passing run grows it too and says nothing.
+# The order: k6, memory, the service's death, network, TCP memory, fds, CPU, else latency. Network is any ENA allowance counter of what EC2
+# held back (every `*_exceeded`: pps, conntrack, bw_in, bw_out, linklocal), and only on a run that failed: a passing run grows them too (pps grew in
+# phase 7's passing runs) and says nothing. conntrack_allowance_available is a gauge, not one of them.
 # TCP memory is a failing run whose kernel log has `TCP: out of memory` lines it did not have at the start.
 | ($meta.k6_exit == 0) as $pass
 | (if $pass then null
    elif $over_line != null then "k6"
    elif ($oom_e != null and $oom_s != null and $oom_e > $oom_s) or ($avail_min != null and $avail_min < 102400) then "memory"
    elif $meta.server_died then "died"
-   elif $ena_diff != null and (($ena_diff.pps_allowance_exceeded // 0) > 0) then "network"
+   elif $ena_diff != null and ($ena_diff | to_entries | any(.value > 0 and (.key | endswith("_exceeded")))) then "network"
    elif $tcp_oom_e != null and $tcp_oom_s != null and $tcp_oom_e > $tcp_oom_s then "tcp-memory"
    elif ($drops != null and $drops > 0) or ($meta.dial_errors > 0 and ($fds_max | to_entries | any(.value >= 65435))) then "fds"
    elif ($svc_seconds | median) != null and ($svc_seconds | median) > 0.88 then "cpu"

@@ -1474,13 +1474,13 @@ Phase 8 adds three things to the search. **Two k6 halves** (`search.sh --halves 
 second. The plateau is the seconds where both halves report their users; its requests are the sum of the halves', p95 and p99 are each half's (`run.json` keeps both under
 `halves`, the row shows the worse), the run passes when both halves exit 0 and fails when either crosses a threshold. A half over the load box's line (its own CPUs, its
 container's memory over 90 % of its half of the box) voids a failing run, and nothing else. **The finer search** (`search.sh --finer`): probes 5 % up until one fails, one probe
-halfway back, holds 2.5 % down from the highest pass. **Two more walls**: `network` is only `pps_allowance_exceeded` grown in a failing run, and `tcp-memory` is a failing run
+halfway back, holds 2.5 % down from the highest pass. **Two more walls**: `network` is any ENA `_exceeded` allowance counter grown in a failing run (never named on a passing one), and `tcp-memory` is a failing run
 whose kernel log has new `TCP: out of memory` lines. Each run's `loop:` line (when the controller answers `loop`) is `server.loop` in its JSON.
 
 The plateau is read from k6's REST API (`vus` equals the target) and the server's rows, stamped with milliseconds, are matched to it by time
 (the counters are interpolated at its first and last second). A failed run gets a **wall**, the first rule that holds: `k6` (the failed run is void: the load box
 over 85 % CPU on more than 10 % of the plateau's seconds or on 5 in a row, or k6 over 90 % of its memory; a second or two of garbage collection is not that; a run that passes is a valid pass whatever k6 did, since k6's saturation can only make the latency worse), `memory` (a new OOM line, or MemAvailable under 100 MiB), `died` (the service died with neither: a PHP fatal, a segfault, a stop), `network`
-(the packets-a-second allowance, `pps_allowance_exceeded`, grew), `tcp-memory` (new `TCP: out of memory` kernel lines), `fds` (ListenDrops grew, or dial errors with a process within 100 of 65,535 files), `cpu` (the service
+(an ENA `_exceeded` allowance counter grew), `tcp-memory` (new `TCP: out of memory` kernel lines), `fds` (ListenDrops grew, or dial errors with a process within 100 of 65,535 files), `cpu` (the service
 over 88 % of a core on the plateau's median second, not its mean: a few seconds at 100 % do not make a CPU wall), else `latency-below-saturation`. The plateau includes the seconds of k6's graceful ramp down in which the VUs
 still run their last iteration: `vus` leaves the target only when they finish.
 

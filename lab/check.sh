@@ -2715,7 +2715,9 @@ score_check_walls() {
   # Network is the packets-a-second allowance, on a run that failed. The passing runs of the phase-7 session grew it with the box under 60 %.
   j="$(score_run svc=0.5 busy=0.95 ena=2 -- 99)" && score_expect "a failing run with pps_allowance_exceeded grown and the box 95 % busy" "$j" '.wall' "network" || return 1
   j="$(score_run svc=0.5 busy=0.95 ena=2 -- 0)" && score_expect "a passing run with pps_allowance_exceeded grown names no wall" "$j" '[.pass, .wall, .server.ena_allowance_diff.pps_allowance_exceeded] | map(tostring) | join(" ")' "true null 2" || return 1
-  j="$(score_run bwena=3 -- 99)" && score_expect "another allowance counter grown (bandwidth in) is not the packets-a-second wall" "$j" '.wall' "latency-below-saturation" || return 1
+  j="$(score_run bwena=3 -- 99)" && score_expect "another allowance counter grown (bandwidth in) in a failing run: network too" "$j" '.wall' "network" || return 1
+  j="$(score_run ctexc=65810 -- 99)" && score_expect "only conntrack_allowance_exceeded grown in a failing run (EC2's connection-tracking table, phase 7's tracked run): network" "$j" '.wall' "network" || return 1
+  j="$(score_run ctexc=65810 -- 0)" && score_expect "conntrack_allowance_exceeded grown in a passing run: no wall" "$j" '[.pass, .wall, .server.ena_allowance_diff.conntrack_allowance_exceeded] | map(tostring) | join(" ")' "true null 65810" || return 1
   # TCP memory: new `TCP: out of memory` lines in the kernel log of a run that failed (the start file has one old line, which does not count).
   j="$(score_run tcpoom=2 -- 99)" && score_expect "2 new TCP out of memory lines in a failing run" "$j" '[.wall, .server.tcp_oom_lines_start, .server.tcp_oom_lines_end] | map(tostring) | join(" ")' "tcp-memory 1 3" || return 1
   j="$(score_run tcpoom=2 -- 0)" && score_expect "2 new TCP out of memory lines in a passing run: no wall" "$j" '.wall' "null" || return 1
