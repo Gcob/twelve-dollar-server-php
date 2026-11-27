@@ -3749,10 +3749,32 @@ ring_loop_text() {
 
 # ring_start <name> <port> [K=V]...: the challenge app on the ring (APP_RING=1, telemetry on so that its `ring:` lines come out), on a fresh copy of the
 # seed, without Docker's seccomp filter (io_uring needs it lifted); waited on until it listens or exits. Prints the failure and returns 1 otherwise.
+# CHECK_RING_FAIL_STEP=buffer_ring_all (a test stand-in, empty by default) makes a kernel that takes the buffer ring (the Mac's 6.12) answer EINVAL to its
+# registration on every ring, what Ubuntu's 6.8 does: the buffer-mode checks (check_ring_buffers_loop_line, check_rings_auto_chooses_legacy_buffers)
+# then take their refusing-kernel branch.
 ring_start() {
   local name="$1" port="$2"
   shift 2
-  LAB_SERVER_SECCOMP_UNCONFINED=1 start_app_for_check "$name" "$port" 0 APP_RING=1 APP_TELEMETRY=1 "URING_BUFFERS=$(ring_buffers)" "$@"
+  LAB_SERVER_SECCOMP_UNCONFINED=1 start_app_for_check "$name" "$port" 0 APP_RING=1 APP_TELEMETRY=1 "URING_BUFFERS=$(ring_buffers)" ${CHECK_RING_FAIL_STEP:+"URING_FAIL_STEP=$CHECK_RING_FAIL_STEP"} "$@"
+}
+
+# ring_kernel_buffers: what this kernel allows the ring's receives, learned the way the app learns it: one ring started with URING_BUFFERS=auto, and its
+# `loop:` line says `buffer ring` or `legacy buffers` (a kernel that refuses the buffer ring with EINVAL, Ubuntu's 6.8, gives the second). Prints that
+# word; on a failure prints why and returns 1. Never the kernel's version string: a 6.8 with a backport would be told apart wrongly.
+ring_kernel_buffers() {
+  local name=lab-check-ring-probe log line=''
+  CHECK_RING_BUFFERS=auto ring_start "$name" 18177 || { docker rm -f "$name" >/dev/null 2>&1; return 1; }
+  for _ in $(seq 1 20); do
+    log="$(docker logs "$name" 2>&1)"
+    line="$(sed -n 's/^loop: ring, 1 ring, //p' <<<"$log")"
+    [ -z "$line" ] || break
+    sleep 0.5
+  done
+  docker rm -f "$name" >/dev/null 2>&1
+  case "$line" in
+    'buffer ring' | 'legacy buffers') echo "$line" ;;
+    *) echo "the probe (URING_BUFFERS=auto) printed no loop line with its buffers: ${log//$'\n'/ | }"; return 1 ;;
+  esac
 }
 
 # ring_sum <container> <field>: the sum of a counter over the `ring:` lines the server printed (each holds one second's counts).
@@ -4076,10 +4098,23 @@ check_ring_buffers_refusal() {
 
 # The `loop:` line says the receive buffers, in each mode: `ring, 1 ring, buffer ring` for URING_BUFFERS=ring, `ring, 1 ring, legacy buffers` for legacy,
 # one of the two for auto (the kernel decides); only the legacy buffers print the re-provide counters on the `ring:` line, and with them the pool is
-# the same: the `ring-settings:` line is the same text.
+# the same: the `ring-settings:` line is the same text. On a kernel that refuses the buffer ring (ring_kernel_buffers says `legacy buffers`: Ubuntu's 6.8)
+# `ring` is checked as the refusal it is (the fallback's line with its step and errno), `auto` must say legacy buffers, and the check says what it skipped.
 check_ring_buffers_loop_line() {
-  local name=lab-check-ring mode log
-  for mode in ring legacy auto; do
+  local name=lab-check-ring mode modes='ring legacy auto' log kernel
+  kernel="$(ring_kernel_buffers)" || { echo "$kernel"; return 1; }
+  if [ "$kernel" != 'buffer ring' ]; then
+    # A kernel that refuses the buffer ring (Ubuntu's 6.8): `ring` is refused for real, and with pcntl installed the app says so and serves on the DIY loop,
+    # `buffer_ring` and EINVAL's number; `legacy` and `auto` are what the kernel allows, and `auto` must take the older buffers.
+    modes='legacy auto'
+    CHECK_APP_EXT_EXTRA=pcntl LAB_SERVER_SECCOMP_UNCONFINED=1 start_app_for_check "$name" 18177 0 APP_RING=1 URING_BUFFERS=ring ${CHECK_RING_FAIL_STEP:+"URING_FAIL_STEP=$CHECK_RING_FAIL_STEP"} \
+      || { docker rm -f "$name" >/dev/null 2>&1; return 1; }
+    log="$(docker logs "$name" 2>&1)"
+    docker rm -f "$name" >/dev/null 2>&1
+    grep -qx 'loop: epoll (io_uring refused: buffer_ring 22)' <<<"$log" || { echo "URING_BUFFERS=ring on a kernel that refuses the buffer ring is not the fallback with its step and errno: ${log//$'\n'/ | }"; return 1; }
+    echo "note: this kernel refuses the buffer ring: URING_BUFFERS=ring was checked as the refusal it is (the fallback's line), not for the line 'buffer ring'; URING_BUFFERS=auto had to say legacy buffers" >&2
+  fi
+  for mode in $modes; do
     CHECK_RING_BUFFERS=$mode ring_start "$name" 18177 || { docker rm -f "$name" >/dev/null 2>&1; return 1; }
     docker exec "$name" php -r 'foreach ([1, 2, 3] as $i) { $c = stream_socket_client("tcp://127.0.0.1:18177"); fwrite($c, "GET /nope HTTP/1.1\r\n\r\n"); fgets($c); }'
     sleep 2.5
@@ -4088,7 +4123,12 @@ check_ring_buffers_loop_line() {
     case "$mode" in
       ring) grep -qx 'loop: ring, 1 ring, buffer ring' <<<"$log" || { echo "URING_BUFFERS=ring: the loop line is not 'ring, 1 ring, buffer ring': ${log//$'\n'/ | }"; return 1; } ;;
       legacy) grep -qx 'loop: ring, 1 ring, legacy buffers' <<<"$log" || { echo "URING_BUFFERS=legacy: the loop line is not 'ring, 1 ring, legacy buffers': ${log//$'\n'/ | }"; return 1; } ;;
-      auto) grep -qx 'loop: ring, 1 ring, \(buffer ring\|legacy buffers\)' <<<"$log" || { echo "URING_BUFFERS=auto: the loop line says neither buffers: ${log//$'\n'/ | }"; return 1; } ;;
+      auto)
+        if [ "$kernel" = 'buffer ring' ]; then
+          grep -qx 'loop: ring, 1 ring, \(buffer ring\|legacy buffers\)' <<<"$log" || { echo "URING_BUFFERS=auto: the loop line says neither buffers: ${log//$'\n'/ | }"; return 1; }
+        else
+          grep -qx 'loop: ring, 1 ring, legacy buffers' <<<"$log" || { echo "URING_BUFFERS=auto on a kernel that refuses the buffer ring: the loop line is not 'ring, 1 ring, legacy buffers': ${log//$'\n'/ | }"; return 1; }
+        fi ;;
     esac
     grep -qx 'ring-settings: table=[0-9]* sq=4096 cq=32768 recv_buffers=4096x2048 send_slots=2048x8192' <<<"$log" || { echo "$mode: the settings line changed: ${log//$'\n'/ | }"; return 1; }
     if grep -qx 'loop: ring, 1 ring, legacy buffers' <<<"$log"; then
@@ -4102,9 +4142,10 @@ check_ring_buffers_loop_line() {
 # `auto` when the kernel refuses the buffer ring (a test hook asks for a buffer ring of 0 entries on every ring, the kernel answers EINVAL, as Ubuntu's 6.8
 # does): the three rings all take the legacy buffers (one choice for the whole process), the boot says so, and the server serves. The same refusal with
 # URING_BUFFERS=ring is the fallback to the DIY loop, `buffer_ring 22`. And one ring's refusal after the first took the buffer ring is a refusal, not a
-# second choice: auto on 3 rings with the hook on the last ring only falls back to the DIY loop too.
+# second choice: auto on 3 rings with the hook on the last ring only falls back to the DIY loop too (on a kernel that refuses the buffer ring for real, the
+# last case uses the files table's step instead: see the comment there).
 check_rings_auto_chooses_legacy_buffers() {
-  local name=lab-check-rings log out
+  local name=lab-check-rings log out kernel step
   ring_start "$name" 18177 APP_RINGS=3 URING_BUFFERS=auto URING_FAIL_STEP=buffer_ring_all || { docker rm -f "$name" >/dev/null 2>&1; return 1; }
   out="$(ring_client_ok "$name" 18177 pipeline 2)" || { docker rm -f "$name" >/dev/null 2>&1; echo "$out"; return 1; }
   sleep 2.5
@@ -4117,10 +4158,20 @@ check_rings_auto_chooses_legacy_buffers() {
   log="$(docker logs "$name" 2>&1)"
   docker rm -f "$name" >/dev/null 2>&1
   grep -qx 'loop: epoll (io_uring refused: buffer_ring 22)' <<<"$log" || { echo "URING_BUFFERS=ring on a refused buffer ring is not the fallback: ${log//$'\n'/ | }"; return 1; }
-  CHECK_APP_EXT_EXTRA=pcntl LAB_SERVER_SECCOMP_UNCONFINED=1 start_app_for_check "$name" 18177 0 APP_RING=1 APP_RINGS=3 URING_BUFFERS=auto URING_FAIL_STEP=buffer_ring || { docker rm -f "$name" >/dev/null 2>&1; return 1; }
+  # Why a step of its own on a kernel that refuses the buffer ring: there `auto` takes the older buffers on the first ring, so a refusal of the buffer ring
+  # on the last ring alone cannot happen; the intent (a refusal after the first ring chose is the fallback, not a second choice) is checked with a step
+  # the older path needs too, the table of files.
+  kernel="$(ring_kernel_buffers)" || { echo "$kernel"; return 1; }
+  if [ "$kernel" = 'buffer ring' ]; then
+    step=buffer_ring
+  else
+    step=files
+    echo "note: this kernel refuses the buffer ring: auto with a refusal of the buffer ring on the last ring alone was not checked, a refusal of the files table on the last ring was" >&2
+  fi
+  CHECK_APP_EXT_EXTRA=pcntl LAB_SERVER_SECCOMP_UNCONFINED=1 start_app_for_check "$name" 18177 0 APP_RING=1 APP_RINGS=3 URING_BUFFERS=auto URING_FAIL_STEP=$step || { docker rm -f "$name" >/dev/null 2>&1; return 1; }
   log="$(docker logs "$name" 2>&1)"
   docker rm -f "$name" >/dev/null 2>&1
-  grep -qx 'loop: epoll (io_uring refused: buffer_ring 22)' <<<"$log" || { echo "auto with the last ring refused is not the fallback: ${log//$'\n'/ | }"; return 1; }
+  grep -qx "loop: epoll (io_uring refused: $step 22)" <<<"$log" || { echo "auto with the last ring refused ($step) is not the fallback: ${log//$'\n'/ | }"; return 1; }
 }
 
 # The legacy buffers' pool, 2 buffers and 1 send slot, 300 connections sending 3 requests at once, twice over and then one more pipelined round: the pool
